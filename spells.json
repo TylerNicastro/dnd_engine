@@ -1,0 +1,1837 @@
+{
+  "cantrips": [
+    {
+      "name": "Acid Splash",
+      "school": "Evocation",
+      "classes": [
+        "Artificer",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Blade Ward",
+      "school": "Abjuration",
+      "classes": [
+        "Bard",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Chill Touch",
+      "school": "Necromancy",
+      "classes": [
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Dancing Lights",
+      "school": "Illusion",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Druidcraft",
+      "school": "Transmutation",
+      "classes": [
+        "Druid"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Eldritch Blast",
+      "school": "Evocation",
+      "classes": [
+        "Warlock"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Elementalism",
+      "school": "Transmutation",
+      "classes": [
+        "Artificer",
+        "Druid",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Fire Bolt",
+      "school": "Evocation",
+      "classes": [
+        "Artificer",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Friends",
+      "school": "Enchantment",
+      "classes": [
+        "Bard",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 10,
+      "components": [
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Guidance",
+      "school": "Divination",
+      "classes": [
+        "Artificer",
+        "Cleric",
+        "Druid"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Light",
+      "school": "Evocation",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Cleric",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "M"
+      ],
+      "duration": 60,
+      "concentration": false
+    },
+    {
+      "name": "Mage Hand",
+      "school": "Conjuration",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Mending",
+      "school": "Transmutation",
+      "classes": [
+        "Bard",
+        "Cleric",
+        "Druid",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "1 minute",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Message",
+      "school": "Transmutation",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Druid",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Mind Sliver",
+      "school": "Enchantment",
+      "classes": [
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Minor Illusion",
+      "school": "Illusion",
+      "classes": [
+        "Bard",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Poison Spray",
+      "school": "Necromancy",
+      "classes": [
+        "Artificer",
+        "Druid",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Prestidigitation",
+      "school": "Transmutation",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 10,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 60,
+      "concentration": false
+    },
+    {
+      "name": "Produce Flame",
+      "school": "Conjuration",
+      "classes": [
+        "Druid"
+      ],
+      "level": 0,
+      "castingTime": "Bonus Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 10,
+      "concentration": false
+    },
+    {
+      "name": "Ray of Frost",
+      "school": "Evocation",
+      "classes": [
+        "Artificer",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Resistance",
+      "school": "Abjuration",
+      "classes": [
+        "Artificer",
+        "Cleric",
+        "Druid"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Sacred Flame",
+      "school": "Evocation",
+      "classes": [
+        "Cleric"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Shillelagh",
+      "school": "Transmutation",
+      "classes": [
+        "Druid"
+      ],
+      "level": 0,
+      "castingTime": "Bonus Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Shocking Grasp",
+      "school": "Evocation",
+      "classes": [
+        "Artificer",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Sorcerous Burst",
+      "school": "Evocation",
+      "classes": [
+        "Sorcerer"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Spare the Dying",
+      "school": "Necromancy",
+      "classes": [
+        "Artificer",
+        "Cleric",
+        "Druid"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 15,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Starry Wisp",
+      "school": "Evocation",
+      "classes": [
+        "Bard",
+        "Druid"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Thaumaturgy",
+      "school": "Transmutation",
+      "classes": [
+        "Cleric"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Thorn Whip",
+      "school": "Transmutation",
+      "classes": [
+        "Artificer",
+        "Druid"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Thunderclap",
+      "school": "Evocation",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Druid",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Toll the Dead",
+      "school": "Necromancy",
+      "classes": [
+        "Cleric",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "True Strike",
+      "school": "Divination",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Vicious Mockery",
+      "school": "Enchantment",
+      "classes": [
+        "Bard"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Word of Radiance",
+      "school": "Evocation",
+      "classes": [
+        "Cleric"
+      ],
+      "level": 0,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    }
+  ],
+  "level1": [
+    {
+      "name": "Alarm",
+      "school": "Abjuration",
+      "classes": [
+        "Artificer",
+        "Ranger",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "1 minute or R",
+      "range": 30,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 480,
+      "concentration": false
+    },
+    {
+      "name": "Animal Friendship",
+      "school": "Enchantment",
+      "classes": [
+        "Bard",
+        "Druid",
+        "Ranger"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1440,
+      "concentration": false
+    },
+    {
+      "name": "Armor of Agathys",
+      "school": "Abjuration",
+      "classes": [
+        "Warlock"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 60,
+      "concentration": false
+    },
+    {
+      "name": "Arms of Hadar",
+      "school": "Conjuration",
+      "classes": [
+        "Warlock"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Bane",
+      "school": "Enchantment",
+      "classes": [
+        "Bard",
+        "Cleric",
+        "Warlock"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Bless",
+      "school": "Enchantment",
+      "classes": [
+        "Cleric",
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Burning Hands",
+      "school": "Evocation",
+      "classes": [
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Buzzing Bee",
+      "school": "Conjuration",
+      "classes": [
+        "Druid",
+        "Ranger",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Charm Person",
+      "school": "Enchantment",
+      "classes": [
+        "Bard",
+        "Druid",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 60,
+      "concentration": false
+    },
+    {
+      "name": "Chromatic Orb",
+      "school": "Evocation",
+      "classes": [
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 90,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Color Spray",
+      "school": "Illusion",
+      "classes": [
+        "Bard",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Command",
+      "school": "Enchantment",
+      "classes": [
+        "Bard",
+        "Cleric",
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Compelled Duel",
+      "school": "Enchantment",
+      "classes": [
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 30,
+      "components": [
+        "V"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Comprehend Languages",
+      "school": "Divination",
+      "classes": [
+        "Bard",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action or R",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 60,
+      "concentration": false
+    },
+    {
+      "name": "Create or Destroy Water",
+      "school": "Transmutation",
+      "classes": [
+        "Cleric",
+        "Druid"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Cure Wounds",
+      "school": "Abjuration",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Cleric",
+        "Druid",
+        "Paladin",
+        "Ranger"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Detect Evil and Good",
+      "school": "Divination",
+      "classes": [
+        "Cleric",
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 10,
+      "concentration": true
+    },
+    {
+      "name": "Detect Magic",
+      "school": "Divination",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Cleric",
+        "Druid",
+        "Paladin",
+        "Ranger",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action or R",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 10,
+      "concentration": true
+    },
+    {
+      "name": "Detect Poison and Disease",
+      "school": "Divination",
+      "classes": [
+        "Cleric",
+        "Druid",
+        "Paladin",
+        "Ranger"
+      ],
+      "level": 1,
+      "castingTime": "Action or R",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 10,
+      "concentration": true
+    },
+    {
+      "name": "Disguise Self",
+      "school": "Illusion",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 60,
+      "concentration": false
+    },
+    {
+      "name": "Dissonant Whispers",
+      "school": "Enchantment",
+      "classes": [
+        "Bard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Divine Favor",
+      "school": "Transmutation",
+      "classes": [
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Divine Smite",
+      "school": "Evocation",
+      "classes": [
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action(*)",
+      "range": 0,
+      "components": [
+        "V"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Ensnaring Strike",
+      "school": "Conjuration",
+      "classes": [
+        "Ranger"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action(*)",
+      "range": 0,
+      "components": [
+        "V"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Entangle",
+      "school": "Conjuration",
+      "classes": [
+        "Druid",
+        "Ranger"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 90,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Expeditious Retreat",
+      "school": "Transmutation",
+      "classes": [
+        "Artificer",
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 10,
+      "concentration": true
+    },
+    {
+      "name": "Faerie Fire",
+      "school": "Evocation",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Druid"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "False Life",
+      "school": "Necromancy",
+      "classes": [
+        "Artificer",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Feather Fall",
+      "school": "Transmutation",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Reaction(*)",
+      "range": 60,
+      "components": [
+        "V",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Find Familiar",
+      "school": "Conjuration",
+      "classes": [
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "1 hour or R",
+      "range": 10,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Fog Cloud",
+      "school": "Conjuration",
+      "classes": [
+        "Druid",
+        "Ranger",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 60,
+      "concentration": true
+    },
+    {
+      "name": "Goodberry",
+      "school": "Conjuration",
+      "classes": [
+        "Druid",
+        "Ranger"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1440,
+      "concentration": false
+    },
+    {
+      "name": "Grease",
+      "school": "Conjuration",
+      "classes": [
+        "Artificer",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Guiding Bolt",
+      "school": "Evocation",
+      "classes": [
+        "Cleric"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Hail of Thorns",
+      "school": "Conjuration",
+      "classes": [
+        "Ranger"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action(*)",
+      "range": 0,
+      "components": [
+        "V"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Healing Word",
+      "school": "Abjuration",
+      "classes": [
+        "Bard",
+        "Cleric",
+        "Druid"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 60,
+      "components": [
+        "V"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Hellish Rebuke",
+      "school": "Evocation",
+      "classes": [
+        "Warlock"
+      ],
+      "level": 1,
+      "castingTime": "Reaction(*)",
+      "range": 60,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Heroism",
+      "school": "Enchantment",
+      "classes": [
+        "Bard",
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Hex",
+      "school": "Enchantment",
+      "classes": [
+        "Warlock"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 90,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 60,
+      "concentration": true
+    },
+    {
+      "name": "Hunter's Mark",
+      "school": "Divination",
+      "classes": [
+        "Ranger"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 90,
+      "components": [
+        "V"
+      ],
+      "duration": 60,
+      "concentration": true
+    },
+    {
+      "name": "Ice Knife",
+      "school": "Conjuration",
+      "classes": [
+        "Druid",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Identify",
+      "school": "Divination",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "1 minute or R",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Illusory Script",
+      "school": "Illusion",
+      "classes": [
+        "Bard",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "1 minute or R",
+      "range": 0,
+      "components": [
+        "S",
+        "M"
+      ],
+      "duration": 14400,
+      "concentration": false
+    },
+    {
+      "name": "Inflict Wounds",
+      "school": "Necromancy",
+      "classes": [
+        "Cleric"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Insidious Rhythm",
+      "school": "Enchantment",
+      "classes": [
+        "Bard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Jump",
+      "school": "Transmutation",
+      "classes": [
+        "Artificer",
+        "Druid",
+        "Ranger",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Longstrider",
+      "school": "Transmutation",
+      "classes": [
+        "Artificer",
+        "Bard",
+        "Druid",
+        "Ranger",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 60,
+      "concentration": false
+    },
+    {
+      "name": "Mage Armor",
+      "school": "Abjuration",
+      "classes": [
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 480,
+      "concentration": false
+    },
+    {
+      "name": "Magic Missile",
+      "school": "Evocation",
+      "classes": [
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 120,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Protection from Evil and Good",
+      "school": "Abjuration",
+      "classes": [
+        "Cleric",
+        "Druid",
+        "Paladin",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 10,
+      "concentration": true
+    },
+    {
+      "name": "Purify Food and Drink",
+      "school": "Transmutation",
+      "classes": [
+        "Artificer",
+        "Cleric",
+        "Druid",
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Action or R",
+      "range": 10,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Ray of Sickness",
+      "school": "Necromancy",
+      "classes": [
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Sanctuary",
+      "school": "Abjuration",
+      "classes": [
+        "Artificer",
+        "Cleric"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Searing Smite",
+      "school": "Evocation",
+      "classes": [
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action(*)",
+      "range": 0,
+      "components": [
+        "V"
+      ],
+      "duration": 1,
+      "concentration": false
+    },
+    {
+      "name": "Shield",
+      "school": "Abjuration",
+      "classes": [
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Reaction",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Shield of Faith",
+      "school": "Abjuration",
+      "classes": [
+        "Cleric",
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 10,
+      "concentration": true
+    },
+    {
+      "name": "Silent Image",
+      "school": "Illusion",
+      "classes": [
+        "Bard",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 10,
+      "concentration": true
+    },
+    {
+      "name": "Sleep",
+      "school": "Enchantment",
+      "classes": [
+        "Bard",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Speak with Animals",
+      "school": "Divination",
+      "classes": [
+        "Bard",
+        "Druid",
+        "Ranger",
+        "Warlock"
+      ],
+      "level": 1,
+      "castingTime": "Action or R",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 10,
+      "concentration": false
+    },
+    {
+      "name": "Spellfire Flare",
+      "school": "Evocation",
+      "classes": [
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Tasha's Hideous Laughter",
+      "school": "Enchantment",
+      "classes": [
+        "Bard",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 30,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Tenser's Floating Disk",
+      "school": "Conjuration",
+      "classes": [
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action or R",
+      "range": 30,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 60,
+      "concentration": false
+    },
+    {
+      "name": "Thunderous Smite",
+      "school": "Evocation",
+      "classes": [
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action(*)",
+      "range": 0,
+      "components": [
+        "V"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Thunderwave",
+      "school": "Evocation",
+      "classes": [
+        "Bard",
+        "Druid",
+        "Sorcerer",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 0,
+      "components": [
+        "V",
+        "S"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Unseen Servant",
+      "school": "Conjuration",
+      "classes": [
+        "Bard",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action or R",
+      "range": 60,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 60,
+      "concentration": false
+    },
+    {
+      "name": "Wardaway",
+      "school": "Abjuration",
+      "classes": [
+        "Bard",
+        "Cleric",
+        "Paladin",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 0,
+      "concentration": false
+    },
+    {
+      "name": "Witch Bolt",
+      "school": "Evocation",
+      "classes": [
+        "Sorcerer",
+        "Warlock",
+        "Wizard"
+      ],
+      "level": 1,
+      "castingTime": "Action",
+      "range": 60,
+      "components": [
+        "V",
+        "S",
+        "M"
+      ],
+      "duration": 1,
+      "concentration": true
+    },
+    {
+      "name": "Wrathful Smite",
+      "school": "Necromancy",
+      "classes": [
+        "Paladin"
+      ],
+      "level": 1,
+      "castingTime": "Bonus Action(*)",
+      "range": 0,
+      "components": [
+        "V"
+      ],
+      "duration": 1,
+      "concentration": false
+    }
+  ]
+}
