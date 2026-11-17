@@ -21,7 +21,7 @@ public class App {
     static final Color TEXT_MUTED = new Color(170, 165, 160);
 
     public static void main(String[] args) throws Exception {
-        SpellData.SPELL_DB = SpellData.loadSpellDatabase();
+        SpellData.loadExtraSpells();
         WeaponData.WEAPON_DB = WeaponData.loadWeaponDatabase();
         SwingUtilities.invokeLater(() -> {
             JFrame frame = new JFrame("D&D Engine");
@@ -397,7 +397,8 @@ public class App {
 
             row.addMouseListener(new MouseAdapter() {
                 @Override
-                public void mouseClicked(MouseEvent e) {
+                public void mouseReleased(MouseEvent e) {
+                    if (!App.isClickRelease(e)) return;
                     if (!enabledFlag[0]) return;
                     if (selected.contains(option)) {
                         selected.remove(option);
@@ -508,9 +509,8 @@ public class App {
         styleSecondaryButton(cancelButton);
         cancelButton.addActionListener(e -> {
             if (editModeHolder[0]) {
-                int confirm = JOptionPane.showConfirmDialog(topBar, "Leave without saving changes?",
-                        "Unsaved Changes", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-                if (confirm == JOptionPane.YES_OPTION) outerCardLayout.show(outerCards, "CHARACTERS");
+                showConfirmOverlay(topBar, "Unsaved Changes", "Leave without saving changes?", "Leave",
+                        () -> outerCardLayout.show(outerCards, "CHARACTERS"));
             } else {
                 outerCardLayout.show(outerCards, "CHARACTERS");
             }
@@ -657,19 +657,12 @@ public class App {
                 optionInfo = Collections.emptyMap();
                 withInfo = false;
             } else {
-                List<SpellEntry> pool = "CANTRIPS".equals(item.type) ? SpellData.SPELL_DB.cantrips : SpellData.SPELL_DB.level1;
+                int spellLevel = "CANTRIPS".equals(item.type) ? 0 : 1;
                 List<String> names = new ArrayList<>();
                 Map<String, String> infoMap = new LinkedHashMap<>();
-                for (SpellEntry se : pool) {
-                    if (se.classes.contains(className)) {
-                        names.add(se.name);
-                        infoMap.put(se.name, "School: " + se.school
-                                + "\nLevel: " + se.level
-                                + "\nCasting Time: " + se.castingTime
-                                + "\nRange: " + SpellData.formatSpellRange(se.range)
-                                + "\nComponents: " + String.join(", ", se.components)
-                                + "\nDuration: " + SpellData.formatSpellDuration(se.duration, se.concentration));
-                    }
+                for (Spell sp : SpellData.classSpells(className, spellLevel, spellLevel)) {
+                    names.add(sp.name);
+                    infoMap.put(sp.name, sp.infoText());
                 }
                 optionLabels = names;
                 optionInfo = infoMap;
@@ -794,7 +787,8 @@ public class App {
                     circle.setCursor(new Cursor(Cursor.HAND_CURSOR));
                     circle.addMouseListener(new MouseAdapter() {
                         @Override
-                        public void mouseClicked(MouseEvent e) {
+                        public void mouseReleased(MouseEvent e) {
+                            if (!App.isClickRelease(e)) return;
                             showDetail.accept(idx);
                         }
                     });
@@ -831,7 +825,8 @@ public class App {
                     infoCol.add(subLabel);
                     infoCol.addMouseListener(new MouseAdapter() {
                         @Override
-                        public void mouseClicked(MouseEvent e) {
+                        public void mouseReleased(MouseEvent e) {
+                            if (!App.isClickRelease(e)) return;
                             showDetail.accept(idx);
                         }
                     });
@@ -895,17 +890,15 @@ public class App {
                         }
                     });
                     trashButton.addActionListener(e -> {
-                        int confirm = JOptionPane.showConfirmDialog(panel,
-                                "Delete \"" + nameLabel.getText() + "\"? This cannot be undone.",
-                                "Confirm Deletion", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
-                        if (confirm == JOptionPane.YES_OPTION) {
-                            List<Object> current = CharacterStorage.loadSavedCharacters();
-                            if (idx >= 0 && idx < current.size()) {
-                                current.remove(idx);
-                                CharacterStorage.saveAllCharacters(current);
-                            }
-                            rebuildCharacterListHolder[0].run();
-                        }
+                        showConfirmOverlay(panel, "Confirm Deletion",
+                                "Delete \"" + nameLabel.getText() + "\"? This cannot be undone.", "Delete", () -> {
+                                    List<Object> current = CharacterStorage.loadSavedCharacters();
+                                    if (idx >= 0 && idx < current.size()) {
+                                        current.remove(idx);
+                                        CharacterStorage.saveAllCharacters(current);
+                                    }
+                                    rebuildCharacterListHolder[0].run();
+                                });
                     });
                     actionsWrap.add(trashButton);
 
@@ -1077,10 +1070,13 @@ public class App {
         sheetScroll.setBorder(BorderFactory.createEmptyBorder());
         sheetScroll.getVerticalScrollBar().setUnitIncrement(16);
 
-        JPanel spellsContent = new JPanel();
-        spellsContent.setBackground(BG_DARK);
+        ScrollableContentPanel spellsContent = new ScrollableContentPanel();
+        spellsContent.setBackground(SHEET_BG);
         JScrollPane spellsScroll = new JScrollPane(spellsContent);
         applyDarkScrollBar(spellsScroll);
+        spellsScroll.getViewport().setBackground(SHEET_BG);
+        spellsScroll.setBorder(BorderFactory.createEmptyBorder());
+        spellsScroll.getVerticalScrollBar().setUnitIncrement(16);
 
         innerCards.add(sheetScroll, "SHEET");
         innerCards.add(spellsScroll, "SPELLS");
@@ -1097,7 +1093,17 @@ public class App {
             b.setBorder(BorderFactory.createEmptyBorder(10, 18, 10, 18));
         }
 
+        int[] currentIdx = {-1};
+        java.util.function.IntConsumer[] renderSheet = new java.util.function.IntConsumer[1];
+        java.util.function.IntConsumer[] renderSpells = new java.util.function.IntConsumer[1];
+
+        // Each tab saves its own copy of the record, so re-render the tab being shown from disk
+        // (otherwise an edit on one tab could overwrite changes made on the other).
         java.util.function.Consumer<String> showTab = tab -> {
+            if (currentIdx[0] >= 0) {
+                if ("SHEET".equals(tab)) renderSheet[0].accept(currentIdx[0]);
+                else renderSpells[0].accept(currentIdx[0]);
+            }
             innerCardLayout.show(innerCards, tab);
             sheetTabButton.setBackground("SHEET".equals(tab) ? ACCENT : BG_FIELD);
             spellsTabButton.setBackground("SPELLS".equals(tab) ? ACCENT : BG_FIELD);
@@ -1116,8 +1122,21 @@ public class App {
         wrap.add(innerCards, BorderLayout.CENTER);
         panel.add(wrap, BorderLayout.CENTER);
 
+        // Re-renders only the spells tab (used after slot/cast changes so the tab/scroll stay put)
+        renderSpells[0] = idx -> {
+            List<Object> characters = CharacterStorage.loadSavedCharacters();
+            if (idx < 0 || idx >= characters.size() || !(characters.get(idx) instanceof Map)) return;
+            populateCharacterSpells(spellsContent, (Map<?, ?>) characters.get(idx), updated -> {
+                List<Object> all = CharacterStorage.loadSavedCharacters();
+                if (idx < all.size()) {
+                    all.set(idx, updated);
+                    CharacterStorage.saveAllCharacters(all);
+                }
+                renderSpells[0].accept(idx);
+            });
+        };
+
         // Re-renders only the sheet tab (used after in-sheet edits so the tab/scroll stay put)
-        java.util.function.IntConsumer[] renderSheet = new java.util.function.IntConsumer[1];
         renderSheet[0] = idx -> {
             List<Object> characters = CharacterStorage.loadSavedCharacters();
             if (idx < 0 || idx >= characters.size() || !(characters.get(idx) instanceof Map)) return;
@@ -1135,9 +1154,7 @@ public class App {
         java.util.function.IntConsumer show = idx -> {
             List<Object> characters = CharacterStorage.loadSavedCharacters();
             if (idx < 0 || idx >= characters.size() || !(characters.get(idx) instanceof Map)) return;
-            Map<?, ?> rec = (Map<?, ?>) characters.get(idx);
-            renderSheet[0].accept(idx);
-            populateCharacterSpells(spellsContent, rec);
+            currentIdx[0] = idx;
             showTab.accept("SHEET");
             cardLayout.show(cards, "CHARACTER_DETAIL");
         };
@@ -1215,9 +1232,39 @@ public class App {
 
         JPanel idGrid = new JPanel(new GridLayout(2, 2, 8, 8));
         idGrid.setOpaque(false);
-        idGrid.add(headerField("CLASS & LEVEL", classText));
-        idGrid.add(headerField("BACKGROUND", background.isEmpty() ? "—" : background));
-        idGrid.add(headerField("SPECIES", (species.isEmpty() ? "—" : species) + lineageSuffix));
+        idGrid.add(clickable(headerField("CLASS & LEVEL", classText), () -> {
+            List<String[]> rows = new ArrayList<>();
+            StringBuilder desc = new StringBuilder();
+            for (Map.Entry<String, Integer> en : classLevels.entrySet()) {
+                String[] info = GameData.CLASS_INFO.get(en.getKey());
+                rows.add(row(en.getKey(), "Level " + en.getValue() + (info != null ? " · Hit die " + info[0] : "")));
+                if (info != null) desc.append(en.getKey()).append(": ").append(info[1]).append("\n");
+            }
+            rows.add(row("Total level", String.valueOf(level)));
+            rows.add(row("Proficiency bonus", signed(profBonus)));
+            showInfoOverlay(idGrid, classText, "Class & Level", desc.toString().trim(), rows);
+        }));
+        idGrid.add(clickable(headerField("BACKGROUND", background.isEmpty() ? "—" : background), () -> {
+            List<String[]> rows = new ArrayList<>();
+            List<String> bgSkills = CharacterStorage.recList(rec, "backgroundSkills");
+            rows.add(row("Skill proficiencies", bgSkills.isEmpty() ? "—" : String.join(", ", bgSkills)));
+            List<String> incs = new ArrayList<>();
+            for (Map.Entry<String, Integer> en : CharacterStorage.recAsiIncreases(rec).entrySet()) incs.add(en.getKey() + " +" + en.getValue());
+            rows.add(row("Ability increases", incs.isEmpty() ? "—" : String.join(", ", incs)));
+            showInfoOverlay(idGrid, background.isEmpty() ? "Background" : background, "Background",
+                    GameData.BACKGROUND_INFO.getOrDefault(background, ""), rows);
+        }));
+        idGrid.add(clickable(headerField("SPECIES", (species.isEmpty() ? "—" : species) + lineageSuffix), () -> {
+            List<String[]> rows = new ArrayList<>();
+            if (!lineage.isEmpty()) rows.add(row("Lineage", lineage));
+            String size = CharacterStorage.recStr(rec, "size");
+            String type = CharacterStorage.recStr(rec, "creatureType");
+            if (!size.isEmpty()) rows.add(row("Size", size));
+            if (!type.isEmpty()) rows.add(row("Creature type", type));
+            rows.add(row("Speed", speed != null ? speed + " ft." : "—"));
+            showInfoOverlay(idGrid, species.isEmpty() ? "Species" : species + lineageSuffix, "Species",
+                    GameData.SPECIES_INFO.getOrDefault(species, ""), rows);
+        }));
         if (level < FeatData.MAX_LEVEL && onLevelUp != null) {
             idGrid.add(levelUpButton(level, onLevelUp));
         } else {
@@ -1242,29 +1289,86 @@ public class App {
         // ================= COLUMN 1 =================
         JPanel abilityStrip = new JPanel(new GridLayout(6, 1, 0, 8));
         abilityStrip.setOpaque(false);
-        for (String stat : GameData.STAT_ORDER) abilityStrip.add(buildAbilityBox(stat, stats.getOrDefault(stat, 10)));
+        Map<String, Integer> bgIncreases = CharacterStorage.recAsiIncreases(rec);
+        for (int i = 0; i < GameData.STAT_ORDER.length; i++) {
+            String stat = GameData.STAT_ORDER[i];
+            String fullName = STAT_FULL_NAMES[i];
+            int score = stats.getOrDefault(stat, 10);
+            abilityStrip.add(clickable(buildAbilityBox(stat, score), () -> {
+                List<String[]> rows = new ArrayList<>();
+                rows.add(row("Score", String.valueOf(score)));
+                rows.add(row("Modifier", signed(GameData.abilityModifier(score)) + "  (score − 10, ÷ 2, rounded down)"));
+                Integer bgInc = bgIncreases.get(stat);
+                if (bgInc != null) rows.add(row("Includes background increase", "+" + bgInc + (background.isEmpty() ? "" : " (" + background + ")")));
+                for (Map<String, Object> f : feats) {
+                    Integer inc = CharacterStorage.featStatIncreases(f).get(stat);
+                    if (inc != null) rows.add(row("Includes " + f.get("name"), "+" + inc));
+                }
+                showInfoOverlay(abilityStrip, fullName + " (" + stat + ")", "Ability score", GameData.STAT_INFO.get(stat), rows);
+            }));
+        }
 
+        String[] saveUses = {
+                "Resist being shoved, held, or physically overpowered.",
+                "Dodge out of the way of area effects like fireballs and traps.",
+                "Endure poison, disease, and maintain concentration on spells.",
+                "Resist mental assaults and illusions that target your reasoning.",
+                "Resist charm, fear, and effects that target your willpower.",
+                "Resist effects that would banish you or overwhelm your sense of self."};
         JPanel saveRows = new JPanel(new GridLayout(0, 1, 0, 0));
         saveRows.setOpaque(false);
         for (int i = 0; i < GameData.STAT_ORDER.length; i++) {
             String stat = GameData.STAT_ORDER[i];
+            String fullName = STAT_FULL_NAMES[i];
+            String use = saveUses[i];
             boolean prof = saveProfs.contains(stat);
-            int mod = GameData.abilityModifier(stats.getOrDefault(stat, 10)) + (prof ? profBonus : 0);
-            saveRows.add(sheetProfRow(prof, signed(mod), STAT_FULL_NAMES[i], null, false));
+            int abilityMod = GameData.abilityModifier(stats.getOrDefault(stat, 10));
+            int mod = abilityMod + (prof ? profBonus : 0);
+            saveRows.add(clickable(sheetProfRow(prof, signed(mod), fullName, null, false), () -> {
+                String source = null;
+                if (saves != null && Arrays.asList(saves).contains(stat)) source = characterClass + " class";
+                for (Map<String, Object> f : feats) {
+                    if ("Resilient".equals(f.get("name")) && CharacterStorage.featStatIncreases(f).containsKey(stat)) {
+                        source = source == null ? "Resilient feat" : source + ", Resilient feat";
+                    }
+                }
+                List<String[]> rows = new ArrayList<>();
+                rows.add(row(stat + " modifier", signed(abilityMod)));
+                rows.add(row("Proficiency", prof ? signed(profBonus) : "—"));
+                rows.add(row("Total", signed(mod)));
+                rows.add(row("Proficient from", source != null ? source : "Not proficient"));
+                showInfoOverlay(saveRows, fullName + " Saving Throw", stat + " save",
+                        "Roll d20 + this bonus when an effect calls for a " + fullName + " save. " + use, rows);
+            }));
         }
 
+        Map<String, String> skillSources = CharacterStorage.recSkillSources(rec);
         JPanel skillRows = new JPanel(new GridLayout(0, 1, 0, 0));
         skillRows.setOpaque(false);
         int skillIdx = 0;
         for (String skill : GameData.ALL_SKILLS) {
             boolean prof = skillProfs.contains(skill);
             String ability = GameData.SKILL_ABILITY.get(skill);
-            int mod = GameData.abilityModifier(stats.getOrDefault(ability, 10)) + (prof ? profBonus : 0);
-            skillRows.add(sheetProfRow(prof, signed(mod), skill, ability, skillIdx++ % 2 == 1));
+            int abilityMod = GameData.abilityModifier(stats.getOrDefault(ability, 10));
+            int mod = abilityMod + (prof ? profBonus : 0);
+            skillRows.add(clickable(sheetProfRow(prof, signed(mod), skill, ability, skillIdx++ % 2 == 1), () -> {
+                List<String[]> rows = new ArrayList<>();
+                rows.add(row(ability + " modifier", signed(abilityMod)));
+                rows.add(row("Proficiency", prof ? signed(profBonus) : "—"));
+                rows.add(row("Total", signed(mod)));
+                rows.add(row("Proficient from", prof ? skillSources.getOrDefault(skill, "—") : "Not proficient"));
+                showInfoOverlay(skillRows, skill, ability + " skill",
+                        GameData.SKILL_INFO.getOrDefault(skill, "") + "\nRoll d20 + this bonus for " + skill + " checks.", rows);
+            }));
         }
 
+        JPanel profBadge = clickable(horizontalBadge(signed(profBonus), "PROFICIENCY BONUS"), () -> showInfoOverlay(
+                skillRows, "Proficiency Bonus", "Based on total level",
+                "Added to attack rolls, saving throws, and skill checks you are proficient in. It goes up at levels 5, 9, 13 and 17.",
+                Arrays.asList(row("Total level", String.valueOf(level)), row("Bonus", signed(profBonus)))));
+
         JPanel innerLeft = sheetStack(10, false,
-                horizontalBadge(signed(profBonus), "PROFICIENCY BONUS"),
+                profBadge,
                 sheetCard("Saving Throws", saveRows),
                 sheetCard("Skills", skillRows));
 
@@ -1286,7 +1390,13 @@ public class App {
         c1.gridwidth = 2;
         c1.fill = GridBagConstraints.HORIZONTAL;
         c1.insets = new Insets(10, 0, 0, 0);
-        col1.add(horizontalBadge(String.valueOf(passivePerception), "PASSIVE WISDOM (PERCEPTION)"), c1);
+        boolean perceptionProf = skillProfs.contains("Perception");
+        col1.add(clickable(horizontalBadge(String.valueOf(passivePerception), "PASSIVE WISDOM (PERCEPTION)"), () -> showInfoOverlay(
+                col1, "Passive Perception", "10 + Perception bonus",
+                "Your awareness when you aren't actively searching. The DM compares it against hidden creatures' Stealth and against concealed objects.",
+                Arrays.asList(row("Base", "10"), row("WIS modifier", signed(wisMod)),
+                        row("Proficiency", perceptionProf ? signed(profBonus) + " (" + skillSources.getOrDefault("Perception", "") + ")" : "—"),
+                        row("Total", String.valueOf(passivePerception))))), c1);
         c1.gridy = 2;
         c1.weighty = 1.0;
         c1.fill = GridBagConstraints.BOTH;
@@ -1299,18 +1409,79 @@ public class App {
         // ================= COLUMN 2 =================
         JPanel combatRow = new JPanel(new GridLayout(1, 3, 8, 0));
         combatRow.setOpaque(false);
-        combatRow.add(new ShieldPanel(ac, 108, 116));
-        combatRow.add(statTile(signed(dexMod), "INITIATIVE"));
-        combatRow.add(statTile(speed != null ? speed + " ft." : "—", "SPEED"));
+        combatRow.add(clickable(new ShieldPanel(ac, 108, 116), () -> {
+            // Display-only breakdown mirroring GameData.computeAC
+            List<String[]> rows = new ArrayList<>();
+            String bodyLabel = "Unarmored";
+            String bodyValue = "10 + DEX (" + signed(dexMod) + ")";
+            int bestBody = 10 + dexMod;
+            boolean shield = false;
+            for (String item : equipment) {
+                String base = GameData.stripEquipmentCount(item);
+                GameData.ArmorInfo info = GameData.ARMOR_AC.get(base);
+                if (info == null) continue;
+                if (info.isShield) {
+                    shield = true;
+                    continue;
+                }
+                int dexPart = info.maxDexBonus <= 0 ? 0 : Math.min(dexMod, info.maxDexBonus);
+                if (info.baseAC + dexPart > bestBody) {
+                    bestBody = info.baseAC + dexPart;
+                    bodyLabel = base;
+                    bodyValue = info.maxDexBonus <= 0 ? info.baseAC + " (no DEX)"
+                            : info.baseAC + " + DEX (" + signed(dexPart) + (info.maxDexBonus == Integer.MAX_VALUE ? "" : ", max " + info.maxDexBonus) + ")";
+                }
+            }
+            rows.add(row(bodyLabel, bodyValue));
+            if (shield) rows.add(row("Shield", "+2"));
+            rows.add(row("Armor Class", String.valueOf(ac)));
+            showInfoOverlay(combatRow, "Armor Class", "Defense",
+                    "How hard you are to hit. An attack hits if its roll equals or beats your AC. Comes from your best armor in Equipment (or 10 + DEX unarmored), plus a shield.", rows);
+        }));
+        combatRow.add(clickable(statTile(signed(dexMod), "INITIATIVE"), () -> showInfoOverlay(
+                combatRow, "Initiative", "Combat order",
+                "At the start of combat, everyone rolls d20 + Initiative. Higher results act first.",
+                Arrays.asList(row("DEX modifier", signed(dexMod)), row("Initiative", signed(dexMod))))));
+        combatRow.add(clickable(statTile(speed != null ? speed + " ft." : "—", "SPEED"), () -> showInfoOverlay(
+                combatRow, "Speed", "Movement",
+                "How far you can move on your turn. Difficult terrain costs double, and you can split your movement before and after your action.",
+                Arrays.asList(row("From species", (species.isEmpty() ? "—" : species + lineageSuffix)),
+                        row("Walking speed", speed != null ? speed + " ft." : "—")))));
 
         JPanel hdDsRow = new JPanel(new GridLayout(1, 2, 8, 0));
         hdDsRow.setOpaque(false);
-        hdDsRow.add(hitDiceCard(hitDice));
-        hdDsRow.add(deathSavesCard());
+        hdDsRow.add(clickable(hitDiceCard(hitDice), () -> {
+            List<String[]> rows = new ArrayList<>();
+            for (Map.Entry<String, Integer> en : classLevels.entrySet()) {
+                String[] info = GameData.CLASS_INFO.get(en.getKey());
+                rows.add(row(en.getKey() + " " + en.getValue(), en.getValue() + (info != null ? info[0] : "")));
+            }
+            rows.add(row("Total", hitDice));
+            showInfoOverlay(hdDsRow, "Hit Dice", "One per class level",
+                    "During a Short Rest you can spend Hit Dice: roll each one and add your CON modifier to regain that many Hit Points. A Long Rest restores all spent Hit Dice.", rows);
+        }));
+        hdDsRow.add(clickable(deathSavesCard(), () -> showInfoOverlay(
+                hdDsRow, "Death Saves", "At 0 Hit Points",
+                "When you start your turn at 0 HP, roll a d20 with no modifiers. 10 or higher is a success, 9 or lower a failure. Three successes and you stabilise; three failures and you die. A 20 restores 1 HP; a 1 counts as two failures. Click the pips to track them (they aren't saved).",
+                null)));
+
+        int conMod = GameData.abilityModifier(stats.getOrDefault("CON", 10));
+        JPanel hpCard = clickable(hitPointsCard(hp), () -> {
+            List<String[]> rows = new ArrayList<>();
+            int die = GameData.hitDieMax(characterClass);
+            if (die > 0) rows.add(row("Level 1 (max d" + die + " + CON)", "+" + Math.max(1, die + conMod)));
+            List<Integer> rolls = CharacterStorage.recHpRolls(rec);
+            for (int i = 0; i < rolls.size(); i++) {
+                rows.add(row("Level " + (i + 2) + " (rolled " + rolls.get(i) + " + CON)", "+" + CharacterStorage.hpGainForRoll(rolls.get(i), conMod)));
+            }
+            rows.add(row("Hit Point Maximum", hp != null ? String.valueOf(hp) : "—"));
+            showInfoOverlay(combatRow, "Hit Points", "CON modifier " + signed(conMod),
+                    "How much damage you can take. At 0 HP you fall Unconscious and start making Death Saves. Your maximum grows by a hit die roll + CON modifier each level.", rows);
+        });
 
         JPanel col2 = sheetStack(10, true,
                 combatRow,
-                hitPointsCard(hp),
+                hpCard,
                 hdDsRow,
                 equipmentCard(rec, equipment, onSave));
 
@@ -1801,7 +1972,8 @@ public class App {
         }
         purse.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseClicked(MouseEvent e) {
+            public void mouseReleased(MouseEvent e) {
+                if (!App.isClickRelease(e)) return;
                 showCoinEditor(purse, rec, onSave);
             }
 
@@ -1841,7 +2013,8 @@ public class App {
             item.setCursor(new Cursor(Cursor.HAND_CURSOR));
             item.addMouseListener(new MouseAdapter() {
                 @Override
-                public void mouseClicked(MouseEvent e) {
+                public void mouseReleased(MouseEvent e) {
+                    if (!App.isClickRelease(e)) return;
                     showItemDetail(item, rec, index, onSave);
                 }
 
@@ -2183,6 +2356,8 @@ public class App {
                 save.accept(next);
             });
             chip.add(action, BorderLayout.EAST);
+            clickable(chip, () -> showInfoOverlay(chips, cond, isState ? "State" : "Condition",
+                    GameData.CONDITION_INFO.getOrDefault(cond, ""), null));
             chips.add(chip);
         }
 
@@ -2210,6 +2385,148 @@ public class App {
             close[0] = showSheetOverlay(add, "Add Condition", grid, null);
         });
         return sheetCardWithAction("Conditions", add, chips);
+    }
+
+    // ---------------- Click-for-detail helpers ----------------
+    static final Color SHEET_HOVER = new Color(0x34, 0x39, 0x4F);
+
+    // True for a left-button release that ends over the component that was pressed.
+    // Click handlers use mouseReleased + this instead of mouseClicked: Swing drops mouseClicked
+    // whenever the pointer moves even a pixel between press and release, which happens all the
+    // time with quick clicking, so fast clicks were silently lost.
+    static boolean isClickRelease(MouseEvent e) {
+        Component c = e.getComponent();
+        return SwingUtilities.isLeftMouseButton(e) && c != null && c.contains(e.getPoint());
+    }
+
+    // Makes a component clickable: hand cursor, hover tint, and runs onClick on left-click
+    static <T extends JComponent> T clickable(T c, Runnable onClick) {
+        c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        boolean[] origOpaque = {c.isOpaque()};
+        Color[] origBg = {c.getBackground()};
+        c.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (!App.isClickRelease(e)) return;
+                if (SwingUtilities.isLeftMouseButton(e)) onClick.run();
+            }
+
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                origOpaque[0] = c.isOpaque();
+                origBg[0] = c.getBackground();
+                c.setOpaque(true);
+                c.setBackground(SHEET_HOVER);
+                c.repaint();
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                c.setOpaque(origOpaque[0]);
+                c.setBackground(origBg[0]);
+                c.repaint();
+            }
+        });
+        return c;
+    }
+
+    static String[] row(String label, String value) {
+        return new String[]{label, value};
+    }
+
+    // Standard detail overlay: subtitle tag, wrapped description, and an optional label/value breakdown
+    static void showInfoOverlay(Component anchor, String title, String subtitle, String description, List<String[]> rows) {
+        JPanel body = new JPanel();
+        body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+        body.setOpaque(false);
+        if (subtitle != null && !subtitle.isEmpty()) {
+            JLabel sub = new JLabel(subtitle.toUpperCase());
+            sub.setForeground(TEXT_MUTED);
+            sub.setFont(new Font("SansSerif", Font.BOLD, 11));
+            sub.setAlignmentX(Component.LEFT_ALIGNMENT);
+            body.add(sub);
+            body.add(Box.createRigidArea(new Dimension(0, 8)));
+        }
+        if (description != null && !description.isEmpty()) {
+            JLabel desc = new JLabel("<html><div style='width:340px'>" + escapeHtml(description).replace("\n", "<br>") + "</div></html>");
+            desc.setForeground(TEXT_LIGHT);
+            desc.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            desc.setAlignmentX(Component.LEFT_ALIGNMENT);
+            body.add(desc);
+        }
+        if (rows != null && !rows.isEmpty()) {
+            JPanel table = new JPanel(new GridBagLayout());
+            table.setOpaque(false);
+            table.setAlignmentX(Component.LEFT_ALIGNMENT);
+            table.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(1, 0, 0, 0, SHEET_BORDER), new EmptyBorder(8, 0, 0, 0)));
+            GridBagConstraints c = new GridBagConstraints();
+            c.insets = new Insets(2, 0, 2, 0);
+            c.anchor = GridBagConstraints.WEST;
+            for (int i = 0; i < rows.size(); i++) {
+                c.gridy = i;
+                c.gridx = 0;
+                c.weightx = 1.0;
+                JLabel l = new JLabel(rows.get(i)[0]);
+                l.setForeground(TEXT_MUTED);
+                l.setFont(new Font("SansSerif", Font.PLAIN, 13));
+                table.add(l, c);
+                c.gridx = 1;
+                c.weightx = 0.0;
+                c.anchor = GridBagConstraints.EAST;
+                JLabel v = new JLabel(rows.get(i)[1]);
+                v.setForeground(TEXT_LIGHT);
+                v.setFont(new Font("SansSerif", Font.BOLD, 13));
+                v.setBorder(new EmptyBorder(0, 16, 0, 0));
+                table.add(v, c);
+                c.anchor = GridBagConstraints.WEST;
+            }
+            body.add(Box.createRigidArea(new Dimension(0, 10)));
+            body.add(table);
+        }
+        showSheetOverlay(anchor, title, body, null);
+    }
+
+    // In-window yes/no prompt (replaces JOptionPane confirm dialogs)
+    static void showConfirmOverlay(Component anchor, String title, String message, String confirmLabel, Runnable onConfirm) {
+        Runnable[] close = new Runnable[1];
+        JLabel msg = new JLabel("<html><div style='width:320px'>" + escapeHtml(message).replace("\n", "<br>") + "</div></html>");
+        msg.setForeground(TEXT_LIGHT);
+        msg.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        JButton cancel = overlayButton("Cancel", false);
+        JButton ok = overlayButton(confirmLabel, true);
+        cancel.addActionListener(e -> close[0].run());
+        ok.addActionListener(e -> {
+            close[0].run();
+            onConfirm.run();
+        });
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttons.setOpaque(false);
+        buttons.add(cancel);
+        buttons.add(ok);
+        JPanel body = new JPanel(new BorderLayout(0, 16));
+        body.setOpaque(false);
+        body.add(msg, BorderLayout.CENTER);
+        body.add(buttons, BorderLayout.SOUTH);
+        close[0] = showSheetOverlay(anchor, title, body, ok);
+    }
+
+    // In-window message with an OK button (replaces JOptionPane message dialogs)
+    static void showNoticeOverlay(Component anchor, String title, String message) {
+        Runnable[] close = new Runnable[1];
+        JLabel msg = new JLabel("<html><div style='width:320px'>" + escapeHtml(message).replace("\n", "<br>") + "</div></html>");
+        msg.setForeground(TEXT_LIGHT);
+        msg.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        JButton ok = overlayButton("OK", true);
+        ok.addActionListener(e -> close[0].run());
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        buttons.setOpaque(false);
+        buttons.add(ok);
+        JPanel body = new JPanel(new BorderLayout(0, 16));
+        body.setOpaque(false);
+        body.add(msg, BorderLayout.CENTER);
+        body.add(buttons, BorderLayout.SOUTH);
+        close[0] = showSheetOverlay(anchor, title, body, ok);
     }
 
     // ---------------- In-window overlay ----------------
@@ -2268,7 +2585,8 @@ public class App {
         x.addActionListener(e -> close.run());
         scrim.addMouseListener(new MouseAdapter() {
             @Override
-            public void mouseClicked(MouseEvent e) {
+            public void mouseReleased(MouseEvent e) {
+                if (!App.isClickRelease(e)) return;
                 close.run();
             }
         });
@@ -2279,10 +2597,18 @@ public class App {
             public void actionPerformed(ActionEvent e) {
                 close.run();
             }
+
+            // Only the topmost overlay answers Esc when overlays are stacked
+            @Override
+            public boolean isEnabled() {
+                return scrim.getParent() == layers && layers.getLayer(scrim) == JLayeredPane.MODAL_LAYER
+                        && layers.getPosition(scrim) == 0;
+            }
         });
 
         scrim.setBounds(0, 0, layers.getWidth(), layers.getHeight());
         layers.add(scrim, JLayeredPane.MODAL_LAYER);
+        layers.moveToFront(scrim); // stacked overlays (e.g. a condition opened from a spell) go on top
         layers.addComponentListener(resize);
         layers.revalidate();
         layers.repaint();
@@ -2308,23 +2634,50 @@ public class App {
             }
         }
 
+        Map<String, String> lineInfo = new LinkedHashMap<>();
+        lineInfo.put("Size", "Your size category, set by your species. Small and Medium creatures both occupy a 5-ft. space; size matters for grappling, squeezing and some spells and effects.");
+        lineInfo.put("Creature Type", "Your creature type matters for spells and effects that target specific types (for example, spells that only affect Humanoids).");
+        lineInfo.put("Climb Speed", "You can climb at this speed without spending extra movement.");
+
         JPanel list = new JPanel(new GridLayout(0, 1, 0, 2));
         list.setOpaque(false);
-        if (lines.isEmpty()) {
-            JLabel none = new JLabel("None recorded.");
-            none.setForeground(TEXT_MUTED);
-            none.setFont(new Font("SansSerif", Font.PLAIN, 13));
-            list.add(none);
-        }
         for (String[] ln : lines) {
             JLabel l = new JLabel("<html><span style='color:#aaa5a0'>" + escapeHtml(ln[0]) + ":</span> " + escapeHtml(ln[1]) + "</html>");
             l.setForeground(TEXT_LIGHT);
             l.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            l.setBorder(new EmptyBorder(1, 4, 1, 4));
+            clickable(l, () -> showInfoOverlay(list, ln[0] + ": " + ln[1], "Trait",
+                    lineInfo.getOrDefault(ln[0], "Chosen during character creation."), null));
             list.add(l);
         }
+
+        // Languages: Common + chosen + class-granted, each clickable for detail
+        JLabel langHeader = new JLabel("LANGUAGES");
+        langHeader.setForeground(TEXT_MUTED);
+        langHeader.setFont(new Font("SansSerif", Font.BOLD, 10));
+        langHeader.setBorder(new EmptyBorder(lines.isEmpty() ? 0 : 6, 4, 2, 4));
+        list.add(langHeader);
+        JPanel langGrid = new JPanel(new GridLayout(0, 2, 4, 2));
+        langGrid.setOpaque(false);
+        for (Map.Entry<String, String> en : CharacterStorage.recLanguageSources(rec).entrySet()) {
+            String lang = en.getKey();
+            String source = en.getValue();
+            JLabel l = new JLabel("• " + lang);
+            l.setForeground(TEXT_LIGHT);
+            l.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            l.setBorder(new EmptyBorder(1, 4, 1, 4));
+            clickable(l, () -> showInfoOverlay(list, lang, "Language",
+                    GameData.LANGUAGE_INFO.getOrDefault(lang, ""), Collections.singletonList(row("Known from", source))));
+            langGrid.add(l);
+        }
+
         JPanel wrap = new JPanel(new BorderLayout());
         wrap.setOpaque(false);
-        wrap.add(list, BorderLayout.NORTH);
+        JPanel stack = new JPanel(new BorderLayout());
+        stack.setOpaque(false);
+        stack.add(list, BorderLayout.NORTH);
+        stack.add(langGrid, BorderLayout.CENTER);
+        wrap.add(stack, BorderLayout.NORTH);
         return wrap;
     }
 
@@ -2402,7 +2755,8 @@ public class App {
         card.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(0, 3, 0, 0, GOLD), new EmptyBorder(8, 10, 8, 10)));
         card.add(lbl, BorderLayout.CENTER);
-        return card;
+        return clickable(card, () -> showInfoOverlay(card, title, subtitle,
+                description.isEmpty() ? "No further description." : description, null));
     }
 
     // "Fighting Style?" -> "Fighting Style", "Skills? (2)" -> "Skills"
@@ -2410,73 +2764,1012 @@ public class App {
         return label.replaceAll("\\s*\\(\\d+\\)\\s*$", "").replace("?", "").trim();
     }
 
-    private static void populateCharacterSpells(JPanel container, Map<?, ?> rec) {
-        container.removeAll();
-        container.setLayout(new BorderLayout());
-        container.setBorder(new EmptyBorder(20, 25, 20, 25));
+    // ===============================================================
+    // SPELLS TAB
+    //   header (ability / DC / attack / prepared per casting class) -> spell slots with clickable
+    //   pips -> spell cards grouped by Cantrips and Levels 1-9.
+    //   Slot usage is saved as spellSlotsUsed {"1": n, ...} and pactSlotsUsed (Warlock).
+    // ===============================================================
+    static final Color SPELL_ALWAYS = new Color(110, 190, 120);
+    private static final int SPELL_CARD_GAP = 10;
+    private static final int SPELL_ART_SIZE = 72;
 
-        Integer spellSlots = CharacterStorage.recInt(rec, "spellSlots");
-        List<String> cantrips = CharacterStorage.recList(rec, "cantripsKnown");
-        List<String> spells = CharacterStorage.recList(rec, "spellsKnown");
+    // One spell as listed on the sheet: registry data (null if unknown) + where it comes from
+    private static class SheetSpell {
+        String name;
+        Spell spell;
+        int level;
+        List<String> sources = new ArrayList<>();
+        boolean always;    // species / feat / class feature: doesn't count against the prepared limit
+        boolean bookOnly;  // in a Wizard's spellbook but not prepared
+        boolean arcanum;   // Warlock Mystic Arcanum (once per Long Rest, no slot)
+    }
 
-        JPanel body = new JPanel();
-        body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
-        body.setOpaque(false);
+    // Spell slot totals and usage. Shared Spellcasting slots + separate Warlock Pact Magic slots.
+    static class SlotState {
+        int[] max = new int[9];
+        int[] used = new int[9];
+        int pactMax, pactLevel, pactUsed;
 
-        if (spellSlots == null && cantrips.isEmpty() && spells.isEmpty()) {
-            JLabel none = new JLabel("No spells.");
-            none.setForeground(TEXT_MUTED);
-            none.setFont(new Font("SansSerif", Font.PLAIN, 18));
-            none.setAlignmentX(Component.LEFT_ALIGNMENT);
-            body.add(none);
-        } else {
-            if (spellSlots != null) {
-                JLabel slotsLbl = new JLabel("Level 1 Spell Slots: " + spellSlots);
-                slotsLbl.setForeground(TEXT_LIGHT);
-                slotsLbl.setFont(new Font("SansSerif", Font.BOLD, 16));
-                slotsLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
-                body.add(slotsLbl);
-                body.add(Box.createRigidArea(new Dimension(0, 16)));
-            }
-            body.add(spellListSection("Cantrips Known", cantrips));
-            body.add(Box.createRigidArea(new Dimension(0, 16)));
-            body.add(spellListSection("Spells Known", spells));
+        int remaining(int level) {
+            return level < 1 || level > 9 ? 0 : Math.max(0, max[level - 1] - used[level - 1]);
         }
 
-        container.add(body, BorderLayout.NORTH);
+        int pactRemaining() {
+            return Math.max(0, pactMax - pactUsed);
+        }
+
+        boolean any() {
+            if (pactMax > 0) return true;
+            for (int m : max) if (m > 0) return true;
+            return false;
+        }
+
+        SlotState copy() {
+            SlotState s = new SlotState();
+            s.max = max.clone();
+            s.used = used.clone();
+            s.pactMax = pactMax;
+            s.pactLevel = pactLevel;
+            s.pactUsed = pactUsed;
+            return s;
+        }
+    }
+
+    static SlotState recSlotState(Map<?, ?> rec) {
+        SlotState s = new SlotState();
+        Map<String, Integer> classLevels = CharacterStorage.recClassLevels(rec);
+        s.max = SpellData.spellSlots(classLevels);
+        Object u = rec.get("spellSlotsUsed");
+        if (u instanceof Map) {
+            for (int i = 1; i <= 9; i++) {
+                Object v = ((Map<?, ?>) u).get(String.valueOf(i));
+                if (v instanceof Number) s.used[i - 1] = Math.max(0, Math.min(s.max[i - 1], ((Number) v).intValue()));
+            }
+        }
+        int warlock = classLevels.getOrDefault("Warlock", 0);
+        s.pactMax = SpellData.pactSlotCount(warlock);
+        s.pactLevel = SpellData.pactSlotLevel(warlock);
+        Integer pu = CharacterStorage.recInt(rec, "pactSlotsUsed");
+        s.pactUsed = pu == null ? 0 : Math.max(0, Math.min(s.pactMax, pu));
+        return s;
+    }
+
+    static void writeSlotState(Map<String, Object> rec, SlotState s) {
+        Map<String, Object> used = new LinkedHashMap<>();
+        for (int i = 0; i < 9; i++) if (s.used[i] > 0) used.put(String.valueOf(i + 1), s.used[i]);
+        rec.put("spellSlotsUsed", used);
+        rec.put("pactSlotsUsed", s.pactUsed);
+    }
+
+    private static void populateCharacterSpells(JPanel container, Map<?, ?> rec,
+                                                java.util.function.Consumer<Map<String, Object>> onSave) {
+        container.removeAll();
+        container.setLayout(new MaxWidthCenterLayout(SHEET_MAX_WIDTH));
+        container.setBackground(SHEET_BG);
+        container.setBorder(new EmptyBorder(20, 16, 28, 16));
+
+        Map<String, Integer> classLevels = CharacterStorage.recClassLevels(rec);
+        int level = CharacterStorage.recLevel(rec);
+        int pb = GameData.proficiencyBonus(level);
+        Map<String, Integer> stats = CharacterStorage.recStatsMap(rec);
+        LinkedHashMap<String, Map<String, List<String>>> classSpells = CharacterStorage.recClassSpells(rec);
+        LinkedHashMap<String, String> always = SpellData.alwaysPrepared(rec);
+        SlotState slots = recSlotState(rec);
+        java.util.function.Consumer<SlotState> saveSlots = st -> {
+            Map<String, Object> work = recCopy(rec);
+            writeSlotState(work, st);
+            onSave.accept(work);
+        };
+
+        List<String> casters = new ArrayList<>();
+        for (String cls : classLevels.keySet()) if (SpellData.isCaster(cls)) casters.add(cls);
+
+        // ---- Collect every spell the character has, merged by name ----
+        LinkedHashMap<String, SheetSpell> entries = new LinkedHashMap<>();
+        java.util.function.BiFunction<String, String, SheetSpell> entry = (name, source) -> {
+            SheetSpell ss = entries.get(name);
+            if (ss == null) {
+                ss = new SheetSpell();
+                ss.name = name;
+                ss.spell = SpellData.lookup(name);
+                ss.level = ss.spell != null ? ss.spell.level : 1;
+                ss.bookOnly = true;
+                entries.put(name, ss);
+            }
+            if (!ss.sources.contains(source)) ss.sources.add(source);
+            return ss;
+        };
+        for (Map.Entry<String, Map<String, List<String>>> en : classSpells.entrySet()) {
+            String cls = en.getKey();
+            for (String n : en.getValue().get("cantrips")) {
+                SheetSpell ss = entry.apply(n, cls);
+                ss.bookOnly = false;
+                if (ss.spell == null) ss.level = 0;
+            }
+            for (String n : en.getValue().get("prepared")) entry.apply(n, cls).bookOnly = false;
+            for (String n : en.getValue().get("spellbook")) {
+                if (!en.getValue().get("prepared").contains(n)) entry.apply(n, cls + " spellbook");
+            }
+            for (String n : en.getValue().get("arcanum")) {
+                SheetSpell ss = entry.apply(n, cls + " (Mystic Arcanum)");
+                ss.arcanum = true;
+                ss.bookOnly = false;
+            }
+        }
+        for (Map.Entry<String, String> en : always.entrySet()) {
+            SheetSpell ss = entry.apply(en.getKey(), en.getValue());
+            ss.always = true;
+            ss.bookOnly = false;
+        }
+
+        List<JComponent> blocks = new ArrayList<>();
+        blocks.add(spellHeaderCard(rec, casters, classLevels, classSpells, always, stats, pb));
+        if (slots.any()) blocks.add(spellSlotsCard(slots, classLevels, saveSlots));
+
+        if (entries.isEmpty()) {
+            JLabel none = new JLabel("<html><div style='width:600px'>No spells yet. Spellcasting classes choose spells "
+                    + "when the character is created and when they level up; some species and feats also grant spells.</div></html>");
+            none.setForeground(TEXT_MUTED);
+            none.setFont(new Font("SansSerif", Font.PLAIN, 14));
+            blocks.add(sheetCard("Spells", none));
+        } else {
+            TreeMap<Integer, List<SheetSpell>> byLevel = new TreeMap<>();
+            for (SheetSpell ss : entries.values()) byLevel.computeIfAbsent(ss.level, k -> new ArrayList<>()).add(ss);
+            for (Map.Entry<Integer, List<SheetSpell>> en : byLevel.entrySet()) {
+                List<SheetSpell> list = en.getValue();
+                list.sort(Comparator.comparing((SheetSpell s) -> s.bookOnly).thenComparing(s -> s.name));
+                blocks.add(spellLevelSection(en.getKey(), list, slots, saveSlots));
+            }
+        }
+
+        container.add(sheetStack(14, false, blocks.toArray(new JComponent[0])));
         container.revalidate();
         container.repaint();
     }
 
-    private static JPanel spellListSection(String title, List<String> spells) {
-        JPanel section = new JPanel();
-        section.setLayout(new BoxLayout(section, BoxLayout.Y_AXIS));
-        section.setOpaque(false);
-        section.setAlignmentX(Component.LEFT_ALIGNMENT);
+    // ---------------- Header: ability / save DC / attack / prepared, one row per casting class ----------------
+    private static JPanel spellHeaderCard(Map<?, ?> rec, List<String> casters, Map<String, Integer> classLevels,
+                                          Map<String, Map<String, List<String>>> classSpells, Map<String, String> always,
+                                          Map<String, Integer> stats, int pb) {
+        JPanel rows = new JPanel();
+        rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
+        rows.setOpaque(false);
 
-        JLabel titleLbl = new JLabel(title);
-        titleLbl.setForeground(GOLD);
-        titleLbl.setFont(new Font("SansSerif", Font.BOLD, 16));
-        titleLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
-        section.add(titleLbl);
-        section.add(Box.createRigidArea(new Dimension(0, 6)));
-
-        if (spells.isEmpty()) {
-            JLabel none = new JLabel("None");
+        List<String[]> rowSpecs = new ArrayList<>(); // {class, ability}
+        for (String cls : casters) rowSpecs.add(new String[]{cls, SpellData.CASTING_ABILITY.get(cls)});
+        if (casters.isEmpty() && !always.isEmpty()) {
+            // Species / feat spells: the ability is chosen from INT, WIS, or CHA; assume the highest.
+            String best = "INT";
+            for (String s : new String[]{"WIS", "CHA"}) if (stats.getOrDefault(s, 10) > stats.getOrDefault(best, 10)) best = s;
+            rowSpecs.add(new String[]{null, best});
+        }
+        if (rowSpecs.isEmpty()) {
+            JLabel none = new JLabel("This character has no spellcasting class.");
             none.setForeground(TEXT_MUTED);
-            none.setFont(new Font("SansSerif", Font.PLAIN, 14));
-            none.setAlignmentX(Component.LEFT_ALIGNMENT);
-            section.add(none);
-        } else {
-            for (String spell : spells) {
-                JLabel spellLbl = new JLabel("• " + spell);
-                spellLbl.setForeground(TEXT_LIGHT);
-                spellLbl.setFont(new Font("SansSerif", Font.PLAIN, 14));
-                spellLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
-                section.add(spellLbl);
+            none.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            return sheetCard("Spellcasting", none);
+        }
+
+        for (int r = 0; r < rowSpecs.size(); r++) {
+            String cls = rowSpecs.get(r)[0];
+            String ab = rowSpecs.get(r)[1];
+            int score = stats.getOrDefault(ab, 10);
+            int mod = GameData.abilityModifier(score);
+            int dc = 8 + pb + mod;
+            int atk = pb + mod;
+            String abName = STAT_FULL_NAMES[Arrays.asList(GameData.STAT_ORDER).indexOf(ab)];
+            String who = cls == null ? "Innate spells" : cls;
+            int clsLevel = cls == null ? 0 : classLevels.getOrDefault(cls, 0);
+
+            JPanel tiles = new JPanel(new GridLayout(1, 0, 8, 0));
+            tiles.setOpaque(false);
+
+            String classSub = cls == null ? "From species & feats" : "Level " + clsLevel
+                    + (SpellData.PACT.equals(SpellData.CASTER_TYPE.get(cls)) ? " · Pact Magic" : "");
+            tiles.add(clickable(spellTile(cls == null ? "Innate" : cls, classSub.toUpperCase()), () -> {
+                if (cls == null) {
+                    showInfoOverlay(tiles, "Innate Spellcasting", "Species & feats",
+                            "Spells granted by your species, lineage, or feats are always prepared. When you gain them you choose "
+                                    + "Intelligence, Wisdom, or Charisma as their spellcasting ability; the sheet uses your highest.", null);
+                } else {
+                    String type = SpellData.CASTER_TYPE.get(cls);
+                    String kind = SpellData.FULL.equals(type) ? "Full caster: every class level counts toward your spell slots."
+                            : SpellData.HALF.equals(type) ? "Half caster: half your class levels (rounded up) count toward your spell slots."
+                            : "Pact Magic: a few slots that are always your highest slot level and return on a Short or Long Rest.";
+                    String[] info = GameData.CLASS_INFO.get(cls);
+                    showInfoOverlay(tiles, cls + " Spellcasting", "Level " + clsLevel,
+                            (info != null ? info[1] + "\n\n" : "") + kind,
+                            Arrays.asList(row("Spellcasting ability", abName),
+                                    row("Highest spell level", SpellData.maxSpellLevel(cls, clsLevel) == 0 ? "—" : String.valueOf(SpellData.maxSpellLevel(cls, clsLevel)))));
+                }
+            }));
+            tiles.add(clickable(spellTile(ab + " " + signed(mod), "SPELLCASTING ABILITY"), () ->
+                    showInfoOverlay(tiles, "Spellcasting Ability", who,
+                            (cls == null ? "Your innate spells" : who + " spells") + " use " + abName
+                                    + ". Its modifier sets your spell save DC and spell attack bonus, and adds to many spells' healing and damage.",
+                            Arrays.asList(row(abName + " score", String.valueOf(score)), row("Modifier", signed(mod)),
+                                    row("Source", cls == null ? "Species / feat (your choice of INT, WIS, CHA)" : cls + " class")))));
+            tiles.add(clickable(spellTile(String.valueOf(dc), "SPELL SAVE DC"), () ->
+                    showInfoOverlay(tiles, "Spell Save DC", who,
+                            "When one of your spells forces a saving throw, the target must meet or beat this number.",
+                            Arrays.asList(row("Base", "8"), row("Proficiency Bonus", signed(pb)),
+                                    row(ab + " modifier", signed(mod)), row("Spell save DC", String.valueOf(dc))))));
+            tiles.add(clickable(spellTile(signed(atk), "SPELL ATTACK"), () ->
+                    showInfoOverlay(tiles, "Spell Attack Bonus", who,
+                            "Add this to the d20 when a spell calls for a melee or ranged spell attack.",
+                            Arrays.asList(row("Proficiency Bonus", signed(pb)), row(ab + " modifier", signed(mod)),
+                                    row("Spell attack", signed(atk))))));
+
+            if (cls != null) {
+                Map<String, List<String>> lists = classSpells.getOrDefault(cls, CharacterStorage.emptyClassSpells());
+                int preparedCount = 0;
+                for (String n : lists.get("prepared")) if (!always.containsKey(n)) preparedCount++;
+                final int prepared = preparedCount;
+                int maxPrepared = SpellData.preparedCount(cls, clsLevel);
+                tiles.add(clickable(spellTile(prepared + " / " + maxPrepared, "PREPARED SPELLS"), () -> {
+                    String rule = "Bard".equals(cls) || "Sorcerer".equals(cls) || "Warlock".equals(cls)
+                            ? "When you gain a " + cls + " level you can replace one of these spells with another " + cls + " spell."
+                            : "Wizard".equals(cls) ? "After a Long Rest you can change your prepared spells to any spells in your spellbook."
+                            : "Paladin".equals(cls) || "Ranger".equals(cls) || "Artificer".equals(cls)
+                            ? "After a Long Rest you can replace one prepared spell with another " + cls + " spell."
+                            : "After a Long Rest you can change your prepared spells to any " + cls + " spells.";
+                    showInfoOverlay(tiles, "Prepared Spells", cls + " level " + clsLevel,
+                            "The leveled spells you can cast. The number grows as you gain " + cls + " levels (2024 table). "
+                                    + "Always-prepared spells from species, feats, and class features don't count against it.\n\n" + rule,
+                            Arrays.asList(row("Prepared", String.valueOf(prepared)), row("Allowed at this level", String.valueOf(maxPrepared))));
+                }));
+                int maxCantrips = SpellData.cantripsKnown(cls, clsLevel);
+                if (maxCantrips > 0 || !lists.get("cantrips").isEmpty()) {
+                    int known = lists.get("cantrips").size();
+                    tiles.add(clickable(spellTile(known + " / " + maxCantrips, "CANTRIPS"), () ->
+                            showInfoOverlay(tiles, "Cantrips", cls + " level " + clsLevel,
+                                    "Cantrips can be cast at will, without a spell slot. You learn more at higher " + cls + " levels.",
+                                    Arrays.asList(row("Known", String.valueOf(known)), row("Allowed at this level", String.valueOf(maxCantrips))))));
+                }
+                if (SpellData.isPreparedFromBook(cls)) {
+                    int book = lists.get("spellbook").size();
+                    tiles.add(clickable(spellTile(String.valueOf(book), "SPELLBOOK"), () ->
+                            showInfoOverlay(tiles, "Spellbook", "Wizard",
+                                    "Your spellbook holds the Wizard spells you've learned: six at level 1, plus two more each Wizard level. "
+                                            + "You prepare spells from it, and can cast its Ritual spells without preparing them.",
+                                    Collections.singletonList(row("Spells in book", String.valueOf(book))))));
+                }
+            }
+            if (r > 0) rows.add(Box.createRigidArea(new Dimension(0, 8)));
+            tiles.setAlignmentX(Component.LEFT_ALIGNMENT);
+            rows.add(tiles);
+        }
+        return sheetCard("Spellcasting", rows);
+    }
+
+    private static JPanel spellTile(String value, String caption) {
+        JPanel tile = new JPanel(new BorderLayout(0, 2));
+        tile.setBackground(SHEET_ROW_ALT);
+        tile.setBorder(BorderFactory.createCompoundBorder(new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(8, 8, 6, 8)));
+        JLabel v = new JLabel(value, SwingConstants.CENTER);
+        v.setForeground(GOLD);
+        v.setFont(new Font("SansSerif", Font.BOLD, 19));
+        tile.add(v, BorderLayout.CENTER);
+        tile.add(sheetCaption(caption, SwingConstants.CENTER), BorderLayout.SOUTH);
+        return tile;
+    }
+
+    // ---------------- Spell slots: one row of pips per level, plus Pact Magic ----------------
+    private static JPanel spellSlotsCard(SlotState slots, Map<String, Integer> classLevels,
+                                         java.util.function.Consumer<SlotState> saveSlots) {
+        JPanel rows = new JPanel();
+        rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
+        rows.setOpaque(false);
+
+        int casterLevel = SpellData.casterLevel(classLevels);
+        for (int lvl = 1; lvl <= 9; lvl++) {
+            int max = slots.max[lvl - 1];
+            if (max == 0) continue;
+            final int L = lvl;
+            JLabel name = slotRowLabel(SpellData.ordinal(lvl) + " level");
+            clickable(name, () -> showInfoOverlay(name, "Level " + L + " Spell Slots", "Spellcasting",
+                    "Casting a spell of level " + L + " or lower can expend one of these slots (a lower-level spell cast with a higher slot is "
+                            + "\"upcast\" for a stronger effect). Click a gold pip to expend a slot, or an empty pip to restore one. "
+                            + "All spell slots return when you finish a Long Rest.",
+                    Arrays.asList(row("Total", String.valueOf(max)), row("Remaining", String.valueOf(slots.remaining(L))),
+                            row("Caster level", String.valueOf(casterLevel)))));
+            rows.add(slotRow(name, max, slots.remaining(L), GOLD, () -> {
+                SlotState s = slots.copy();
+                s.used[L - 1] = Math.min(max, s.used[L - 1] + 1);
+                saveSlots.accept(s);
+            }, () -> {
+                SlotState s = slots.copy();
+                s.used[L - 1] = Math.max(0, s.used[L - 1] - 1);
+                saveSlots.accept(s);
+            }));
+        }
+        if (slots.pactMax > 0) {
+            int warlock = classLevels.getOrDefault("Warlock", 0);
+            JLabel name = slotRowLabel("Pact (" + SpellData.ordinal(slots.pactLevel) + ")");
+            clickable(name, () -> showInfoOverlay(name, "Pact Magic Slots", "Warlock level " + warlock,
+                    "Warlock slots are always level " + slots.pactLevel + " at your Warlock level, so every spell you cast with one is cast at that level. "
+                            + "They return when you finish a Short or Long Rest. They can also power spells from your other classes.",
+                    Arrays.asList(row("Slots", String.valueOf(slots.pactMax)), row("Slot level", String.valueOf(slots.pactLevel)),
+                            row("Remaining", String.valueOf(slots.pactRemaining())))));
+            rows.add(slotRow(name, slots.pactMax, slots.pactRemaining(), new Color(170, 120, 220), () -> {
+                SlotState s = slots.copy();
+                s.pactUsed = Math.min(s.pactMax, s.pactUsed + 1);
+                saveSlots.accept(s);
+            }, () -> {
+                SlotState s = slots.copy();
+                s.pactUsed = Math.max(0, s.pactUsed - 1);
+                saveSlots.accept(s);
+            }));
+        }
+
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        actions.setOpaque(false);
+        if (slots.pactMax > 0) {
+            JButton shortRest = sheetIconButton("Short Rest", "Restore Pact Magic slots");
+            shortRest.setFont(new Font("SansSerif", Font.BOLD, 11));
+            shortRest.setEnabled(slots.pactUsed > 0);
+            shortRest.addActionListener(e -> {
+                SlotState s = slots.copy();
+                s.pactUsed = 0;
+                saveSlots.accept(s);
+            });
+            actions.add(shortRest);
+        }
+        JButton longRest = sheetIconButton("Long Rest", "Restore all spell slots");
+        longRest.setFont(new Font("SansSerif", Font.BOLD, 11));
+        boolean anyUsed = slots.pactUsed > 0;
+        for (int u : slots.used) anyUsed |= u > 0;
+        longRest.setEnabled(anyUsed);
+        longRest.addActionListener(e -> {
+            SlotState s = slots.copy();
+            s.used = new int[9];
+            s.pactUsed = 0;
+            saveSlots.accept(s);
+        });
+        actions.add(longRest);
+        return sheetCardWithAction("Spell Slots", actions, rows);
+    }
+
+    private static JLabel slotRowLabel(String text) {
+        JLabel l = new JLabel(text);
+        l.setForeground(TEXT_LIGHT);
+        l.setFont(new Font("SansSerif", Font.BOLD, 13));
+        l.setBorder(new EmptyBorder(2, 4, 2, 4));
+        return l;
+    }
+
+    // "1st level  ● ● ○ ○   2 / 4": clicking a filled pip expends a slot, an empty one restores it
+    private static JPanel slotRow(JLabel name, int max, int remaining, Color color, Runnable expend, Runnable restore) {
+        JPanel row = new JPanel(new BorderLayout(10, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row.setBorder(new EmptyBorder(3, 0, 3, 0));
+        JPanel nameWrap = fixedWidth(name, 96);
+        row.add(nameWrap, BorderLayout.WEST);
+
+        JPanel pips = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        pips.setOpaque(false);
+        for (int i = 0; i < max; i++) {
+            boolean available = i < remaining;
+            JLabel pip = new JLabel(new SlotPipIcon(available, color));
+            pip.setBorder(new EmptyBorder(2, 2, 2, 2));
+            pip.setToolTipText(available ? "Expend a slot" : "Restore a slot");
+            pips.add(clickable(pip, available ? expend : restore));
+        }
+        JLabel count = new JLabel(remaining + " / " + max);
+        count.setForeground(remaining == 0 ? TEXT_MUTED : TEXT_LIGHT);
+        count.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        count.setBorder(new EmptyBorder(0, 8, 0, 0));
+        pips.add(count);
+        row.add(pips, BorderLayout.CENTER);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+        return row;
+    }
+
+    // ---------------- Spell sections and cards ----------------
+    private static JPanel spellLevelSection(int level, List<SheetSpell> spells, SlotState slots,
+                                            java.util.function.Consumer<SlotState> saveSlots) {
+        JPanel head = new JPanel(new BorderLayout(10, 0));
+        head.setOpaque(false);
+        head.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, GOLD_SOFT), new EmptyBorder(0, 2, 4, 2)));
+        JLabel title = new JLabel(level == 0 ? "CANTRIPS" : "LEVEL " + level);
+        title.setForeground(GOLD);
+        title.setFont(new Font("Serif", Font.BOLD, 18));
+        head.add(clickable(title, () -> showInfoOverlay(title, level == 0 ? "Cantrips" : "Level " + level + " Spells", "Spell level",
+                level == 0 ? "Cantrips are cast at will without spell slots. Damaging cantrips grow stronger at character levels 5, 11, and 17."
+                        : "Casting a level " + level + " spell expends a spell slot of level " + level + " or higher. "
+                        + "Spells with the Ritual tag can instead be cast as a Ritual (10 minutes longer, no slot).",
+                null)), BorderLayout.WEST);
+        String right = level == 0 ? "At will" : "";
+        if (level > 0) {
+            List<String> parts = new ArrayList<>();
+            if (slots.max[level - 1] > 0) parts.add(slots.remaining(level) + " / " + slots.max[level - 1] + " slots");
+            if (slots.pactMax > 0 && slots.pactLevel >= level) parts.add(slots.pactRemaining() + " pact");
+            right = parts.isEmpty() ? "No slots of this level" : String.join("  ·  ", parts);
+        }
+        JLabel rightLbl = new JLabel(right);
+        rightLbl.setForeground(TEXT_MUTED);
+        rightLbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        head.add(rightLbl, BorderLayout.EAST);
+
+        int cardWidth = (SHEET_MAX_WIDTH - SPELL_CARD_GAP) / 2;
+        JPanel grid = new JPanel(new GridLayout(0, 2, SPELL_CARD_GAP, SPELL_CARD_GAP));
+        grid.setOpaque(false);
+        for (SheetSpell ss : spells) grid.add(spellCard(ss, cardWidth, slots, saveSlots));
+        if (spells.size() % 2 == 1) {
+            JPanel filler = new JPanel();
+            filler.setOpaque(false);
+            grid.add(filler);
+        }
+        return sheetStack(8, false, head, grid);
+    }
+
+    private static JPanel spellCard(SheetSpell ss, int cardWidth, SlotState slots,
+                                    java.util.function.Consumer<SlotState> saveSlots) {
+        Spell sp = ss.spell;
+        String sourceText = String.join(", ", ss.sources);
+        JPanel card = new JPanel(new BorderLayout(12, 0));
+        card.setBackground(SHEET_CARD);
+        Color edge = ss.always ? new Color(110, 190, 120, 150) : ss.bookOnly ? SHEET_BORDER : GOLD_SOFT;
+        card.setBorder(BorderFactory.createCompoundBorder(new LineBorder(edge, 1, true), new EmptyBorder(10, 10, 10, 10)));
+        Runnable openDetail = () -> showSpellOverlay(card, sp, ss.name, sourceText, ss.always);
+        clickableCard(card, openDetail);
+
+        JPanel artWrap = new JPanel(new BorderLayout());
+        artWrap.setOpaque(false);
+        artWrap.add(new SpellArtFrame(sp, SPELL_ART_SIZE), BorderLayout.NORTH);
+        card.add(artWrap, BorderLayout.WEST);
+
+        JPanel body = new JPanel();
+        body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+        body.setOpaque(false);
+        int textWidth = cardWidth - 2 - 20 - SPELL_ART_SIZE - 12 - 4;
+
+        JPanel top = new JPanel(new BorderLayout(8, 0));
+        top.setOpaque(false);
+        JLabel name = new JLabel(ss.name);
+        name.setForeground(ss.bookOnly ? TEXT_MUTED : GOLD);
+        name.setFont(new Font("SansSerif", Font.BOLD, 15));
+        top.add(name, BorderLayout.CENTER);
+        JButton cast = castButton(ss, slots, saveSlots);
+        if (cast != null) {
+            followCardHover(card, cast);
+            top.add(cast, BorderLayout.EAST);
+        }
+        top.setAlignmentX(Component.LEFT_ALIGNMENT);
+        top.setMaximumSize(new Dimension(textWidth, top.getPreferredSize().height));
+        body.add(top);
+
+        String sub = (sp != null ? sp.levelLine() : (ss.level == 0 ? "Cantrip" : "Spell")) + "  ·  " + sourceText;
+        JLabel subLbl = new JLabel(sub.toUpperCase());
+        subLbl.setForeground(TEXT_MUTED);
+        subLbl.setFont(new Font("SansSerif", Font.BOLD, 10));
+        subLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        subLbl.setBorder(new EmptyBorder(1, 0, 5, 0));
+        body.add(subLbl);
+
+        JPanel badges = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 3));
+        badges.setOpaque(false);
+        List<JComponent> badgeList = new ArrayList<>();
+        if (ss.always) badgeList.add(spellBadge("ALWAYS PREPARED", SPELL_ALWAYS, () -> showInfoOverlay(card, "Always Prepared", sourceText,
+                "This spell is granted by " + sourceText + ". It's always prepared and doesn't count against the number of spells you can prepare."
+                        + " Species and feat spells can usually also be cast once per Long Rest without a slot.", null)));
+        if (ss.bookOnly) badgeList.add(spellBadge("SPELLBOOK", TEXT_MUTED, () -> showInfoOverlay(card, "In Spellbook (Not Prepared)", "Wizard",
+                "This spell is in your spellbook but isn't prepared, so you can't cast it with a slot today. Change your prepared spells after a Long Rest. "
+                        + "Ritual spells in your spellbook can still be cast as Rituals.", null)));
+        if (ss.arcanum) badgeList.add(spellBadge("MYSTIC ARCANUM · 1/LONG REST", new Color(170, 120, 220), () -> showInfoOverlay(card, "Mystic Arcanum", "Warlock",
+                "Your patron grants one spell of this level. You can cast it once without a spell slot, and regain the use when you finish a Long Rest.", null)));
+        if (sp != null) {
+            if (sp.concentration) badgeList.add(spellBadge("C", new Color(120, 170, 230), () -> showConcentrationInfo(card)));
+            if (sp.ritual) badgeList.add(spellBadge("R", new Color(200, 160, 90), () -> showRitualInfo(card)));
+            if (!sp.componentLetters().isEmpty()) badgeList.add(spellBadge(sp.componentLetters().replace(", ", " "), TEXT_LIGHT, () -> showComponentsInfo(card, sp)));
+            badgeList.add(spellBadge(sp.castingTime, TEXT_LIGHT, () -> showInfoOverlay(card, "Casting Time", sp.name, castingTimeInfo(sp.castingTime), null)));
+            badgeList.add(spellBadge(sp.range, TEXT_LIGHT, () -> showInfoOverlay(card, "Range", sp.name,
+                    "Range: " + sp.range + ". Self means the spell originates from you (often as a Cone, Line, or Emanation); Touch means you must touch the target.", null)));
+        }
+        if (ss.level == 0) badgeList.add(spellBadge("AT WILL", TEXT_MUTED, () -> showInfoOverlay(card, "At Will", "Cantrip",
+                "Cantrips don't use spell slots; you can cast them as often as you like.", null)));
+        for (JComponent b : badgeList) {
+            followCardHover(card, b);
+            badges.add(b);
+        }
+        badges.setAlignmentX(Component.LEFT_ALIGNMENT);
+        // FlowLayout doesn't report a wrapped height, so size the badge row for the card's text width
+        badges.setSize(textWidth, 200);
+        badges.doLayout();
+        int badgeHeight = 0;
+        for (Component c : badges.getComponents()) badgeHeight = Math.max(badgeHeight, c.getY() + c.getHeight());
+        Dimension bd = new Dimension(textWidth, badgeHeight + 3);
+        badges.setPreferredSize(bd);
+        badges.setMaximumSize(bd);
+        body.add(badges);
+
+        String desc = sp != null && !sp.description.isEmpty() ? snippet(sp.description, 150)
+                : "No description in the spell registry yet (add it to SpellData.java).";
+        JEditorPane text = conditionLinkedText(desc, textWidth, 12, sp != null ? TEXT_LIGHT : TEXT_MUTED, openDetail);
+        text.setBorder(new EmptyBorder(4, 0, 0, 0));
+        Dimension td = text.getPreferredSize();
+        text.setPreferredSize(new Dimension(td.width, td.height + 4));
+        text.setMaximumSize(text.getPreferredSize());
+        text.setAlignmentX(Component.LEFT_ALIGNMENT);
+        followCardHover(card, text);
+        body.add(text);
+
+        // Pin the text column's width so long subtitles truncate instead of widening the grid
+        card.add(fixedWidth(body, textWidth), BorderLayout.CENTER);
+        return card;
+    }
+
+    private static String snippet(String text, int max) {
+        if (text.length() <= max) return text;
+        int cut = text.lastIndexOf(' ', max);
+        return text.substring(0, cut > 40 ? cut : max).replaceAll("[,.;:]$", "") + "…";
+    }
+
+    private static JLabel spellBadge(String text, Color color, Runnable onClick) {
+        JLabel b = new JLabel(text);
+        b.setForeground(color);
+        b.setFont(new Font("SansSerif", Font.BOLD, 10));
+        b.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(new Color(color.getRed(), color.getGreen(), color.getBlue(), 120), 1, true), new EmptyBorder(1, 5, 1, 5)));
+        return clickable(b, onClick);
+    }
+
+    private static String castingTimeInfo(String time) {
+        if ("Action".equals(time)) return "Casting this spell takes your action (the Magic action) on your turn.";
+        if ("Bonus Action".equals(time)) return "Cast with your Bonus Action. On a turn you cast a spell this way, "
+                + "you can't cast another spell that uses a spell slot.";
+        if ("Reaction".equals(time)) return "Cast with your Reaction when the spell's trigger happens, even on another creature's turn.";
+        return "Casting this spell takes " + time + " of uninterrupted effort; you must maintain Concentration while casting.";
+    }
+
+    private static void showConcentrationInfo(Component anchor) {
+        showInfoOverlay(anchor, "Concentration", "Spell tag",
+                "You can concentrate on only one spell at a time; casting another Concentration spell ends the first. "
+                        + "When you take damage, make a CON save (DC 10 or half the damage, max DC 30) or the spell ends. "
+                        + "It also ends if you have the Incapacitated condition or die.", null);
+    }
+
+    private static void showRitualInfo(Component anchor) {
+        showInfoOverlay(anchor, "Ritual", "Spell tag",
+                "You can cast this spell as a Ritual if you have it prepared: it takes 10 minutes longer to cast and doesn't expend a spell slot. "
+                        + "Wizards can ritual-cast any Ritual spell in their spellbook.", null);
+    }
+
+    private static void showComponentsInfo(Component anchor, Spell sp) {
+        List<String[]> rows = new ArrayList<>();
+        if (sp.hasComponent("V")) rows.add(row("V (Verbal)", "Chanted words"));
+        if (sp.hasComponent("S")) rows.add(row("S (Somatic)", "A free hand to gesture"));
+        if (sp.hasComponent("M")) rows.add(row("M (Material)", "Component pouch or focus"));
+        String mat = sp.materialText();
+        showInfoOverlay(anchor, "Components", sp.name,
+                "What casting " + sp.name + " requires." + (mat.isEmpty() ? "" : "\n\nMaterial: " + mat
+                        + (mat.contains("consumed") ? "" : mat.contains("GP") ? "\nA material with a cost must be on hand; a focus can't replace it." : "\nA spellcasting focus or component pouch can stand in for it."))
+                , rows);
+    }
+
+    // Cast button: expends a slot (asking which one when there's a choice); null for cantrips/arcanum
+    private static JButton castButton(SheetSpell ss, SlotState slots, java.util.function.Consumer<SlotState> saveSlots) {
+        if (ss.level == 0 || ss.arcanum) return null;
+        Spell sp = ss.spell;
+        boolean ritual = sp != null && sp.ritual;
+        if (ss.bookOnly && !ritual) return null;
+
+        List<String> labels = new ArrayList<>();
+        List<Runnable> actions = new ArrayList<>();
+        if (!ss.bookOnly) {
+            for (int lvl = Math.max(1, ss.level); lvl <= 9; lvl++) {
+                int rem = slots.remaining(lvl);
+                if (rem <= 0) continue;
+                final int L = lvl;
+                labels.add("Level " + L + " slot" + (L > ss.level ? " (upcast)" : "") + "  —  " + rem + " left");
+                actions.add(() -> {
+                    SlotState s = slots.copy();
+                    s.used[L - 1]++;
+                    saveSlots.accept(s);
+                });
+            }
+            if (slots.pactMax > 0 && slots.pactLevel >= ss.level && slots.pactRemaining() > 0) {
+                labels.add("Pact slot (level " + slots.pactLevel + ")  —  " + slots.pactRemaining() + " left");
+                actions.add(() -> {
+                    SlotState s = slots.copy();
+                    s.pactUsed++;
+                    saveSlots.accept(s);
+                });
             }
         }
-        return section;
+        if (ritual) {
+            labels.add("Cast as a Ritual  —  no slot, +10 minutes");
+            actions.add(() -> { });
+        }
+
+        JButton b = new JButton(ss.bookOnly ? "Ritual" : "Cast");
+        b.setFont(new Font("SansSerif", Font.BOLD, 11));
+        b.setFocusPainted(false);
+        b.setOpaque(true);
+        boolean enabled = !labels.isEmpty();
+        b.setEnabled(enabled);
+        b.setForeground(enabled ? SHEET_BG : TEXT_MUTED);
+        b.setBackground(enabled ? GOLD : SHEET_ROW_ALT);
+        b.setBorder(BorderFactory.createCompoundBorder(new LineBorder(enabled ? GOLD : SHEET_BORDER, 1, true), new EmptyBorder(3, 10, 3, 10)));
+        b.setCursor(new Cursor(enabled ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+        b.setToolTipText(enabled ? "Cast " + ss.name : "No spell slots of level " + ss.level + " or higher left. Take a Long Rest to recover them.");
+        b.addActionListener(e -> {
+            if (labels.size() == 1 && !ritual) {
+                actions.get(0).run();
+                return;
+            }
+            JPanel list = new JPanel(new GridLayout(0, 1, 0, 6));
+            list.setOpaque(false);
+            Runnable[] close = new Runnable[1];
+            for (int i = 0; i < labels.size(); i++) {
+                JButton opt = overlayButton(labels.get(i), i == 0);
+                opt.setHorizontalAlignment(SwingConstants.LEFT);
+                Runnable act = actions.get(i);
+                opt.addActionListener(ev -> {
+                    close[0].run();
+                    act.run();
+                });
+                list.add(opt);
+            }
+            JLabel hint = new JLabel("Choose how to cast " + ss.name + ":");
+            hint.setForeground(TEXT_MUTED);
+            hint.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            JPanel body = new JPanel(new BorderLayout(0, 10));
+            body.setOpaque(false);
+            body.add(hint, BorderLayout.NORTH);
+            body.add(list, BorderLayout.CENTER);
+            close[0] = showSheetOverlay(b, "Cast " + ss.name, body, null);
+        });
+        return b;
+    }
+
+    // ---------------- Spell detail overlay (also used by the Level Up spell previews) ----------------
+    static void showSpellOverlay(Component anchor, Spell sp, String name, String source, boolean always) {
+        if (sp == null) {
+            showInfoOverlay(anchor, name, "Spell", "This spell isn't in the spell registry yet, so there are no details to show. "
+                    + "Add it to SpellData.java to give it a full card.", source == null ? null : Collections.singletonList(row("Source", source)));
+            return;
+        }
+        JPanel body = new JPanel();
+        body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+        body.setOpaque(false);
+
+        JPanel top = new JPanel(new BorderLayout(14, 0));
+        top.setOpaque(false);
+        top.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JPanel artWrap = new JPanel(new BorderLayout());
+        artWrap.setOpaque(false);
+        artWrap.add(new SpellArtFrame(sp, 96), BorderLayout.NORTH);
+        top.add(artWrap, BorderLayout.WEST);
+
+        List<String[]> facts = new ArrayList<>();
+        facts.add(row("Level", sp.level == 0 ? "Cantrip" : String.valueOf(sp.level)));
+        facts.add(row("School", sp.school));
+        facts.add(row("Casting Time", sp.castingTime + (sp.ritual ? " or Ritual" : "")));
+        facts.add(row("Range", sp.range));
+        facts.add(row("Components", sp.componentLetters()));
+        facts.add(row("Duration", sp.duration));
+        if (source != null && !source.isEmpty()) facts.add(row("Source", source + (always ? " (always prepared)" : "")));
+        JPanel table = new JPanel(new GridBagLayout());
+        table.setOpaque(false);
+        GridBagConstraints c = new GridBagConstraints();
+        c.anchor = GridBagConstraints.NORTHWEST;
+        c.insets = new Insets(1, 0, 1, 12);
+        for (int i = 0; i < facts.size(); i++) {
+            c.gridy = i;
+            c.gridx = 0;
+            JLabel k = new JLabel(facts.get(i)[0]);
+            k.setForeground(TEXT_MUTED);
+            k.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            table.add(k, c);
+            c.gridx = 1;
+            JLabel v = new JLabel(facts.get(i)[1]);
+            v.setForeground(TEXT_LIGHT);
+            v.setFont(new Font("SansSerif", Font.BOLD, 12));
+            table.add(v, c);
+        }
+        top.add(table, BorderLayout.CENTER);
+        body.add(top);
+
+        int width = 420;
+        if (!sp.materialText().isEmpty()) {
+            body.add(Box.createRigidArea(new Dimension(0, 8)));
+            JLabel mat = new JLabel("<html><div style='width:" + width + "px'><i>Material: " + escapeHtml(sp.materialText()) + "</i></div></html>");
+            mat.setForeground(TEXT_MUTED);
+            mat.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            mat.setAlignmentX(Component.LEFT_ALIGNMENT);
+            body.add(mat);
+        }
+
+        JPanel tags = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        tags.setOpaque(false);
+        tags.setAlignmentX(Component.LEFT_ALIGNMENT);
+        if (always) tags.add(spellBadge("ALWAYS PREPARED", SPELL_ALWAYS, () -> showInfoOverlay(tags, "Always Prepared", source,
+                "Granted by " + source + "; it doesn't count against the number of spells you can prepare.", null)));
+        if (sp.concentration) tags.add(spellBadge("CONCENTRATION", new Color(120, 170, 230), () -> showConcentrationInfo(tags)));
+        if (sp.ritual) tags.add(spellBadge("RITUAL", new Color(200, 160, 90), () -> showRitualInfo(tags)));
+        if (!sp.componentLetters().isEmpty()) tags.add(spellBadge(sp.componentLetters(), TEXT_LIGHT, () -> showComponentsInfo(tags, sp)));
+        if (tags.getComponentCount() > 0) {
+            body.add(Box.createRigidArea(new Dimension(0, 10)));
+            tags.setMaximumSize(new Dimension(Integer.MAX_VALUE, tags.getPreferredSize().height));
+            body.add(tags);
+        }
+
+        if (!sp.description.isEmpty()) {
+            body.add(Box.createRigidArea(new Dimension(0, 10)));
+            JEditorPane desc = conditionLinkedText(sp.description, width, 13, TEXT_LIGHT, null);
+            desc.setAlignmentX(Component.LEFT_ALIGNMENT);
+            body.add(desc);
+        }
+        if (!sp.higherLevels.isEmpty()) {
+            body.add(Box.createRigidArea(new Dimension(0, 8)));
+            JEditorPane hl = conditionLinkedText((sp.level == 0 ? "Cantrip Upgrade. " : "Using a Higher-Level Spell Slot. ") + sp.higherLevels,
+                    width, 12, TEXT_MUTED, null);
+            hl.setAlignmentX(Component.LEFT_ALIGNMENT);
+            body.add(hl);
+        }
+        if (!sp.inflictedConditions.isEmpty()) {
+            body.add(Box.createRigidArea(new Dimension(0, 10)));
+            JPanel conds = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            conds.setOpaque(false);
+            conds.setAlignmentX(Component.LEFT_ALIGNMENT);
+            JLabel lbl = new JLabel("CONDITIONS  ");
+            lbl.setForeground(TEXT_MUTED);
+            lbl.setFont(new Font("SansSerif", Font.BOLD, 10));
+            conds.add(lbl);
+            for (String cond : sp.inflictedConditions) conds.add(spellBadge(cond, GOLD, () -> showConditionOverlay(conds, cond)));
+            conds.setMaximumSize(new Dimension(Integer.MAX_VALUE, conds.getPreferredSize().height));
+            body.add(conds);
+        }
+        if (!sp.classes.isEmpty()) {
+            body.add(Box.createRigidArea(new Dimension(0, 10)));
+            JLabel cls = new JLabel("<html><div style='width:" + width + "px'>Spell list: " + escapeHtml(String.join(", ", sp.classes)) + "</div></html>");
+            cls.setForeground(TEXT_MUTED);
+            cls.setFont(new Font("SansSerif", Font.PLAIN, 11));
+            cls.setAlignmentX(Component.LEFT_ALIGNMENT);
+            body.add(cls);
+        }
+        showSheetOverlay(anchor, sp.name, body, null);
+    }
+
+    static void showConditionOverlay(Component anchor, String condition) {
+        showInfoOverlay(anchor, condition, "Condition", GameData.CONDITION_INFO.getOrDefault(condition, ""), null);
+    }
+
+    // ---------------- Text with clickable condition links ----------------
+    private static final java.util.regex.Pattern CONDITION_PATTERN = buildConditionPattern();
+
+    private static java.util.regex.Pattern buildConditionPattern() {
+        List<String> names = new ArrayList<>();
+        for (String c : GameData.CONDITION_INFO.keySet()) if (!"Conscious".equals(c)) names.add(java.util.regex.Pattern.quote(c));
+        return java.util.regex.Pattern.compile("\\b(" + String.join("|", names) + ")\\b");
+    }
+
+    // Wraps every condition name (Prone, Frightened, ...) in an HTML link to "cond:<name>"
+    static String linkConditions(String escapedHtml) {
+        java.util.regex.Matcher m = CONDITION_PATTERN.matcher(escapedHtml);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) m.appendReplacement(sb, "<a href=\"cond:" + m.group(1) + "\">" + m.group(1) + "</a>");
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    // Fixed-width wrapped text in which condition names are links that open the condition's explanation.
+    // onBackgroundClick (nullable) runs when the text is clicked anywhere except a link.
+    static JEditorPane conditionLinkedText(String text, int width, int fontSize, Color color, Runnable onBackgroundClick) {
+        javax.swing.text.html.HTMLEditorKit kit = new javax.swing.text.html.HTMLEditorKit();
+        kit.setDefaultCursor(Cursor.getPredefinedCursor(onBackgroundClick != null ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+        JEditorPane pane = new JEditorPane();
+        pane.setEditorKit(kit);
+        pane.setEditable(false);
+        pane.setOpaque(false);
+        pane.setBorder(null);
+        pane.setHighlighter(null);
+        pane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
+        pane.setFont(new Font("SansSerif", Font.PLAIN, fontSize));
+        pane.setForeground(color);
+        javax.swing.text.html.HTMLDocument doc = (javax.swing.text.html.HTMLDocument) kit.createDefaultDocument();
+        doc.getStyleSheet().addRule("a { color: #d4af37; text-decoration: underline; }");
+        doc.getStyleSheet().addRule("body { margin: 0; }");
+        pane.setDocument(doc);
+        pane.setText("<html><body>" + linkConditions(escapeHtml(text).replace("\n", "<br>")) + "</body></html>");
+        pane.setSize(width, Short.MAX_VALUE);
+        Dimension fixed = new Dimension(width, pane.getPreferredSize().height);
+        pane.setPreferredSize(fixed);
+        pane.setMaximumSize(fixed);
+        pane.setMinimumSize(fixed);
+        // Links are handled here on release (not via HyperlinkListener, which relies on mouseClicked)
+        pane.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (!isClickRelease(e)) return;
+                String href = linkAt(pane, e.getPoint());
+                if (href != null && href.startsWith("cond:")) showConditionOverlay(pane, href.substring(5));
+                else if (href == null && onBackgroundClick != null) onBackgroundClick.run();
+            }
+        });
+        return pane;
+    }
+
+    // href of the link under p, or null
+    private static String linkAt(JEditorPane pane, Point p) {
+        int pos = pane.viewToModel2D(p);
+        if (pos < 0 || !(pane.getDocument() instanceof javax.swing.text.html.HTMLDocument)) return null;
+        javax.swing.text.Element el = ((javax.swing.text.html.HTMLDocument) pane.getDocument()).getCharacterElement(pos);
+        if (el == null) return null;
+        Object a = el.getAttributes().getAttribute(javax.swing.text.html.HTML.Tag.A);
+        if (!(a instanceof javax.swing.text.AttributeSet)) return null;
+        Object href = ((javax.swing.text.AttributeSet) a).getAttribute(javax.swing.text.html.HTML.Attribute.HREF);
+        return href == null ? null : href.toString();
+    }
+
+    // Like clickable(), for cards with their own clickable children (badges, links, buttons):
+    // the hover tint stays on while the pointer is over those children. Register them with followCardHover.
+    static <T extends JComponent> T clickableCard(T card, Runnable onClick) {
+        card.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        Color normal = card.getBackground();
+        Runnable update = () -> {
+            boolean inside = card.isShowing() && card.getMousePosition(true) != null;
+            card.setBackground(inside ? SHEET_HOVER : normal);
+            card.repaint();
+        };
+        MouseAdapter hover = new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                update.run();
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                SwingUtilities.invokeLater(update);
+            }
+        };
+        card.putClientProperty("cardHover", hover);
+        card.addMouseListener(hover);
+        card.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (!App.isClickRelease(e)) return;
+                if (SwingUtilities.isLeftMouseButton(e)) onClick.run();
+            }
+        });
+        return card;
+    }
+
+    static void followCardHover(JComponent card, JComponent child) {
+        Object h = card.getClientProperty("cardHover");
+        if (h instanceof MouseAdapter) child.addMouseListener((MouseAdapter) h);
+    }
+
+    // ---------------- Spell art: image if Spell.imagePath is set, otherwise a school-colored placeholder ----------------
+    private static final Map<String, java.awt.image.BufferedImage> SPELL_ART_CACHE = new HashMap<>();
+
+    static java.awt.image.BufferedImage spellArt(Spell sp) {
+        if (sp == null || sp.imagePath == null || sp.imagePath.isEmpty()) return null;
+        if (!SPELL_ART_CACHE.containsKey(sp.imagePath)) {
+            java.awt.image.BufferedImage img = null;
+            try {
+                img = javax.imageio.ImageIO.read(new java.io.File(sp.imagePath));
+            } catch (Exception ex) {
+                // missing or unreadable art; fall back to the placeholder frame
+            }
+            SPELL_ART_CACHE.put(sp.imagePath, img);
+        }
+        return SPELL_ART_CACHE.get(sp.imagePath);
+    }
+
+    static Color schoolColor(String school) {
+        if (school == null) return GOLD;
+        switch (school) {
+            case "Abjuration": return new Color(70, 130, 200);
+            case "Conjuration": return new Color(210, 160, 60);
+            case "Divination": return new Color(140, 185, 210);
+            case "Enchantment": return new Color(200, 100, 170);
+            case "Evocation": return new Color(205, 75, 55);
+            case "Illusion": return new Color(140, 100, 200);
+            case "Necromancy": return new Color(100, 150, 90);
+            case "Transmutation": return new Color(190, 130, 80);
+            default: return GOLD;
+        }
+    }
+
+    static class SpellArtFrame extends JComponent {
+        private final Spell spell;
+        private final int size;
+
+        SpellArtFrame(Spell spell, int size) {
+            this.spell = spell;
+            this.size = size;
+            Dimension d = new Dimension(size, size);
+            setPreferredSize(d);
+            setMinimumSize(d);
+            setMaximumSize(d);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            java.awt.geom.RoundRectangle2D frame = new java.awt.geom.RoundRectangle2D.Float(0.5f, 0.5f, size - 1, size - 1, 12, 12);
+            java.awt.image.BufferedImage img = spellArt(spell);
+            Color tone = schoolColor(spell != null ? spell.school : null);
+            g2.setClip(frame);
+            if (img != null) {
+                double scale = Math.max(size / (double) img.getWidth(), size / (double) img.getHeight());
+                int w = (int) Math.ceil(img.getWidth() * scale), h = (int) Math.ceil(img.getHeight() * scale);
+                g2.drawImage(img, (size - w) / 2, (size - h) / 2, w, h, null);
+            } else {
+                g2.setPaint(new GradientPaint(0, 0, new Color(tone.getRed(), tone.getGreen(), tone.getBlue(), 150), size, size, SHEET_BG));
+                g2.fill(frame);
+                // inner placeholder frame (where art will go)
+                g2.setColor(new Color(255, 255, 255, 35));
+                g2.setStroke(new BasicStroke(1f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND, 1f, new float[]{3f, 3f}, 0f));
+                int inset = Math.max(6, size / 10);
+                g2.drawRoundRect(inset, inset, size - inset * 2 - 1, size - inset * 2 - 1, 8, 8);
+                String glyph = spell == null ? "?" : spell.school.length() >= 3 ? spell.school.substring(0, 3).toUpperCase() : spell.school.toUpperCase();
+                g2.setFont(new Font("Serif", Font.BOLD, Math.max(12, size / 4)));
+                FontMetrics fm = g2.getFontMetrics();
+                g2.setColor(new Color(255, 255, 255, 210));
+                g2.drawString(glyph, (size - fm.stringWidth(glyph)) / 2, size / 2 + fm.getAscent() / 2 - 3);
+                String lvl = spell == null ? "" : spell.level == 0 ? "CANTRIP" : "LEVEL " + spell.level;
+                g2.setFont(new Font("SansSerif", Font.BOLD, Math.max(8, size / 9)));
+                fm = g2.getFontMetrics();
+                g2.setColor(new Color(255, 255, 255, 150));
+                g2.drawString(lvl, (size - fm.stringWidth(lvl)) / 2, size - inset - 4);
+            }
+            g2.setClip(null);
+            g2.setColor(new Color(tone.getRed(), tone.getGreen(), tone.getBlue(), 200));
+            g2.setStroke(new BasicStroke(1.5f));
+            g2.draw(frame);
+            g2.dispose();
+        }
+    }
+
+    // Larger pip for spell slots: filled = available, outlined = expended
+    static class SlotPipIcon implements Icon {
+        private final boolean filled;
+        private final Color color;
+
+        SlotPipIcon(boolean filled, Color color) {
+            this.filled = filled;
+            this.color = color;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            Path2D diamond = new Path2D.Float();
+            diamond.moveTo(x + 9, y + 1);
+            diamond.lineTo(x + 17, y + 9);
+            diamond.lineTo(x + 9, y + 17);
+            diamond.lineTo(x + 1, y + 9);
+            diamond.closePath();
+            if (filled) {
+                g2.setColor(color);
+                g2.fill(diamond);
+            } else {
+                g2.setColor(TEXT_MUTED);
+                g2.setStroke(new BasicStroke(1.5f));
+                g2.draw(diamond);
+            }
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 18;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 18;
+        }
     }
 
     // ---------------------------------------------------------------
@@ -3619,13 +4912,75 @@ public class App {
             bgSkillsContentWrap.repaint();
         };
 
+        // ===================== LANGUAGES STEP =====================
+        // 2024 rules: Common plus two standard languages of your choice.
+        JPanel languagesPanel = new JPanel(new BorderLayout());
+        languagesPanel.setBackground(BG_DARK);
+
+        JPanel languagesHeaderWrap = new JPanel(new BorderLayout());
+        languagesHeaderWrap.setBackground(BG_DARK);
+        languagesHeaderWrap.add(buildWizardTopBar(() -> innerCardLayout.show(innerCards, "BACKGROUND_SKILLS"), outerCardLayout, outerCards, editModeHolder, saveChangeButtons), BorderLayout.NORTH);
+        JLabel languagesTitleLabel = new JLabel("Languages:");
+        languagesTitleLabel.setForeground(GOLD);
+        languagesTitleLabel.setFont(new Font("Serif", Font.BOLD, 24));
+        languagesTitleLabel.setBorder(new EmptyBorder(0, 25, 10, 0));
+        languagesHeaderWrap.add(languagesTitleLabel, BorderLayout.SOUTH);
+        languagesPanel.add(languagesHeaderWrap, BorderLayout.NORTH);
+
+        TranslucentPanel languagesInfoPanel = new TranslucentPanel(new Color(255, 255, 255, 25));
+        languagesInfoPanel.setLayout(new BorderLayout());
+        languagesInfoPanel.setPreferredSize(new Dimension(260, 100));
+        languagesInfoPanel.setBorder(new EmptyBorder(20, 20, 20, 20));
+        JLabel languagesInfoTitle = new JLabel("Languages");
+        languagesInfoTitle.setForeground(GOLD);
+        languagesInfoTitle.setFont(new Font("Serif", Font.BOLD, 20));
+        JTextArea languagesInfoText = new JTextArea("You know Common. Choose two more standard languages. Click the (i) next to a language to learn about it.");
+        styleInfoTextArea(languagesInfoText);
+        JPanel languagesInfoTop = new JPanel(new BorderLayout());
+        languagesInfoTop.setOpaque(false);
+        languagesInfoTop.add(languagesInfoTitle, BorderLayout.NORTH);
+        languagesInfoTop.add(languagesInfoText, BorderLayout.CENTER);
+        languagesInfoPanel.add(languagesInfoTop, BorderLayout.NORTH);
+        JPanel languagesInfoWrap = new JPanel(new BorderLayout());
+        languagesInfoWrap.setBackground(BG_DARK);
+        languagesInfoWrap.setBorder(new EmptyBorder(10, 10, 10, 15));
+        languagesInfoWrap.add(languagesInfoPanel, BorderLayout.CENTER);
+        languagesPanel.add(languagesInfoWrap, BorderLayout.EAST);
+
+        JPanel languagesContent = new JPanel();
+        languagesContent.setLayout(new BoxLayout(languagesContent, BoxLayout.Y_AXIS));
+        languagesContent.setBackground(BG_DARK);
+        languagesContent.setBorder(new EmptyBorder(15, 25, 10, 10));
+        JLabel languagesIntro = new JLabel("You know Common. Choose two more:");
+        languagesIntro.setForeground(TEXT_LIGHT);
+        languagesIntro.setFont(new Font("SansSerif", Font.PLAIN, 16));
+        languagesIntro.setAlignmentX(Component.LEFT_ALIGNMENT);
+        languagesContent.add(languagesIntro);
+        languagesContent.add(Box.createRigidArea(new Dimension(0, 10)));
+        CheckListResult languagesCheckList = buildCheckListPanel(
+                new ArrayList<>(GameData.STANDARD_LANGUAGES.keySet()), 2, GameData.STANDARD_LANGUAGES,
+                languagesInfoTitle, languagesInfoText, false, 9, null);
+        languagesContent.add(languagesCheckList.component);
+        JPanel languagesContentWrap = new JPanel(new BorderLayout());
+        languagesContentWrap.setBackground(BG_DARK);
+        languagesContentWrap.add(languagesContent, BorderLayout.NORTH);
+        languagesPanel.add(languagesContentWrap, BorderLayout.CENTER);
+
+        JButton languagesNextButton = new JButton("Next →");
+        styleAccentButton(languagesNextButton);
+        JPanel languagesBottomBar = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        languagesBottomBar.setBackground(BG_DARK);
+        languagesBottomBar.setBorder(new EmptyBorder(10, 0, 20, 0));
+        languagesBottomBar.add(languagesNextButton);
+        languagesPanel.add(languagesBottomBar, BorderLayout.SOUTH);
+
         // ===================== CLASS DETAILS STEP =====================
         JPanel classDecisionsPanel = new JPanel(new BorderLayout());
         classDecisionsPanel.setBackground(BG_DARK);
 
         JPanel classDecisionsHeaderWrap = new JPanel(new BorderLayout());
         classDecisionsHeaderWrap.setBackground(BG_DARK);
-        classDecisionsHeaderWrap.add(buildWizardTopBar(() -> innerCardLayout.show(innerCards, "BACKGROUND_SKILLS"), outerCardLayout, outerCards, editModeHolder, saveChangeButtons), BorderLayout.NORTH);
+        classDecisionsHeaderWrap.add(buildWizardTopBar(() -> innerCardLayout.show(innerCards, "LANGUAGES"), outerCardLayout, outerCards, editModeHolder, saveChangeButtons), BorderLayout.NORTH);
 
         JLabel classDecisionsTitleLabel = new JLabel("Class Details:");
         classDecisionsTitleLabel.setForeground(GOLD);
@@ -3689,7 +5044,9 @@ public class App {
 
             List<DecisionItem> items = GameData.CLASS_DECISIONS.get(draft.characterClass);
             if (items == null || items.isEmpty()) {
-                JLabel none = new JLabel("No additional choices for this class.");
+                JLabel none = new JLabel(draft.characterClass.isEmpty()
+                        ? "Choose a class first; its skills, spells, and other choices will appear here."
+                        : "No additional choices for this class.");
                 none.setForeground(TEXT_MUTED);
                 none.setFont(new Font("SansSerif", Font.PLAIN, 16));
                 none.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -3702,6 +5059,8 @@ public class App {
 
                     RenderedItem justAdded = classDecisionsRendered.get(classDecisionsRendered.size() - 1);
                     List<String> prevVals = draft.classChoices.get(item.label);
+                    // Cantrip labels changed with the 2024 counts; fall back to the saved cantrip list
+                    if ((prevVals == null || prevVals.isEmpty()) && "CANTRIPS".equals(item.type)) prevVals = draft.cantripsKnown;
                     if (prevVals != null && !prevVals.isEmpty() && justAdded.setSelections != null) {
                         justAdded.setSelections.accept(prevVals);
                     }
@@ -4198,6 +5557,20 @@ public class App {
             }
             draft.backgroundSkills = new ArrayList<>(chosen);
             touchedBgSkills[0] = true;
+            refreshSidebar.run();
+            languagesCheckList.setSelected.accept(draft.languages);
+            innerCardLayout.show(innerCards, "LANGUAGES");
+        });
+
+        // ---- Wire Languages Next button ----
+        languagesNextButton.addActionListener(e -> {
+            List<String> chosen = languagesCheckList.getSelected.get();
+            if (chosen.size() != 2) {
+                languagesInfoTitle.setText("Choose two languages");
+                languagesInfoText.setText("Please select exactly two languages before continuing.");
+                return;
+            }
+            draft.languages = new ArrayList<>(chosen);
             segBackgroundOk[0] = true;
             refreshSidebar.run();
             rebuildClassDecisions.run();
@@ -4447,6 +5820,7 @@ public class App {
         innerCards.add(backgroundPanel, "BACKGROUND");
         innerCards.add(asiPanel, "ASI");
         innerCards.add(bgSkillsPanel, "BACKGROUND_SKILLS");
+        innerCards.add(languagesPanel, "LANGUAGES");
         innerCards.add(classDecisionsPanel, "CLASS_DECISIONS");
         innerCards.add(equipBgChoicePanel, "EQUIP_BG_CHOICE");
         innerCards.add(equipBgDetailPanel, "EQUIP_BG_DETAIL");
@@ -4490,19 +5864,10 @@ public class App {
 
             segCol.addMouseListener(new MouseAdapter() {
                 @Override
-                public void mouseClicked(MouseEvent e) {
-                    int cur = currentSegmentHolder[0];
-                    if (segIdx == cur) return;
-                    int lo = Math.min(cur, segIdx);
-                    int hi = Math.max(cur, segIdx);
-                    boolean allowed = true;
-                    for (int k = lo + 1; k < hi; k++) {
-                        if (!segmentOkFlags[k][0]) {
-                            allowed = false;
-                            break;
-                        }
-                    }
-                    if (!allowed) return;
+                public void mouseReleased(MouseEvent e) {
+                    if (!App.isClickRelease(e)) return;
+                    // Any step can be opened at any time; unfinished steps are listed when saving.
+                    if (segIdx == currentSegmentHolder[0]) return;
                     if (segIdx == 5) rebuildClassDecisions.run();
                     if (segIdx == 6) rebuildEquipBgChoice.run();
                     innerCardLayout.show(innerCards, segmentEntryCards[segIdx]);
@@ -4526,11 +5891,11 @@ public class App {
         updateProgressBarHolder[0] = updateProgressBar;
 
         int[][] segmentPanelMap = {
-                {0}, {1}, {1}, {2}, {3}, {4}, {3}, {4}, {5}, {6}, {6}, {6}, {6}
+                {0}, {1}, {1}, {2}, {3}, {4}, {3}, {4}, {4}, {5}, {6}, {6}, {6}, {6}
         };
         JPanel[] allStepPanels = {
                 namePanel, speciesPanel, lineagePanel, classPanel, statsPanel, backgroundPanel,
-                asiPanel, bgSkillsPanel, classDecisionsPanel, equipBgChoicePanel, equipBgDetailPanel,
+                asiPanel, bgSkillsPanel, languagesPanel, classDecisionsPanel, equipBgChoicePanel, equipBgDetailPanel,
                 equipClassChoicePanel, equipClassDetailPanel
         };
         for (int i = 0; i < allStepPanels.length; i++) {
@@ -4575,6 +5940,8 @@ public class App {
             draft.background = "";
             draft.stats.clear();
             draft.backgroundSkills.clear();
+            draft.languages.clear();
+            languagesCheckList.reset.run();
             draft.classChoices.clear();
             draft.cantripsKnown.clear();
             draft.spellsKnown.clear();
@@ -4672,6 +6039,9 @@ public class App {
 
             List<String> selBg = backgroundCheckList.getSelected.get();
             if (!selBg.isEmpty()) draft.background = selBg.get(0);
+
+            List<String> selLanguages = languagesCheckList.getSelected.get();
+            if (selLanguages.size() == 2) draft.languages = selLanguages;
         };
 
         performSaveChangesHolder[0] = () -> {
@@ -4696,9 +6066,8 @@ public class App {
             }
 
             if (!problems.isEmpty()) {
-                JOptionPane.showMessageDialog(wizard,
-                        "You can't save yet \u2014 please finish choosing:\n\u2022 " + String.join("\n\u2022 ", problems),
-                        "Incomplete Changes", JOptionPane.WARNING_MESSAGE);
+                showNoticeOverlay(wizard, "Incomplete Changes",
+                        "You can't save yet \u2014 please finish choosing:\n\u2022 " + String.join("\n\u2022 ", problems));
                 return;
             }
 
@@ -4741,6 +6110,8 @@ public class App {
             draft.characterClass = CharacterStorage.recStr(rec, "characterClass");
             draft.background = CharacterStorage.recStr(rec, "background");
             draft.backgroundSkills = CharacterStorage.recList(rec, "backgroundSkills");
+            draft.languages = CharacterStorage.recList(rec, "languages");
+            languagesCheckList.setSelected.accept(draft.languages);
             draft.stats = CharacterStorage.recStatsMap(rec);
             // The wizard only edits level-1 data: strip level-up feat increases here, and
             // carryOverProgression() re-applies them when the edit is saved.

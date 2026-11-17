@@ -39,6 +39,7 @@ static Map<String, Object> buildCharacterRecord(CharacterDraft draft) {
     m.put("characterClass", draft.characterClass);
     m.put("background", draft.background);
     m.put("backgroundSkills", new ArrayList<Object>(draft.backgroundSkills));
+    m.put("languages", new ArrayList<Object>(draft.languages));
 
     Map<String, Object> statsMap = new LinkedHashMap<>();
     for (String s : GameData.STAT_ORDER) {
@@ -209,9 +210,12 @@ static void carryOverProgression(Map<?, ?> oldRec, Map<String, Object> newRec) {
 
     newRec.put("feats", new ArrayList<Object>(recFeats(oldRec)));
 
-    // Character-sheet trackers (non-GP coins, conditions) aren't part of the wizard draft
+    // Character-sheet trackers (non-GP coins, conditions, expended spell slots) aren't part of the wizard draft
     if (oldRec.get("coins") != null) newRec.put("coins", oldRec.get("coins"));
     if (oldRec.get("conditions") != null) newRec.put("conditions", oldRec.get("conditions"));
+    if (oldRec.get("spellSlotsUsed") != null) newRec.put("spellSlotsUsed", oldRec.get("spellSlotsUsed"));
+    if (oldRec.get("pactSlotsUsed") != null) newRec.put("pactSlotsUsed", oldRec.get("pactSlotsUsed"));
+    carryOverClassSpells(oldRec, newRec, oldClass, newClass);
 
     Map<String, Integer> stats = recStatsMap(newRec);
     for (Map.Entry<String, Integer> en : recFeatStatIncreases(oldRec).entrySet()) stats.merge(en.getKey(), en.getValue(), Integer::sum);
@@ -220,6 +224,106 @@ static void carryOverProgression(Map<?, ?> oldRec, Map<String, Object> newRec) {
     newRec.put("stats", statsOut);
 
     refreshDerived(newRec);
+}
+
+// ---------------------------------------------------------------
+// Per-class spell lists
+//   classSpells : {className: {cantrips: [...], prepared: [...], spellbook: [...], arcanum: [...]}}
+//   spellbook is Wizard-only; arcanum holds Warlock Mystic Arcanum spells.
+// Level-up writes this map. Characters saved before it existed fall back to the level-1 wizard
+// picks (cantripsKnown / spellsKnown / classChoices) for their primary class.
+// ---------------------------------------------------------------
+static final String[] CLASS_SPELL_KEYS = {"cantrips", "prepared", "spellbook", "arcanum"};
+
+static LinkedHashMap<String, Map<String, List<String>>> recClassSpells(Map<?, ?> rec) {
+    LinkedHashMap<String, Map<String, List<String>>> out = new LinkedHashMap<>();
+    Object v = rec.get("classSpells");
+    if (v instanceof Map) {
+        for (Map.Entry<?, ?> en : ((Map<?, ?>) v).entrySet()) {
+            if (!(en.getValue() instanceof Map)) continue;
+            Map<String, List<String>> lists = emptyClassSpells();
+            for (String key : CLASS_SPELL_KEYS) lists.put(key, recList((Map<?, ?>) en.getValue(), key));
+            out.put(String.valueOf(en.getKey()), lists);
+        }
+    }
+    String primary = recStr(rec, "characterClass");
+    if (!primary.isEmpty() && !out.containsKey(primary)) {
+        Map<String, List<String>> legacy = legacyClassSpells(rec, primary);
+        if (legacy != null) out.put(primary, legacy);
+    }
+    return out;
+}
+
+static Map<String, List<String>> emptyClassSpells() {
+    Map<String, List<String>> m = new LinkedHashMap<>();
+    for (String key : CLASS_SPELL_KEYS) m.put(key, new ArrayList<>());
+    return m;
+}
+
+// The primary class's spells as picked in the creation wizard
+static Map<String, List<String>> legacyClassSpells(Map<?, ?> rec, String primary) {
+    List<String> cantrips = recList(rec, "cantripsKnown");
+    List<String> spells = recList(rec, "spellsKnown");
+    if (cantrips.isEmpty() && spells.isEmpty()) return null;
+    Map<String, List<String>> m = emptyClassSpells();
+    m.get("cantrips").addAll(cantrips);
+    if (SpellData.isPreparedFromBook(primary)) {
+        List<String> book = new ArrayList<>(), prepared = new ArrayList<>();
+        for (Map.Entry<String, List<String>> en : recChoicesMap(rec).entrySet()) {
+            String label = en.getKey().toLowerCase();
+            if (label.startsWith("spells known")) book.addAll(en.getValue());
+            else if (label.startsWith("prepared")) prepared.addAll(en.getValue());
+        }
+        if (book.isEmpty()) book.addAll(spells);
+        for (String s : prepared) if (!book.contains(s)) book.add(s);
+        if (prepared.isEmpty()) prepared.addAll(book);
+        m.get("spellbook").addAll(book);
+        m.get("prepared").addAll(prepared);
+    } else {
+        m.get("prepared").addAll(spells);
+    }
+    return m;
+}
+
+static Map<String, Object> classSpellsToJson(Map<String, Map<String, List<String>>> classSpells) {
+    Map<String, Object> out = new LinkedHashMap<>();
+    for (Map.Entry<String, Map<String, List<String>>> en : classSpells.entrySet()) {
+        Map<String, Object> lists = new LinkedHashMap<>();
+        for (String key : CLASS_SPELL_KEYS) {
+            List<String> l = en.getValue().get(key);
+            if (l != null && !l.isEmpty()) lists.put(key, new ArrayList<Object>(l));
+        }
+        out.put(en.getKey(), lists);
+    }
+    return out;
+}
+
+// Keeps level-up spell picks through a wizard edit. For the primary class, the wizard's new
+// level-1 picks replace the old ones, while spells gained (or swapped out) on level-up are kept.
+private static void carryOverClassSpells(Map<?, ?> oldRec, Map<String, Object> newRec, String oldClass, String newClass) {
+    if (!(oldRec.get("classSpells") instanceof Map)) return;
+    LinkedHashMap<String, Map<String, List<String>>> old = recClassSpells(oldRec);
+    LinkedHashMap<String, Map<String, List<String>>> out = new LinkedHashMap<>();
+    for (Map.Entry<String, Map<String, List<String>>> en : old.entrySet()) {
+        if (!en.getKey().equals(oldClass)) out.put(en.getKey(), en.getValue());
+    }
+    if (oldClass.equals(newClass) && old.containsKey(oldClass)) {
+        Map<String, List<String>> oldLists = old.get(oldClass);
+        Map<String, List<String>> oldBase = legacyClassSpells(oldRec, oldClass);
+        Map<String, List<String>> newBase = legacyClassSpells(newRec, newClass);
+        Map<String, List<String>> merged = emptyClassSpells();
+        for (String key : CLASS_SPELL_KEYS) {
+            List<String> was = oldBase != null ? oldBase.get(key) : Collections.emptyList();
+            List<String> now = oldLists.get(key);
+            List<String> base = newBase != null ? newBase.get(key) : Collections.emptyList();
+            LinkedHashSet<String> result = new LinkedHashSet<>();
+            for (String s : base) if (!was.contains(s) || now.contains(s)) result.add(s); // drop swapped-out picks
+            for (String s : now) if (!was.contains(s)) result.add(s);                     // keep level-up gains
+            merged.get(key).addAll(result);
+        }
+        out.put(newClass, merged);
+    }
+    newRec.put("classSpells", classSpellsToJson(out));
 }
 
 static void saveNewCharacter(CharacterDraft draft) {
@@ -274,6 +378,41 @@ static Map<String, List<String>> recChoicesMap(Map<?, ?> rec) {
     return out;
 }
 
+// Every language the character knows, mapped to where it comes from
+static LinkedHashMap<String, String> recLanguageSources(Map<?, ?> rec) {
+    LinkedHashMap<String, String> out = new LinkedHashMap<>();
+    out.put("Common", "Every character");
+    for (String l : recList(rec, "languages")) out.putIfAbsent(l, "Chosen at character creation");
+    for (String cls : recClassLevels(rec).keySet()) {
+        String granted = GameData.CLASS_LANGUAGES.get(cls);
+        if (granted != null) out.putIfAbsent(granted, cls + " class feature");
+    }
+    String primary = recStr(rec, "characterClass");
+    String granted = GameData.CLASS_LANGUAGES.get(primary);
+    if (granted != null) out.putIfAbsent(granted, primary + " class feature");
+    return out;
+}
+
+// Where each skill proficiency comes from ("Criminal background", "Fighter class choice")
+static LinkedHashMap<String, String> recSkillSources(Map<?, ?> rec) {
+    LinkedHashMap<String, String> out = new LinkedHashMap<>();
+    String background = recStr(rec, "background");
+    for (String s : recList(rec, "backgroundSkills")) {
+        out.putIfAbsent(s, (background.isEmpty() ? "Background" : background + " background"));
+    }
+    String characterClass = recStr(rec, "characterClass");
+    List<DecisionItem> decisions = GameData.CLASS_DECISIONS.get(characterClass);
+    if (decisions != null) {
+        Map<String, List<String>> choices = recChoicesMap(rec);
+        for (DecisionItem item : decisions) {
+            if (!"SKILLS".equals(item.type)) continue;
+            List<String> chosen = choices.get(item.label);
+            if (chosen != null) for (String s : chosen) out.putIfAbsent(s, characterClass + " class skill choice");
+        }
+    }
+    return out;
+}
+
 static Set<String> recSkillProficiencies(Map<?, ?> rec) {
     Set<String> profs = new LinkedHashSet<>(recList(rec, "backgroundSkills"));
     String characterClass = recStr(rec, "characterClass");
@@ -311,6 +450,7 @@ class CharacterDraft {
     String background = "";
     Map<String, Integer> stats = new LinkedHashMap<>();
     List<String> backgroundSkills = new ArrayList<>();
+    List<String> languages = new ArrayList<>(); // the two chosen standard languages (Common is implied)
     Map<String, List<String>> classChoices = new LinkedHashMap<>();
     List<String> cantripsKnown = new ArrayList<>();
     List<String> spellsKnown = new ArrayList<>();

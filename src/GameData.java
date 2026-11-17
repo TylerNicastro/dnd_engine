@@ -398,6 +398,54 @@ static {
     SKILL_ABILITY.put("Survival", "WIS");
 }
 
+// Languages (2024 rules): every character knows Common plus two standard languages
+static final Map<String, String> STANDARD_LANGUAGES = new LinkedHashMap<>();
+static {
+    STANDARD_LANGUAGES.put("Common Sign Language", "A sign language understood across most of the realms. Typical speakers: anyone.");
+    STANDARD_LANGUAGES.put("Draconic", "The language of dragons and dragonborn; also used in arcane writing. Typical speakers: dragons, dragonborn.");
+    STANDARD_LANGUAGES.put("Dwarvish", "A hard, guttural tongue full of consonants. Typical speakers: dwarves.");
+    STANDARD_LANGUAGES.put("Elvish", "A fluid language with subtle intonations. Typical speakers: elves.");
+    STANDARD_LANGUAGES.put("Giant", "The language of giants and their kin. Typical speakers: giants, ogres.");
+    STANDARD_LANGUAGES.put("Gnomish", "A technical language rich in specialised terms. Typical speakers: gnomes.");
+    STANDARD_LANGUAGES.put("Goblin", "The language of goblinoids. Typical speakers: goblinoids.");
+    STANDARD_LANGUAGES.put("Halfling", "A friendly language rarely shared with outsiders. Typical speakers: halflings.");
+    STANDARD_LANGUAGES.put("Orc", "A harsh, grating language. Typical speakers: orcs.");
+}
+static final Map<String, String> LANGUAGE_INFO = new LinkedHashMap<>();
+static {
+    LANGUAGE_INFO.put("Common", "The language most people in the realms speak. Every character knows Common.");
+    LANGUAGE_INFO.putAll(STANDARD_LANGUAGES);
+    LANGUAGE_INFO.put("Thieves' Cant", "A secret mix of dialect, jargon and code that lets rogues hide messages in normal-seeming conversation.");
+    LANGUAGE_INFO.put("Druidic", "The secret language of druids. You can leave hidden messages in it that only other druids notice.");
+}
+// Languages a class grants automatically at level 1
+static final Map<String, String> CLASS_LANGUAGES = new LinkedHashMap<>();
+static {
+    CLASS_LANGUAGES.put("Rogue", "Thieves' Cant");
+    CLASS_LANGUAGES.put("Druid", "Druidic");
+}
+
+// Condition rules summaries (2024 rules, condensed)
+static final Map<String, String> CONDITION_INFO = new LinkedHashMap<>();
+static {
+    CONDITION_INFO.put("Conscious", "You're awake and able to act normally.");
+    CONDITION_INFO.put("Unconscious", "You're Incapacitated and Prone, drop what you're holding, and can't move or speak. You're unaware of your surroundings and automatically fail STR and DEX saves. Attacks against you have Advantage, and melee hits within 5 ft. are critical hits.");
+    CONDITION_INFO.put("Blinded", "You can't see. Attacks against you have Advantage, and your attacks have Disadvantage.");
+    CONDITION_INFO.put("Charmed", "You can't attack the charmer, and the charmer has Advantage on social checks against you.");
+    CONDITION_INFO.put("Deafened", "You can't hear and automatically fail any check that requires hearing.");
+    CONDITION_INFO.put("Exhaustion", "Each level gives -2 to D20 Tests and -5 ft. Speed. Level 6 is death. A Long Rest removes one level.");
+    CONDITION_INFO.put("Frightened", "Disadvantage on ability checks and attacks while the source of fear is in sight; you can't willingly move closer to it.");
+    CONDITION_INFO.put("Grappled", "Speed 0; Disadvantage on attacks against anyone other than the grappler. The grappler can drag you.");
+    CONDITION_INFO.put("Incapacitated", "You can't take actions, Bonus Actions or Reactions, and you can't concentrate.");
+    CONDITION_INFO.put("Invisible", "You can't be seen. You have Advantage on attacks, and attacks against you have Disadvantage.");
+    CONDITION_INFO.put("Paralyzed", "Incapacitated, Speed 0, automatically fail STR and DEX saves. Attacks against you have Advantage, and melee hits within 5 ft. are critical hits.");
+    CONDITION_INFO.put("Petrified", "Turned to stone: Incapacitated, Speed 0, resistant to all damage, immune to poison. Attacks against you have Advantage.");
+    CONDITION_INFO.put("Poisoned", "Disadvantage on attack rolls and ability checks.");
+    CONDITION_INFO.put("Prone", "You can only crawl or stand up. Disadvantage on attacks. Attacks against you have Advantage within 5 ft. and Disadvantage otherwise.");
+    CONDITION_INFO.put("Restrained", "Speed 0; Disadvantage on attacks and DEX saves. Attacks against you have Advantage.");
+    CONDITION_INFO.put("Stunned", "Incapacitated, automatically fail STR and DEX saves. Attacks against you have Advantage.");
+}
+
 // Saving throw proficiencies granted by each class
 static final Map<String, String[]> CLASS_SAVING_THROWS = new LinkedHashMap<>();
 static {
@@ -493,6 +541,7 @@ static final Map<String, List<DecisionItem>> CLASS_DECISIONS = new LinkedHashMap
 static {
     CLASS_DECISIONS.put("Artificer", decisions(
             skills("Which skills? (2)", 2, "Arcana", "History", "Investigation", "Medicine", "Nature", "Perception", "Sleight of Hand"),
+            cantrips("Cantrips? (2)", 2),
             spellsLevel1("Prepared spells? (2)", 2)
     ));
     CLASS_DECISIONS.put("Barbarian", decisions(
@@ -507,13 +556,13 @@ static {
     CLASS_DECISIONS.put("Cleric", decisions(
             skills("Which skills? (2)", 2, "History", "Insight", "Medicine", "Persuasion", "Religion"),
             choice("Divine Order?", 1, "Protector", "Thaumaturge"),
-            cantrips("Cantrip?", 1),
+            cantrips("Cantrips? (3)", 3),
             spellsLevel1("Prepared spells? (4)", 4)
     ));
     CLASS_DECISIONS.put("Druid", decisions(
             skills("Which skills? (2)", 2, "Animal Handling", "Arcana", "Insight", "Medicine", "Nature", "Perception", "Religion", "Survival"),
             choice("Primal Order?", 1, "Magician", "Warden"),
-            cantrips("Cantrip?", 1),
+            cantrips("Cantrips? (2)", 2),
             spellsLevel1("Prepared spells? (4)", 4)
     ));
     CLASS_DECISIONS.put("Fighter", decisions(

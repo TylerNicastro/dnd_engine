@@ -190,6 +190,18 @@ class LevelUpPanel {
         if (epic) add(content, bullet("Epic Boon unlocked: choose one below (it can raise a score up to 30)."));
         else if (feat) add(content, bullet("Feat unlocked: choose one below."));
         else add(content, bullet("No feat at this level." + nextFeatText(cls, newClassLevel)));
+        int[] oldSlots = SpellData.spellSlots(classLevels), newSlots = SpellData.spellSlots(newClassLevels);
+        if (!Arrays.equals(oldSlots, newSlots)) {
+            add(content, bullet("Spell slots: " + SpellData.slotSummary(oldSlots) + "  →  " + SpellData.slotSummary(newSlots)));
+        }
+        if ("Warlock".equals(cls)) {
+            int oc = SpellData.pactSlotCount(oldClassLevel), nc = SpellData.pactSlotCount(newClassLevel);
+            int ol = SpellData.pactSlotLevel(oldClassLevel), nl = SpellData.pactSlotLevel(newClassLevel);
+            if (oc != nc || ol != nl) {
+                add(content, bullet("Pact Magic: " + (oc == 0 ? "none" : oc + " × level " + ol) + "  →  " + nc + " × level " + nl + " (recharge on a Short Rest)"));
+            }
+        }
+        if (SpellData.isCaster(cls)) add(content, bullet("Spells: see the Spells section below."));
         add(content, gap(24));
 
         // ---- Feat selection state (built before HP so the HP preview can see CON changes) ----
@@ -344,7 +356,13 @@ class LevelUpPanel {
             add(content, featOptions);
             add(content, gap(8));
             add(content, featPreview);
+            add(content, gap(24));
         }
+
+        // ---- Spells ----
+        Supplier<SpellChoice> spellSupplier = SpellData.isCaster(cls)
+                ? buildSpellSection(content, cls, oldClassLevel, newClassLevel, infoTitle, infoText)
+                : null;
 
         refreshAll.run();
 
@@ -357,32 +375,45 @@ class LevelUpPanel {
         App.styleAccentButton(confirm);
         confirm.addActionListener(e -> {
             Integer roll = currentRoll.get();
+            // Validation messages show inline in the info panel (no dialog windows; see CLAUDE.md)
             if (roll == null || roll < 0) {
-                JOptionPane.showMessageDialog(panel, die > 0
-                                ? "Roll your 1d" + die + " hit die, or enter a roll from 1 to " + die + "."
-                                : "Enter an HP die result from 1 to " + manualMax + ".",
-                        "Hit Points Needed", JOptionPane.WARNING_MESSAGE);
+                infoTitle.setText("Hit Points Needed");
+                infoText.setText(die > 0
+                        ? "Roll your 1d" + die + " hit die, or enter a roll from 1 to " + die + "."
+                        : "Enter an HP die result from 1 to " + manualMax + ".");
                 return;
             }
             FeatPick pick = null;
             if (feat || epic) {
                 pick = pickSupplier[0].get();
                 if (pick == null) {
-                    JOptionPane.showMessageDialog(panel, "Choose a " + (epic ? "Epic Boon" : "feat") + " for this level.",
-                            "Feat Needed", JOptionPane.WARNING_MESSAGE);
+                    infoTitle.setText((epic ? "Epic Boon" : "Feat") + " Needed");
+                    infoText.setText("Choose a " + (epic ? "Epic Boon" : "feat") + " for this level.");
                     return;
                 }
                 if (pick.error != null) {
-                    JOptionPane.showMessageDialog(panel, pick.error, "Feat Incomplete", JOptionPane.WARNING_MESSAGE);
+                    infoTitle.setText("Feat Incomplete");
+                    infoText.setText(pick.error);
                     return;
                 }
             }
-            applyLevelUp(cls, newClassLevels, newClassLevel, newLevel, roll, pick);
+            SpellChoice spells = null;
+            if (spellSupplier != null) {
+                spells = spellSupplier.get();
+                if (spells.error != null) {
+                    infoTitle.setText("Spells Incomplete");
+                    infoText.setText(spells.error);
+                    return;
+                }
+            }
+            applyLevelUp(cls, newClassLevels, newClassLevel, newLevel, roll, pick, spells);
         });
 
+        boolean caster = spellSupplier != null;
         setStep(content, infoPanel(infoTitle, infoText,
-                        feat || epic ? "Choose your " + (epic ? "Epic Boon" : "feat") : "Level " + newLevel,
-                        feat || epic ? "Click (i) next to a feat to read what it does." : "Roll your hit die, then confirm."),
+                        feat || epic ? "Choose your " + (epic ? "Epic Boon" : "feat") : caster ? "Choose your spells" : "Level " + newLevel,
+                        feat || epic ? "Click (i) next to a feat to read what it does."
+                                : caster ? "Click a spell to read it here, or Preview to open its full card." : "Roll your hit die, then confirm."),
                 back, cancelButton(), confirm);
     }
 
@@ -499,8 +530,418 @@ class LevelUpPanel {
         };
     }
 
+    // ---------------------------------------------------------------
+    // Spells gained at this level (2024 PHB progression)
+    // ---------------------------------------------------------------
+    private static class SpellChoice {
+        List<String> cantrips = new ArrayList<>();
+        List<String> prepared = new ArrayList<>();
+        List<String> spellbook = new ArrayList<>();
+        List<String> arcanum = new ArrayList<>();
+        String cantripOut, cantripIn, spellOut, spellIn;
+        String error;
+    }
+
+    private Supplier<SpellChoice> buildSpellSection(JPanel content, String cls, int oldClassLevel, int newClassLevel,
+                                                    JLabel infoTitle, JTextArea infoText) {
+        Map<String, List<String>> cur = CharacterStorage.recClassSpells(rec).getOrDefault(cls, CharacterStorage.emptyClassSpells());
+        Set<String> always = SpellData.alwaysPrepared(rec).keySet();
+        boolean wizard = SpellData.isPreparedFromBook(cls);
+        int oldMax = SpellData.maxSpellLevel(cls, oldClassLevel);
+        int maxLv = SpellData.maxSpellLevel(cls, newClassLevel);
+
+        int cantripTarget = SpellData.cantripsKnown(cls, newClassLevel);
+        int cantripNeed = Math.max(0, cantripTarget - cur.get("cantrips").size());
+        int preparedNow = 0;
+        for (String s : cur.get("prepared")) if (!always.contains(s)) preparedNow++;
+        int prepTarget = SpellData.preparedCount(cls, newClassLevel);
+        int prepNeed = Math.max(0, prepTarget - preparedNow);
+        int bookNeed = wizard ? (newClassLevel == 1 ? 6 : 2) : 0;
+        int arcanumLevel = 0;
+        if ("Warlock".equals(cls)) for (int[] a : SpellData.MYSTIC_ARCANUM) if (a[0] == newClassLevel) arcanumLevel = a[1];
+
+        add(content, subheading("Spells — " + cls));
+        add(content, gap(8));
+        if (cantripTarget > 0) add(content, bullet("Cantrips known: " + cur.get("cantrips").size() + " → " + cantripTarget
+                + (cantripNeed > 0 ? "   (learn " + cantripNeed + ")" : "")));
+        add(content, bullet("Prepared spells: " + preparedNow + " → " + prepTarget + (prepNeed > 0 ? "   (prepare " + prepNeed + " more)" : "")));
+        add(content, bullet(maxLv > oldMax
+                ? "Spell level unlocked: you can now prepare level " + maxLv + " " + cls + " spells."
+                : "Highest spell level: " + maxLv + (maxLv < 9 && !"Warlock".equals(cls) ? nextSpellLevelText(cls, newClassLevel, maxLv) : "")));
+        if (wizard) add(content, bullet("Spellbook: add " + bookNeed + " Wizard spells (level " + maxLv + " or lower) for free."));
+        if (arcanumLevel > 0) add(content, bullet("Mystic Arcanum: choose one level " + arcanumLevel + " Warlock spell, cast once per Long Rest without a slot."));
+        add(content, gap(12));
+
+        Runnable noop = () -> { };
+        Set<String> knownCantrips = new HashSet<>(cur.get("cantrips"));
+        knownCantrips.addAll(always);
+        List<Spell> cantripOptions = filter(SpellData.classSpells(cls, 0, 0), knownCantrips);
+
+        SpellPicker cantripPicker = null;
+        if (cantripNeed > 0) {
+            add(content, label("Learn " + cantripNeed + " new cantrip" + (cantripNeed == 1 ? "" : "s") + ":"));
+            add(content, gap(6));
+            cantripPicker = new SpellPicker(cls, cantripOptions, cantripNeed, infoTitle, infoText, noop);
+            add(content, cantripPicker.panel);
+            add(content, gap(16));
+        }
+
+        SpellPicker bookPicker = null;
+        if (wizard) {
+            add(content, label("Add " + bookNeed + " spells to your spellbook:"));
+            add(content, gap(6));
+            bookPicker = new SpellPicker(cls, filter(SpellData.classSpells(cls, 1, maxLv), new HashSet<>(cur.get("spellbook"))),
+                    bookNeed, infoTitle, infoText, null);
+            add(content, bookPicker.panel);
+            add(content, gap(16));
+        }
+
+        // Prepared-spell picker. For Wizards it draws from the spellbook (including spells added above),
+        // so it's rebuilt whenever the spellbook picks change.
+        JPanel prepHolder = column();
+        SpellPicker[] prepPicker = {null};
+        Set<String> notPreparable = new HashSet<>(cur.get("prepared"));
+        notPreparable.addAll(always);
+        final SpellPicker bookRef = bookPicker;
+        Runnable buildPrep = () -> {
+            List<String> keep = prepPicker[0] != null ? prepPicker[0].selected() : Collections.emptyList();
+            prepHolder.removeAll();
+            prepPicker[0] = null;
+            if (prepNeed > 0) {
+                List<Spell> opts;
+                if (wizard) {
+                    LinkedHashSet<String> book = new LinkedHashSet<>(cur.get("spellbook"));
+                    if (bookRef != null) book.addAll(bookRef.selected());
+                    opts = new ArrayList<>();
+                    for (String n : book) {
+                        Spell s = SpellData.lookup(n);
+                        if (s != null && s.level >= 1 && s.level <= maxLv && !notPreparable.contains(n)) opts.add(s);
+                    }
+                    opts.sort(Comparator.comparingInt((Spell s) -> s.level).thenComparing(s -> s.name));
+                } else {
+                    opts = filter(SpellData.classSpells(cls, 1, maxLv), notPreparable);
+                }
+                add(prepHolder, label("Prepare " + prepNeed + " more spell" + (prepNeed == 1 ? "" : "s")
+                        + (wizard ? " from your spellbook:" : " (level " + maxLv + " or lower):")));
+                add(prepHolder, gap(6));
+                if (opts.isEmpty()) {
+                    add(prepHolder, muted(wizard ? "Add spells to your spellbook above first." : "No more spells available on the " + cls + " list."));
+                } else {
+                    prepPicker[0] = new SpellPicker(cls, opts, prepNeed, infoTitle, infoText, noop);
+                    prepPicker[0].setSelected(keep);
+                    add(prepHolder, prepPicker[0].panel);
+                }
+                add(prepHolder, gap(16));
+            }
+            prepHolder.revalidate();
+            prepHolder.repaint();
+        };
+        if (bookPicker != null) bookPicker.onChange = buildPrep;
+        buildPrep.run();
+        add(content, prepHolder);
+
+        SpellPicker arcanumPicker = null;
+        if (arcanumLevel > 0) {
+            add(content, label("Mystic Arcanum (level " + arcanumLevel + "):"));
+            add(content, gap(6));
+            arcanumPicker = new SpellPicker(cls, filter(SpellData.classSpells(cls, arcanumLevel, arcanumLevel), new HashSet<>(cur.get("arcanum"))),
+                    1, infoTitle, infoText, noop);
+            add(content, arcanumPicker.panel);
+            add(content, gap(16));
+        }
+
+        // ---- Optional swaps (only when the class already had spells) ----
+        SpellPicker cantripOutPicker = null, cantripInPicker = null, spellOutPicker = null, spellInPicker = null;
+        if (oldClassLevel >= 1) {
+            boolean levelUpSwap = "Bard".equals(cls) || "Sorcerer".equals(cls) || "Warlock".equals(cls);
+            if (cantripTarget > 0 && !cur.get("cantrips").isEmpty() && !cantripOptions.isEmpty()) {
+                add(content, subheading("Replace a cantrip (optional)"));
+                add(content, gap(4));
+                add(content, muted("2024 rules: whenever you gain a " + cls + " level, you can replace one cantrip with another from the " + cls + " list."));
+                add(content, gap(8));
+                add(content, label("Forget:"));
+                add(content, gap(4));
+                cantripOutPicker = new SpellPicker(cls, toSpells(cur.get("cantrips")), 1, infoTitle, infoText, noop);
+                add(content, cantripOutPicker.panel);
+                add(content, gap(8));
+                add(content, label("Learn instead:"));
+                add(content, gap(4));
+                cantripInPicker = new SpellPicker(cls, cantripOptions, 1, infoTitle, infoText, noop);
+                add(content, cantripInPicker.panel);
+                add(content, gap(16));
+            }
+            List<String> swappable = new ArrayList<>();
+            for (String s : cur.get("prepared")) if (!always.contains(s)) swappable.add(s);
+            List<Spell> inOptions;
+            if (wizard) {
+                inOptions = new ArrayList<>();
+                for (String n : cur.get("spellbook")) {
+                    Spell s = SpellData.lookup(n);
+                    if (s != null && s.level >= 1 && s.level <= maxLv && !notPreparable.contains(n)) inOptions.add(s);
+                }
+            } else {
+                inOptions = filter(SpellData.classSpells(cls, 1, maxLv), notPreparable);
+            }
+            if (!swappable.isEmpty() && !inOptions.isEmpty()) {
+                add(content, subheading("Replace a prepared spell (optional)"));
+                add(content, gap(4));
+                add(content, muted(levelUpSwap
+                        ? "2024 rules: whenever you gain a " + cls + " level, you can replace one prepared spell with another " + cls + " spell."
+                        : wizard ? "Wizards can change prepared spells (from the spellbook) after any Long Rest; swap one here if you like."
+                        : cls + "s can change prepared spells after a Long Rest; swap one here if you like."));
+                add(content, gap(8));
+                add(content, label("Replace:"));
+                add(content, gap(4));
+                spellOutPicker = new SpellPicker(cls, toSpells(swappable), 1, infoTitle, infoText, noop);
+                add(content, spellOutPicker.panel);
+                add(content, gap(8));
+                add(content, label("With:"));
+                add(content, gap(4));
+                spellInPicker = new SpellPicker(cls, inOptions, 1, infoTitle, infoText, noop);
+                add(content, spellInPicker.panel);
+                add(content, gap(16));
+            }
+        }
+
+        final SpellPicker cp = cantripPicker, bp = bookPicker, ap = arcanumPicker;
+        final SpellPicker cOut = cantripOutPicker, cIn = cantripInPicker, sOut = spellOutPicker, sIn = spellInPicker;
+        return () -> {
+            SpellChoice ch = new SpellChoice();
+            if (cp != null) {
+                ch.cantrips = cp.selected();
+                int need = Math.min(cantripNeed, cp.optionCount());
+                if (ch.cantrips.size() < need) return fail(ch, "Choose " + need + " new cantrip" + (need == 1 ? "" : "s") + " for " + cls + ".");
+            }
+            if (bp != null) {
+                ch.spellbook = bp.selected();
+                int need = Math.min(bookNeed, bp.optionCount());
+                if (ch.spellbook.size() < need) return fail(ch, "Choose " + need + " spells to add to your spellbook.");
+            }
+            if (prepPicker[0] != null) {
+                ch.prepared = prepPicker[0].selected();
+                int need = Math.min(prepNeed, prepPicker[0].optionCount());
+                if (ch.prepared.size() < need) return fail(ch, "Choose " + need + " more prepared spell" + (need == 1 ? "" : "s") + ".");
+            }
+            if (ap != null) {
+                ch.arcanum = ap.selected();
+                if (ch.arcanum.isEmpty() && ap.optionCount() > 0) return fail(ch, "Choose a Mystic Arcanum spell.");
+            }
+            if (cOut != null) {
+                List<String> o = cOut.selected(), i = cIn.selected();
+                if (o.isEmpty() != i.isEmpty()) return fail(ch, "To replace a cantrip, pick both the cantrip to forget and the one to learn (or neither).");
+                if (!o.isEmpty()) {
+                    if (ch.cantrips.contains(i.get(0))) return fail(ch, i.get(0) + " is already one of your new cantrips. Pick a different replacement.");
+                    ch.cantripOut = o.get(0);
+                    ch.cantripIn = i.get(0);
+                }
+            }
+            if (sOut != null) {
+                List<String> o = sOut.selected(), i = sIn.selected();
+                if (o.isEmpty() != i.isEmpty()) return fail(ch, "To replace a spell, pick both the spell to replace and its replacement (or neither).");
+                if (!o.isEmpty()) {
+                    if (ch.prepared.contains(i.get(0))) return fail(ch, i.get(0) + " is already one of your newly prepared spells. Pick a different replacement.");
+                    ch.spellOut = o.get(0);
+                    ch.spellIn = i.get(0);
+                }
+            }
+            return ch;
+        };
+    }
+
+    private static SpellChoice fail(SpellChoice ch, String error) {
+        ch.error = error;
+        return ch;
+    }
+
+    private static List<Spell> filter(List<Spell> spells, Set<String> exclude) {
+        List<Spell> out = new ArrayList<>();
+        for (Spell s : spells) if (!exclude.contains(s.name)) out.add(s);
+        return out;
+    }
+
+    // Registry spells for a list of names (unknown names get a minimal placeholder so they can still be picked)
+    private static List<Spell> toSpells(List<String> names) {
+        List<Spell> out = new ArrayList<>();
+        for (String n : names) {
+            Spell s = SpellData.lookup(n);
+            if (s == null) {
+                s = new Spell();
+                s.name = n;
+            }
+            out.add(s);
+        }
+        return out;
+    }
+
+    private static String nextSpellLevelText(String cls, int classLevel, int maxLv) {
+        for (int l = classLevel + 1; l <= FeatData.MAX_LEVEL; l++) {
+            if (SpellData.maxSpellLevel(cls, l) > maxLv) return "   (level " + (maxLv + 1) + " spells at " + cls + " level " + l + ")";
+        }
+        return "";
+    }
+
+    // Checklist of spells: click a row to select it (and read it in the info panel), or Preview for the full card.
+    private static class SpellPicker {
+        final JPanel panel = column();
+        private final LinkedHashSet<String> chosen = new LinkedHashSet<>();
+        private final List<Spell> options;
+        private final List<Runnable> visuals = new ArrayList<>();
+        private final JLabel counter = new JLabel();
+        private final int max;
+        Runnable onChange;
+
+        SpellPicker(String cls, List<Spell> options, int max, JLabel infoTitle, JTextArea infoText, Runnable onChange) {
+            this.options = options;
+            this.max = max;
+            this.onChange = onChange;
+
+            if (options.isEmpty()) {
+                add(panel, muted("No spells available."));
+                return;
+            }
+            counter.setForeground(App.TEXT_MUTED);
+            counter.setFont(new Font("SansSerif", Font.PLAIN, 13));
+
+            JPanel rows = new JPanel();
+            rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
+            rows.setBackground(App.BG_DARK);
+            List<JPanel> rowPanels = new ArrayList<>();
+
+            for (Spell sp : options) {
+                JPanel row = new JPanel(new BorderLayout(8, 0));
+                row.setBackground(App.BG_DARK);
+                row.setBorder(new EmptyBorder(5, 10, 5, 8));
+                row.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
+                JLabel glyph = new JLabel("☐");
+                glyph.setFont(new Font("SansSerif", Font.PLAIN, 18));
+                JLabel name = new JLabel(sp.name);
+                name.setFont(new Font("SansSerif", Font.PLAIN, 15));
+                String meta = sp.school.isEmpty() ? "" : (sp.level == 0 ? "Cantrip" : "Lv " + sp.level) + " · " + sp.school
+                        + (sp.concentration ? " · C" : "") + (sp.ritual ? " · R" : "");
+                JLabel metaLbl = new JLabel(meta);
+                metaLbl.setForeground(App.TEXT_MUTED);
+                metaLbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+                JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+                left.setOpaque(false);
+                left.add(glyph);
+                left.add(name);
+                left.add(metaLbl);
+                row.add(left, BorderLayout.CENTER);
+
+                JButton preview = new JButton("Preview");
+                preview.setFont(new Font("SansSerif", Font.BOLD, 11));
+                preview.setForeground(App.BG_DARK);
+                preview.setBackground(App.GOLD);
+                preview.setOpaque(true);
+                preview.setFocusPainted(false);
+                preview.setBorder(new EmptyBorder(3, 8, 3, 8));
+                preview.setCursor(new Cursor(Cursor.HAND_CURSOR));
+                preview.setToolTipText("Open the full spell card for " + sp.name);
+                preview.addActionListener(e -> App.showSpellOverlay(preview, SpellData.lookup(sp.name), sp.name, cls + " spell list", false));
+                JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+                right.setOpaque(false);
+                right.add(preview);
+                row.add(right, BorderLayout.EAST);
+
+                Runnable visual = () -> {
+                    boolean sel = chosen.contains(sp.name);
+                    glyph.setText(sel ? "☑" : "☐");
+                    glyph.setForeground(sel ? App.GOLD : App.TEXT_MUTED);
+                    name.setForeground(sel ? App.GOLD : App.TEXT_LIGHT);
+                    row.setBackground(sel ? new Color(70, 60, 38) : App.BG_DARK);
+                };
+                visuals.add(visual);
+                row.addMouseListener(new java.awt.event.MouseAdapter() {
+                    @Override
+                    public void mouseReleased(java.awt.event.MouseEvent e) {
+                        if (!App.isClickRelease(e)) return;
+                        if (chosen.contains(sp.name)) {
+                            chosen.remove(sp.name);
+                        } else {
+                            if (max == 1) chosen.clear();
+                            if (chosen.size() < max) chosen.add(sp.name);
+                        }
+                        infoTitle.setText(sp.name);
+                        infoText.setText(sp.school.isEmpty() ? "No details in the spell registry." : sp.infoText());
+                        infoText.setCaretPosition(0);
+                        refresh();
+                    }
+
+                    @Override
+                    public void mouseEntered(java.awt.event.MouseEvent e) {
+                        if (!chosen.contains(sp.name)) row.setBackground(new Color(52, 48, 64));
+                    }
+
+                    @Override
+                    public void mouseExited(java.awt.event.MouseEvent e) {
+                        if (!chosen.contains(sp.name)) row.setBackground(App.BG_DARK);
+                    }
+                });
+                rows.add(row);
+                rowPanels.add(row);
+            }
+
+            if (options.size() > 10) {
+                JTextField search = new JTextField();
+                App.styleTextField(search);
+                search.setMaximumSize(new Dimension(360, 36));
+                search.setToolTipText("Type to filter spells");
+                onTextChange(search, () -> {
+                    String q = search.getText().trim().toLowerCase();
+                    for (int i = 0; i < options.size(); i++) {
+                        Spell s = options.get(i);
+                        rowPanels.get(i).setVisible(q.isEmpty() || s.name.toLowerCase().contains(q) || s.school.toLowerCase().contains(q));
+                    }
+                    rows.revalidate();
+                    rows.repaint();
+                });
+                add(panel, search);
+                add(panel, gap(6));
+            }
+            if (max > 1) {
+                add(panel, counter);
+                add(panel, gap(4));
+            }
+            JScrollPane scroll = new JScrollPane(rows);
+            App.applyDarkScrollBar(scroll);
+            scroll.setBorder(new LineBorder(App.BG_FIELD, 1, true));
+            int rowH = 36;
+            int visible = Math.min(options.size(), 8);
+            scroll.setPreferredSize(new Dimension(560, visible * rowH + 6));
+            scroll.setMaximumSize(new Dimension(720, visible * rowH + 6));
+            add(panel, scroll);
+            refresh();
+        }
+
+        private void refresh() {
+            for (Runnable v : visuals) v.run();
+            counter.setText("Selected: " + chosen.size() + " / " + max);
+            if (onChange != null) onChange.run();
+        }
+
+        List<String> selected() {
+            return new ArrayList<>(chosen);
+        }
+
+        int optionCount() {
+            return options.size();
+        }
+
+        void setSelected(List<String> names) {
+            chosen.clear();
+            for (String n : names) {
+                for (Spell s : options) {
+                    if (s.name.equals(n) && chosen.size() < max) chosen.add(n);
+                }
+            }
+            for (Runnable v : visuals) v.run();
+            counter.setText("Selected: " + chosen.size() + " / " + max);
+        }
+    }
+
     private void applyLevelUp(String cls, LinkedHashMap<String, Integer> newClassLevels, int newClassLevel,
-                              int newLevel, int roll, FeatPick pick) {
+                              int newLevel, int roll, FeatPick pick, SpellChoice spells) {
         Map<String, Object> out = new LinkedHashMap<>(rec);
         if (CharacterStorage.recStr(out, "characterClass").isEmpty()) out.put("characterClass", cls);
 
@@ -533,6 +974,25 @@ class LevelUpPanel {
             out.put("stats", statsOut);
         }
         out.put("feats", feats);
+
+        if (spells != null) {
+            LinkedHashMap<String, Map<String, List<String>>> all = CharacterStorage.recClassSpells(rec);
+            Map<String, List<String>> lists = all.computeIfAbsent(cls, k -> CharacterStorage.emptyClassSpells());
+            List<String> cantrips = lists.get("cantrips"), prepared = lists.get("prepared");
+            if (spells.cantripOut != null) {
+                int i = cantrips.indexOf(spells.cantripOut);
+                if (i >= 0) cantrips.set(i, spells.cantripIn);
+            }
+            if (spells.spellOut != null) {
+                int i = prepared.indexOf(spells.spellOut);
+                if (i >= 0) prepared.set(i, spells.spellIn);
+            }
+            addAllNew(cantrips, spells.cantrips);
+            addAllNew(lists.get("spellbook"), spells.spellbook);
+            addAllNew(prepared, spells.prepared);
+            addAllNew(lists.get("arcanum"), spells.arcanum);
+            out.put("classSpells", CharacterStorage.classSpellsToJson(all));
+        }
         CharacterStorage.refreshDerived(out);
 
         List<Object> all = CharacterStorage.loadSavedCharacters();
@@ -540,14 +1000,16 @@ class LevelUpPanel {
             all.set(charIndex, out);
             CharacterStorage.saveAllCharacters(all);
         }
-        JOptionPane.showMessageDialog(panel, displayName() + " is now level " + newLevel + "!",
-                "Level Up", JOptionPane.INFORMATION_MESSAGE);
         close();
     }
 
     // ---------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------
+    private static void addAllNew(List<String> target, List<String> items) {
+        for (String s : items) if (!target.contains(s)) target.add(s);
+    }
+
     private static void checkCap(FeatPick p, Map<String, Integer> baseStats, int cap) {
         for (Map.Entry<String, Integer> en : p.increases.entrySet()) {
             int cur = baseStats.getOrDefault(en.getKey(), 10);
