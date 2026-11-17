@@ -894,8 +894,9 @@ static Spell lookup(String name) {
 // Spells on a class's list from minLevel to maxLevel (inclusive), sorted by level then name
 static List<Spell> classSpells(String cls, int minLevel, int maxLevel) {
     List<Spell> out = new ArrayList<>();
+    String listCls = CustomAssets.spellListFor(cls); // homebrew classes can borrow another class's list
     for (Spell s : SPELLS.values()) {
-        if (s.level >= minLevel && s.level <= maxLevel && s.classes.contains(cls)) out.add(s);
+        if (s.level >= minLevel && s.level <= maxLevel && (s.classes.contains(cls) || s.classes.contains(listCls))) out.add(s);
     }
     out.sort(Comparator.comparingInt((Spell s) -> s.level).thenComparing(s -> s.name));
     return out;
@@ -947,7 +948,8 @@ static {
             new int[]{4, 5, 6, 7, 9, 10, 11, 12, 14, 15, 16, 16, 17, 18, 19, 21, 22, 23, 24, 25});
 }
 
-private static void caster(String cls, String ability, String type, int[] cantrips, int[] prepared) {
+// Package-private so CustomAssets can register homebrew casting classes
+static void caster(String cls, String ability, String type, int[] cantrips, int[] prepared) {
     CASTING_ABILITY.put(cls, ability);
     CASTER_TYPE.put(cls, type);
     CANTRIPS_BY_LEVEL.put(cls, cantrips == null ? new int[20] : cantrips);

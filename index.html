@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>D&amp;D Engine</title>
+<meta name="description" content="A desktop D&amp;D 2024 (5.5e) character builder, character sheet, level-up tool and homebrew Asset Library with a built-in grid map editor.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#1E202C">
+<meta property="og:title" content="D&amp;D Engine">
+<meta property="og:description" content="Build characters, level them up, and create your own homebrew: items, spells, classes, species, maps and more.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpolygon points='32,3 59,18 59,46 32,61 5,46 5,18' fill='%23252836' stroke='%23D4AF37' stroke-width='4'/%3E%3Ctext x='32' y='42' font-family='Georgia,serif' font-size='26' font-weight='700' fill='%23D4AF37' text-anchor='middle'%3E20%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #1E202C;
+    --card: #252836;
+    --row: #2A2E3F;
+    --border: #3A3F55;
+    --gold: #D4AF37;
+    --gold-soft: rgba(212, 175, 55, .35);
+    --red: #C62828;
+    --red-hover: #DC3C3C;
+    --text: #EBE6DC;
+    --muted: #AAA5A0;
+    --stone: #3B4054;
+    --wood: #5A4734;
+    --grass: #3C523A;
+    --water: #2B4766;
+    --pit: #0E0F16;
+    --wall: #D8D0BE;
+    --serif: Georgia, "Times New Roman", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Code", Consolas, Menlo, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 var(--sans);
+    padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px);
+  }
+  a { color: var(--gold); }
+  a:hover { color: #E8C860; }
+  img { max-width: 100%; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(30, 32, 44, .92);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--border);
+  }
+  nav .wrap { display: flex; align-items: center; gap: 20px; min-height: 56px; flex-wrap: wrap; }
+  .brand { font: 700 20px var(--serif); color: var(--gold); text-decoration: none; margin-right: auto; }
+  nav a.link { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; }
+  nav a.link:hover { color: var(--gold); }
+
+  /* ---------- hero ---------- */
+  header.hero { padding-block: 72px 56px; border-bottom: 1px solid var(--border); }
+  .hero-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; }
+  .eyebrow { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  h1 { font: 700 clamp(40px, 7vw, 64px)/1.05 var(--serif); color: var(--gold); margin: 10px 0 16px; }
+  .lede { font-size: 18px; color: var(--text); max-width: 34em; margin: 0 0 28px; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-block; padding: 12px 20px; border-radius: 6px; font-weight: 700; font-size: 15px;
+    text-decoration: none; border: 1px solid transparent; transition: background .15s, border-color .15s, color .15s;
+  }
+  .btn-primary { background: var(--red); color: var(--text); }
+  .btn-primary:hover { background: var(--red-hover); color: var(--text); }
+  .btn-secondary { background: var(--row); color: var(--text); border-color: var(--border); }
+  .btn-secondary:hover { border-color: var(--gold); color: var(--gold); }
+  .note { color: var(--muted); font-size: 13px; margin-top: 14px; }
+
+  /* mini map illustration (pure CSS/SVG, mirrors the in-app editor's palette) */
+  .map-card { background: var(--card); border: 1px solid var(--gold-soft); border-radius: 10px; padding: 14px; }
+  .map-card .bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tool { font: 700 12px var(--sans); padding: 4px 10px; border-radius: 4px; background: var(--row); border: 1px solid var(--border); color: var(--text); }
+  .tool.on { background: var(--gold); color: var(--bg); border-color: var(--gold); }
+  .map-card svg { display: block; width: 100%; height: auto; border-radius: 4px; }
+  .map-card .caption { color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+  /* ---------- sections ---------- */
+  section { padding-block: 64px; border-bottom: 1px solid var(--border); }
+  h2 { font: 700 32px/1.2 var(--serif); color: var(--gold); margin: 0 0 8px; }
+  .section-lede { color: var(--muted); margin: 0 0 32px; max-width: 46em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-left: 3px solid var(--gold);
+    border-radius: 6px; padding: 16px 18px;
+  }
+  .card h3 { margin: 0 0 6px; font: 700 18px var(--serif); color: var(--gold); }
+  .card p { margin: 0; color: var(--text); font-size: 15px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 28px; padding: 0; list-style: none; }
+  .chips li {
+    background: var(--row); border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 14px; font-weight: 700; font-size: 14px;
+  }
+  .chips li span { color: var(--muted); font-weight: 400; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+  /* let grid columns shrink below their content (code blocks scroll instead of widening the page) */
+  .two-col > *, .hero-grid > *, .grid > * { min-width: 0; }
+
+  /* ---------- code ---------- */
+  .code {
+    position: relative; background: #15161F; border: 1px solid var(--border); border-radius: 6px;
+    margin: 0 0 18px; overflow-x: auto;
+  }
+  .code pre { margin: 0; padding: 16px 18px; font: 14px/1.6 var(--mono); color: var(--text); white-space: pre; }
+  .code .c { color: var(--muted); }
+  .code .k { color: var(--gold); }
+  .copy {
+    position: absolute; top: 8px; right: 8px; font: 700 12px var(--sans); cursor: pointer;
+    background: var(--row); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px;
+  }
+  .copy:hover { border-color: var(--gold); color: var(--gold); }
+  ol.steps { padding-left: 1.3em; margin: 0 0 18px; }
+  ol.steps li { margin-bottom: 6px; }
+  code.inline { font-family: var(--mono); font-size: .9em; background: var(--row); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
+
+  .callout {
+    background: var(--row); border: 1px solid var(--border); border-left: 3px solid var(--red);
+    border-radius: 6px; padding: 14px 18px; color: var(--text); font-size: 15px;
+  }
+  .callout strong { color: var(--gold); }
+
+  footer { padding-block: 36px; color: var(--muted); font-size: 13px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+
+  @media (max-width: 820px) {
+    .hero-grid, .two-col { grid-template-columns: 1fr; }
+    header.hero { padding-block: 48px 40px; }
+    nav a.link.optional { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top">D&amp;D Engine</a>
+    <a class="link optional" href="#features">Features</a>
+    <a class="link optional" href="#homebrew">Homebrew</a>
+    <a class="link" href="#get-started">Get started</a>
+    <a class="link" href="https://github.com/TylerNicastro/dnd_engine">GitHub</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow">D&amp;D 2024 rules · Desktop app</div>
+      <h1>D&amp;D Engine</h1>
+      <p class="lede">Build characters step by step, keep a sheet where every number explains itself, level up with hit dice, feats and spells, and create your own homebrew, from magic items to full classes and battle maps.</p>
+      <div class="buttons">
+        <a class="btn btn-primary" href="https://github.com/TylerNicastro/dnd_engine/archive/refs/heads/main.zip">Download ZIP</a>
+        <a class="btn btn-secondary" href="https://github.com/TylerNicastro/dnd_engine">View on GitHub</a>
+      </div>
+      <p class="note">A Java desktop app: download it and run it on your computer (Windows, macOS or Linux). <a href="#get-started">How to run it</a></p>
+    </div>
+
+    <figure class="map-card" aria-label="Illustration of the built-in grid map editor">
+      <div class="bar" aria-hidden="true">
+        <span class="tool">Select</span><span class="tool on">Wall</span><span class="tool">Door</span>
+        <span class="tool">Window</span><span class="tool">Floor</span><span class="tool">Pin</span>
+      </div>
+      <svg viewBox="0 0 400 280" role="img" aria-label="A small dungeon: stone room, wooden hall, water, a door, a window and an encounter pin">
+        <defs>
+          <pattern id="g" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M40 0H0V40" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="1"/>
+          </pattern>
+        </defs>
+        <rect width="400" height="280" fill="#1E202C"/>
+        <rect x="0" y="0" width="240" height="160" fill="#3B4054"/>
+        <rect x="240" y="40" width="160" height="80" fill="#5A4734"/>
+        <rect x="0" y="160" width="240" height="120" fill="#3C523A"/>
+        <rect x="40" y="200" width="120" height="40" fill="#2B4766"/>
+        <rect x="320" y="200" width="40" height="40" fill="#0E0F16"/>
+        <rect width="400" height="280" fill="url(#g)"/>
+        <g stroke="#D8D0BE" stroke-width="6" stroke-linecap="round" fill="none">
+          <path d="M3 3H240V40M240 120V160H3V3"/>
+          <path d="M240 40H397V120H240"/>
+          <path d="M3 160V277"/>
+        </g>
+        <!-- closed door on the room's east wall -->
+        <rect x="235" y="47" width="10" height="26" fill="#8B5A2B" stroke="#D4AF37" stroke-width="1.2"/>
+        <!-- open door on the room's south wall -->
+        <path d="M86 160A28 28 0 0 1 114 188" stroke="rgba(212,175,55,.5)" stroke-dasharray="3 3" fill="none"/>
+        <line x1="86" y1="160" x2="86" y2="188" stroke="#8B5A2B" stroke-width="5" stroke-linecap="round"/>
+        <rect x="80" y="155" width="40" height="10" fill="#3B4054"/>
+        <line x1="80" y1="160" x2="86" y2="160" stroke="#D8D0BE" stroke-width="6" stroke-linecap="round"/>
+        <line x1="114" y1="160" x2="120" y2="160" stroke="#D8D0BE" stroke-width="6" stroke-linecap="round"/>
+        <!-- window on the hall's north wall -->
+        <rect x="300" y="35" width="40" height="10" fill="#5A4734"/>
+        <rect x="300" y="36.5" width="40" height="7" fill="rgba(143,193,227,.35)" stroke="#8FC1E3" stroke-width="1.4"/>
+        <!-- encounter pin -->
+        <circle cx="140" cy="80" r="13" fill="#D4AF37" stroke="#1E202C" stroke-width="2"/>
+        <text x="140" y="85" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700" font-size="14" fill="#1E202C">1</text>
+        <rect x="104" y="98" width="72" height="16" rx="5" fill="rgba(20,22,30,.85)"/>
+        <text x="140" y="110" text-anchor="middle" font-family="Arial, sans-serif" font-weight="700" font-size="10" fill="#EBE6DC">Goblin ambush</text>
+      </svg>
+      <figcaption class="caption">Illustration of the built-in map editor: walls, doors and windows sit on square edges, floors are painted per square (5 ft.), and pins open their notes and linked NPCs.</figcaption>
+    </figure>
+  </div>
+</header>
+
+<main>
+  <section id="features">
+    <div class="wrap">
+      <h2>Features</h2>
+      <p class="section-lede">Everything happens in one window. Click any stat, skill, item, feature, condition or language to see what it is, what it's used for, and where it comes from.</p>
+      <div class="grid">
+        <div class="card"><h3>Character creation</h3><p>A guided wizard for species and lineage, class, ability scores (point buy, rolling or custom), background, skills, languages, spells and starting equipment.</p></div>
+        <div class="card"><h3>Clickable character sheet</h3><p>Every value explains its math and its source. Track conditions, coins, equipment, hit dice and death saves right on the sheet.</p></div>
+        <div class="card"><h3>Level up &amp; multiclass</h3><p>Roll or enter hit points, pick feats, ability score improvements and epic boons, multiclass, and choose new spells as you go.</p></div>
+        <div class="card"><h3>Spells</h3><p>A full 2024 spell registry with spell cards, slot tracking, Pact Magic, rituals and concentration, plus clickable conditions inside spell text.</p></div>
+        <div class="card"><h3>Asset Library</h3><p>Create, edit, duplicate and delete your own homebrew in 11 categories, then share it as a JSON pack.</p></div>
+        <div class="card"><h3>Grid map editor</h3><p>Build battle maps from scratch: walls, doors (open or closed), windows, five floor types, pan and zoom, undo, and clickable encounter pins.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="homebrew">
+    <div class="wrap">
+      <h2>Homebrew that plugs into the rules</h2>
+      <p class="section-lede">Assets you create are merged into the game data as soon as you save them. A homebrew class shows up in the creation wizard and in level up; a homebrew weapon counts toward attacks and equipment choices; a homebrew condition becomes clickable everywhere it's mentioned.</p>
+      <ul class="chips">
+        <li>Items <span>· gear, consumables, wondrous, tools</span></li>
+        <li>Weapons <span>· damage, properties, mastery</span></li>
+        <li>Armor <span>· AC, DEX cap, STR, stealth</span></li>
+        <li>NPCs <span>· full stat blocks</span></li>
+        <li>Maps <span>· grid, walls, doors, pins</span></li>
+        <li>Conditions</li>
+        <li>Spells <span>· levels 0 to 9</span></li>
+        <li>Backgrounds <span>· skills, tools, origin feat</span></li>
+        <li>Species <span>· size, speed, darkvision, traits</span></li>
+        <li>Classes <span>· levels 1 to 20, spellcasting</span></li>
+        <li>Subclasses</li>
+      </ul>
+      <div class="two-col">
+        <div>
+          <h3 style="font:700 20px var(--serif);color:var(--gold);margin:0 0 8px">Share homebrew packs</h3>
+          <p style="margin:0 0 14px">Export any mix of categories to a <code class="inline">.json</code> file and send it to your group. When you import a pack, you choose what happens to name clashes: keep both, replace, or skip. Pins on imported maps stay linked to imported NPCs.</p>
+          <p class="note" style="margin:0">Your own homebrew is saved in <code class="inline">custom_assets.json</code> next to the app.</p>
+        </div>
+        <div class="code" aria-label="Example homebrew pack">
+          <pre><span class="c">// homebrew_pack.json (excerpt)</span>
+{
+  <span class="k">"format"</span>: "dnd-engine-homebrew",
+  <span class="k">"conditions"</span>: [
+    { "name": "Bleeding",
+      "description": "Lose 1d4 HP at the start of each turn." }
+  ],
+  <span class="k">"weapons"</span>: [
+    { "name": "Stormglass Saber",
+      "weaponCategory": "Martial", "weaponType": "Melee",
+      "damageDice": "1d8", "damageType": "Lightning",
+      "properties": ["Finesse", "Versatile"],
+      "versatileDamage": "1d10", "mastery": "Vex" }
+  ]
+}</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="get-started">
+    <div class="wrap">
+      <h2>Get started</h2>
+      <p class="section-lede">D&amp;D Engine is a Java desktop app. You need a Java Development Kit (JDK) <strong>11 or newer</strong>. Any recent build works, for example <a href="https://adoptium.net/">Eclipse Temurin</a>.</p>
+      <div class="two-col">
+        <div>
+          <ol class="steps">
+            <li>Download the <a href="https://github.com/TylerNicastro/dnd_engine/archive/refs/heads/main.zip">ZIP</a> and unzip it, or clone the repository.</li>
+            <li>Open a terminal in the project folder (the one containing <code class="inline">src</code> and <code class="inline">weapons.json</code>).</li>
+            <li>Compile, then run. Always run from the project folder: the app reads and writes its data files there.</li>
+          </ol>
+          <div class="callout"><strong>Your data stays local.</strong> Characters are saved to <code class="inline">characters.json</code> and homebrew to <code class="inline">custom_assets.json</code> in the project folder. Back those files up to keep your work.</div>
+        </div>
+        <div>
+          <div class="code">
+            <button class="copy" type="button" data-copy="clone">Copy</button>
+<pre id="clone"><span class="c"># get the code</span>
+git clone https://github.com/TylerNicastro/dnd_engine.git
+cd dnd_engine</pre>
+          </div>
+          <div class="code">
+            <button class="copy" type="button" data-copy="run">Copy</button>
+<pre id="run"><span class="c"># compile and run (macOS, Linux, Git Bash)</span>
+javac -d bin src/*.java
+java -cp bin App</pre>
+          </div>
+          <div class="code">
+            <button class="copy" type="button" data-copy="runwin">Copy</button>
+<pre id="runwin"><span class="c"># Windows PowerShell</span>
+javac -d bin (Get-ChildItem src\*.java).FullName
+java -cp bin App</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>D&amp;D Engine · an unofficial fan-made tool for the 2024 rules.</span>
+    <span><a href="https://github.com/TylerNicastro/dnd_engine">Source on GitHub</a></span>
+  </div>
+</footer>
+
+<script>
+  // Copy buttons for the command blocks (Clipboard API needs HTTPS, which GitHub Pages provides)
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = document.getElementById(btn.getAttribute('data-copy'));
+      var text = pre.innerText.split('\n').filter(function (l) { return l.trim().charAt(0) !== '#'; }).join('\n').trim();
+      var done = function (ok) {
+        btn.textContent = ok ? 'Copied' : 'Select & copy';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1600);
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+      } else {
+        var range = document.createRange();
+        range.selectNodeContents(pre);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        done(false);
+      }
+    });
+  });
+</script>
+</body>
+</html>

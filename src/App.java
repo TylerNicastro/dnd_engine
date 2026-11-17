@@ -23,6 +23,10 @@ public class App {
     public static void main(String[] args) throws Exception {
         SpellData.loadExtraSpells();
         WeaponData.WEAPON_DB = WeaponData.loadWeaponDatabase();
+        // Homebrew from the Asset Library merges into the rules tables after the built-in data loads
+        CustomAssets.CHANGE_LISTENERS.add(App::refreshConditionPattern);
+        CustomAssets.load();
+        CustomAssets.applyToRuntime();
         SwingUtilities.invokeLater(() -> {
             JFrame frame = new JFrame("D&D Engine");
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -35,8 +39,11 @@ public class App {
             cards.setBackground(BG_DARK);
 
             cards.add(buildMainMenu(cardLayout, cards), "MENU");
-            cards.add(buildCombatPanel(cardLayout, cards), "COMBAT");
-            cards.add(buildAssetsPanel(cardLayout, cards), "ASSETS");
+            MapEditorPanel mapEditor = new MapEditorPanel(cardLayout, cards);
+            cards.add(mapEditor.panel, "MAP_EDITOR");
+            cards.add(buildCombatPanel(cardLayout, cards, mapEditor), "COMBAT");
+            AssetLibraryPanel assetLibrary = new AssetLibraryPanel(cardLayout, cards, mapEditor);
+            cards.add(assetLibrary.panel, "ASSETS");
 
             WizardResult wizardResult = buildNewPCWizardPanel(cardLayout, cards);
             cards.add(wizardResult.panel, "NEW_PC_WIZARD");
@@ -293,6 +300,8 @@ public class App {
         Runnable reset;
         java.util.function.Consumer<Boolean> setEnabled;
         java.util.function.Consumer<List<String>> setSelected;
+        // Replaces the option list (and info map), keeping any still-valid selection
+        java.util.function.BiConsumer<List<String>, Map<String, String>> setOptions;
     }
 
     /**
@@ -358,8 +367,16 @@ public class App {
         List<JLabel> textLabels = new ArrayList<>();
         List<Runnable> visualUpdaters = new ArrayList<>();
         Runnable[] refreshHolder = new Runnable[1];
+        List<String> opts = new ArrayList<>(options);
+        java.util.concurrent.atomic.AtomicReference<Map<String, String>> infoRef = new java.util.concurrent.atomic.AtomicReference<>(infoMap);
 
-        for (String option : options) {
+        Runnable buildRows = () -> {
+          rowsPanel.removeAll();
+          rowPanels.clear();
+          glyphLabels.clear();
+          textLabels.clear();
+          visualUpdaters.clear();
+          for (String option : opts) {
             JPanel row = new JPanel(new BorderLayout(8, 0));
             row.setBackground(BG_DARK);
             row.setBorder(new EmptyBorder(7, 10, 7, 10));
@@ -377,8 +394,8 @@ public class App {
             left.add(textLbl);
             row.add(left, BorderLayout.CENTER);
 
-            if (infoMap != null) {
-                JButton infoBtn = makeInfoButton(option, infoTitle, infoText, infoMap.getOrDefault(option, ""));
+            if (infoRef.get() != null) {
+                JButton infoBtn = makeInfoButton(option, infoTitle, infoText, infoRef.get().getOrDefault(option, ""));
                 infoBtn.setPreferredSize(new Dimension(24, 24));
                 JPanel infoWrap = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
                 infoWrap.setOpaque(false);
@@ -426,7 +443,9 @@ public class App {
             rowPanels.add(row);
             glyphLabels.add(glyph);
             textLabels.add(textLbl);
-        }
+          }
+        };
+        buildRows.run();
 
         refreshHolder[0] = () -> {
             for (Runnable u : visualUpdaters) u.run();
@@ -439,8 +458,8 @@ public class App {
             searchFieldRef.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
                 void filter() {
                     String q = searchFieldRef.getText().trim().toLowerCase();
-                    for (int i = 0; i < options.size(); i++) {
-                        rowPanels.get(i).setVisible(q.isEmpty() || options.get(i).toLowerCase().contains(q));
+                    for (int i = 0; i < opts.size() && i < rowPanels.size(); i++) {
+                        rowPanels.get(i).setVisible(q.isEmpty() || opts.get(i).toLowerCase().contains(q));
                     }
                     rowsPanel.revalidate();
                     rowsPanel.repaint();
@@ -477,10 +496,25 @@ public class App {
             selected.clear();
             if (vals != null) {
                 for (String v : vals) {
-                    if (options.contains(v) && selected.size() < maxSelect) selected.add(v);
+                    if (opts.contains(v) && selected.size() < maxSelect) selected.add(v);
                 }
             }
             refreshHolder[0].run();
+        };
+        result.setOptions = (newOpts, newInfo) -> {
+            opts.clear();
+            opts.addAll(newOpts);
+            infoRef.set(newInfo);
+            selected.retainAll(opts);
+            buildRows.run();
+            int vis = Math.max(1, Math.min(opts.size(), viewportRows));
+            scroll.setPreferredSize(new Dimension(380, vis * rowH + 6));
+            if (searchFieldRef != null) searchFieldRef.setText("");
+            refreshHolder[0].run();
+            if (!enabledFlag[0]) result.setEnabled.accept(false);
+            rowsPanel.revalidate();
+            rowsPanel.repaint();
+            wrap.revalidate();
         };
         return result;
     }
@@ -933,7 +967,7 @@ public class App {
         return panel;
     }
 
-    private static String escapeHtml(String s) {
+    static String escapeHtml(String s) {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
@@ -942,60 +976,65 @@ public class App {
     }
 
     // ---------------------------------------------------------------
-    // ASSETS PANEL
+    // COMBAT PANEL: pick one of the Asset Library's maps to open in the viewer
     // ---------------------------------------------------------------
-    private static JPanel buildAssetsPanel(CardLayout cardLayout, JPanel cards) {
-        JPanel panel = buildSectionShell("Assets", cardLayout, cards, "MENU");
-
-        JPanel content = new JPanel(new BorderLayout());
-        content.setBackground(BG_DARK);
-        content.setBorder(new EmptyBorder(30, 30, 30, 30));
-
-        JLabel emptyLabel = new JLabel("No assets yet.", JLabel.CENTER);
-        emptyLabel.setForeground(TEXT_MUTED);
-        emptyLabel.setFont(new Font("SansSerif", Font.PLAIN, 18));
-        content.add(emptyLabel, BorderLayout.CENTER);
-
-        JButton addButton = new JButton("+ Add New Asset");
-        styleAccentButton(addButton);
-        JPanel bottomBar = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        bottomBar.setBackground(BG_DARK);
-        bottomBar.setBorder(new EmptyBorder(20, 0, 30, 0));
-        bottomBar.add(addButton);
-
-        panel.add(content, BorderLayout.CENTER);
-        panel.add(bottomBar, BorderLayout.SOUTH);
-
-        return panel;
-    }
-
-    // ---------------------------------------------------------------
-    // COMBAT PANEL
-    // ---------------------------------------------------------------
-    private static JPanel buildCombatPanel(CardLayout cardLayout, JPanel cards) {
+    private static JPanel buildCombatPanel(CardLayout cardLayout, JPanel cards, MapEditorPanel mapEditor) {
         JPanel panel = buildSectionShell("Combat", cardLayout, cards, "MENU");
 
         JPanel content = new JPanel();
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
         content.setBackground(BG_DARK);
         content.setBorder(new EmptyBorder(40, 30, 30, 30));
+        JScrollPane scroll = new JScrollPane(content);
+        applyDarkScrollBar(scroll);
+        panel.add(scroll, BorderLayout.CENTER);
 
-        JLabel selectMapLabel = new JLabel("Select a map");
-        selectMapLabel.setForeground(TEXT_LIGHT);
-        selectMapLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
-        selectMapLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        Runnable rebuild = () -> {
+            content.removeAll();
+            JLabel selectMapLabel = new JLabel("Select a map");
+            selectMapLabel.setForeground(TEXT_LIGHT);
+            selectMapLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
+            selectMapLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+            content.add(selectMapLabel);
+            content.add(Box.createRigidArea(new Dimension(0, 14)));
 
-        JLabel noneAvailableLabel = new JLabel("None available.");
-        noneAvailableLabel.setForeground(TEXT_MUTED);
-        noneAvailableLabel.setFont(new Font("SansSerif", Font.PLAIN, 16));
-        noneAvailableLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-
-        content.add(selectMapLabel);
-        content.add(Box.createRigidArea(new Dimension(0, 10)));
-        content.add(noneAvailableLabel);
-
-        panel.add(content, BorderLayout.CENTER);
-
+            List<Map<String, Object>> maps = CustomAssets.all(CustomAssets.MAPS);
+            if (maps.isEmpty()) {
+                JLabel none = new JLabel("None available. Create maps in Assets → Maps.");
+                none.setForeground(TEXT_MUTED);
+                none.setFont(new Font("SansSerif", Font.PLAIN, 16));
+                none.setAlignmentX(Component.CENTER_ALIGNMENT);
+                content.add(none);
+            }
+            for (Map<String, Object> m : maps) {
+                String id = CustomAssets.str(m, "id");
+                JPanel row = new JPanel(new BorderLayout(10, 2));
+                row.setBackground(BG_PANEL);
+                row.setBorder(BorderFactory.createCompoundBorder(new LineBorder(BG_FIELD, 1, true), new EmptyBorder(10, 14, 10, 14)));
+                row.setMaximumSize(new Dimension(520, 64));
+                row.setAlignmentX(Component.CENTER_ALIGNMENT);
+                JLabel name = new JLabel(CustomAssets.str(m, "name"));
+                name.setForeground(GOLD);
+                name.setFont(new Font("Serif", Font.BOLD, 17));
+                JLabel sub = new JLabel(CustomAssets.summary(CustomAssets.MAPS, m));
+                sub.setForeground(TEXT_MUTED);
+                sub.setFont(new Font("SansSerif", Font.PLAIN, 12));
+                row.add(name, BorderLayout.NORTH);
+                row.add(sub, BorderLayout.CENTER);
+                clickableCard(row, () -> mapEditor.open(id, false, "COMBAT", () -> { }));
+                content.add(row);
+                content.add(Box.createRigidArea(new Dimension(0, 10)));
+            }
+            content.revalidate();
+            content.repaint();
+        };
+        panel.addComponentListener(new ComponentAdapter() {
+            @Override
+            public void componentShown(ComponentEvent e) {
+                rebuild.run();
+            }
+        });
+        rebuild.run();
         return panel;
     }
 
@@ -1415,13 +1454,17 @@ public class App {
             String bodyLabel = "Unarmored";
             String bodyValue = "10 + DEX (" + signed(dexMod) + ")";
             int bestBody = 10 + dexMod;
-            boolean shield = false;
+            int shield = 0;
+            String shieldName = "Shield";
             for (String item : equipment) {
                 String base = GameData.stripEquipmentCount(item);
                 GameData.ArmorInfo info = GameData.ARMOR_AC.get(base);
                 if (info == null) continue;
                 if (info.isShield) {
-                    shield = true;
+                    if (GameData.shieldBonus(info) > shield) {
+                        shield = GameData.shieldBonus(info);
+                        shieldName = base;
+                    }
                     continue;
                 }
                 int dexPart = info.maxDexBonus <= 0 ? 0 : Math.min(dexMod, info.maxDexBonus);
@@ -1433,7 +1476,7 @@ public class App {
                 }
             }
             rows.add(row(bodyLabel, bodyValue));
-            if (shield) rows.add(row("Shield", "+2"));
+            if (shield > 0) rows.add(row(shieldName, "+" + shield));
             rows.add(row("Armor Class", String.valueOf(ac)));
             showInfoOverlay(combatRow, "Armor Class", "Defense",
                     "How hard you are to hit. An attack hits if its roll equals or beats your AC. Comes from your best armor in Equipment (or 10 + DEX unarmored), plus a shield.", rows);
@@ -1923,6 +1966,8 @@ public class App {
     }
 
     static String itemDescription(String base) {
+        String homebrew = CustomAssets.itemDescription(base);
+        if (homebrew != null) return homebrew;
         List<String> candidates = new ArrayList<>();
         candidates.add(base);
         if (base.endsWith("s")) candidates.add(base.substring(0, base.length() - 1));
@@ -1936,7 +1981,7 @@ public class App {
             }
             GameData.ArmorInfo armor = GameData.ARMOR_AC.get(cand);
             if (armor != null) {
-                if (armor.isShield) return "Shield. +2 to Armor Class while wielded.";
+                if (armor.isShield) return "Shield. +" + GameData.shieldBonus(armor) + " to Armor Class while wielded.";
                 String dex = armor.maxDexBonus <= 0 ? "" : armor.maxDexBonus == Integer.MAX_VALUE
                         ? " + Dex modifier" : " + Dex modifier (max " + armor.maxDexBonus + ")";
                 return "Armor. AC " + armor.baseAC + dex + ".";
@@ -2075,7 +2120,7 @@ public class App {
         return b;
     }
 
-    private static JButton overlayButton(String text, boolean primary) {
+    static JButton overlayButton(String text, boolean primary) {
         JButton b = new JButton(text);
         b.setFont(new Font("SansSerif", Font.BOLD, 13));
         b.setForeground(primary ? SHEET_BG : TEXT_LIGHT);
@@ -2088,7 +2133,7 @@ public class App {
         return b;
     }
 
-    private static JTextField overlayField(String text, int columns) {
+    static JTextField overlayField(String text, int columns) {
         JTextField tf = new JTextField(text, columns);
         tf.setFont(new Font("SansSerif", Font.PLAIN, 14));
         tf.setBackground(SHEET_BG);
@@ -2270,9 +2315,13 @@ public class App {
 
         JPanel list = new JPanel(new GridLayout(0, 1, 0, 4));
         list.setOpaque(false);
-        for (Map.Entry<String, String> en : ITEM_PRESETS.entrySet()) {
-            JButton row = new JButton("<html><div style='width:250px'><b>" + escapeHtml(en.getKey())
-                    + "</b><br><span style='color:#aaa5a0; font-size:9px'>" + escapeHtml(en.getValue()) + "</span></div></html>");
+        // Homebrew items / weapons / armor from the Asset Library first, then the standard presets
+        List<String[]> presets = new ArrayList<>();
+        for (String[] hb : CustomAssets.equipmentPresets()) presets.add(new String[]{hb[0], "Homebrew · " + hb[1]});
+        for (Map.Entry<String, String> en : ITEM_PRESETS.entrySet()) presets.add(new String[]{en.getKey(), en.getValue()});
+        for (String[] en : presets) {
+            JButton row = new JButton("<html><div style='width:250px'><b>" + escapeHtml(en[0])
+                    + "</b><br><span style='color:#aaa5a0; font-size:9px'>" + escapeHtml(en[1]) + "</span></div></html>");
             row.setHorizontalAlignment(SwingConstants.LEFT);
             row.setForeground(TEXT_LIGHT);
             row.setBackground(SHEET_ROW_ALT);
@@ -2280,7 +2329,7 @@ public class App {
             row.setFocusPainted(false);
             row.setCursor(new Cursor(Cursor.HAND_CURSOR));
             row.setBorder(new EmptyBorder(6, 10, 6, 10));
-            row.addActionListener(e -> add.accept(en.getKey()));
+            row.addActionListener(e -> add.accept(en[0]));
             list.add(row);
         }
         JPanel listWrap = new JPanel(new BorderLayout());
@@ -2366,7 +2415,9 @@ public class App {
             JPanel grid = new JPanel(new GridLayout(0, 2, 6, 6));
             grid.setOpaque(false);
             Runnable[] close = new Runnable[1];
-            for (String cond : CONDITION_PRESETS) {
+            List<String> options = new ArrayList<>(Arrays.asList(CONDITION_PRESETS));
+            for (String hb : CustomAssets.conditionNames()) if (!options.contains(hb)) options.add(hb); // homebrew conditions
+            for (String cond : options) {
                 if (conditions.contains(cond)) continue;
                 JButton b = overlayButton(cond, false);
                 b.addActionListener(ev -> {
@@ -2635,6 +2686,10 @@ public class App {
         }
 
         Map<String, String> lineInfo = new LinkedHashMap<>();
+        for (String[] hb : CustomAssets.sheetProficiencies(rec)) { // homebrew class / background / species
+            lines.add(new String[]{hb[0], hb[1]});
+            lineInfo.put(hb[0], hb[2]);
+        }
         lineInfo.put("Size", "Your size category, set by your species. Small and Medium creatures both occupy a 5-ft. space; size matters for grappling, squeezing and some spells and effects.");
         lineInfo.put("Creature Type", "Your creature type matters for spells and effects that target specific types (for example, spells that only affect Humanoids).");
         lineInfo.put("Climb Speed", "You can climb at this speed without spending extra movement.");
@@ -2695,6 +2750,9 @@ public class App {
             String info = GameData.SPECIES_INFO.get(species);
             cards.add(featureCard(species + lineageSuffix, String.join(" · ", sub), info == null ? "" : info));
         }
+
+        // Homebrew: species traits, background origin feat, class + subclass features (Asset Library)
+        for (String[] f : CustomAssets.sheetFeatures(rec)) cards.add(featureCard(f[0], f[1], f[2]));
 
         List<DecisionItem> decisions = GameData.CLASS_DECISIONS.get(characterClass);
         if (decisions != null) {
@@ -3540,11 +3598,19 @@ public class App {
     }
 
     // ---------------- Text with clickable condition links ----------------
-    private static final java.util.regex.Pattern CONDITION_PATTERN = buildConditionPattern();
+    // Rebuilt whenever homebrew conditions change (CustomAssets.CHANGE_LISTENERS)
+    private static java.util.regex.Pattern CONDITION_PATTERN = buildConditionPattern();
+
+    static void refreshConditionPattern() {
+        CONDITION_PATTERN = buildConditionPattern();
+    }
 
     private static java.util.regex.Pattern buildConditionPattern() {
+        List<String> raw = new ArrayList<>();
+        for (String c : GameData.CONDITION_INFO.keySet()) if (!"Conscious".equals(c)) raw.add(c);
+        raw.sort((a, b) -> b.length() - a.length()); // longest first, so "Badly Poisoned" beats "Poisoned"
         List<String> names = new ArrayList<>();
-        for (String c : GameData.CONDITION_INFO.keySet()) if (!"Conscious".equals(c)) names.add(java.util.regex.Pattern.quote(c));
+        for (String c : raw) names.add(java.util.regex.Pattern.quote(escapeHtml(c))); // matched against escaped HTML
         return java.util.regex.Pattern.compile("\\b(" + String.join("|", names) + ")\\b");
     }
 
@@ -3552,7 +3618,12 @@ public class App {
     static String linkConditions(String escapedHtml) {
         java.util.regex.Matcher m = CONDITION_PATTERN.matcher(escapedHtml);
         StringBuilder sb = new StringBuilder();
-        while (m.find()) m.appendReplacement(sb, "<a href=\"cond:" + m.group(1) + "\">" + m.group(1) + "</a>");
+        while (m.find()) {
+            String name = m.group(1);
+            String raw = name.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+            m.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(
+                    "<a href=\"cond:" + java.net.URLEncoder.encode(raw, java.nio.charset.StandardCharsets.UTF_8) + "\">" + name + "</a>"));
+        }
         m.appendTail(sb);
         return sb.toString();
     }
@@ -3587,7 +3658,9 @@ public class App {
             public void mouseReleased(MouseEvent e) {
                 if (!isClickRelease(e)) return;
                 String href = linkAt(pane, e.getPoint());
-                if (href != null && href.startsWith("cond:")) showConditionOverlay(pane, href.substring(5));
+                if (href != null && href.startsWith("cond:")) {
+                    showConditionOverlay(pane, java.net.URLDecoder.decode(href.substring(5), java.nio.charset.StandardCharsets.UTF_8));
+                }
                 else if (href == null && onBackgroundClick != null) onBackgroundClick.run();
             }
         });
@@ -4244,11 +4317,15 @@ public class App {
         classPanel.add(classInfoWrap, BorderLayout.EAST);
 
         Map<String, String> classInfoMap = new LinkedHashMap<>();
-        for (Map.Entry<String, String[]> entry : GameData.CLASS_INFO.entrySet()) {
-            String hitDice = entry.getValue()[0];
-            String description = entry.getValue()[1];
-            classInfoMap.put(entry.getKey(), ("N/A".equals(hitDice) ? "" : "Hit Dice: " + hitDice + "\n\n") + description);
-        }
+        Runnable rebuildClassInfoMap = () -> { // re-run on reset so homebrew classes show up
+            classInfoMap.clear();
+            for (Map.Entry<String, String[]> entry : GameData.CLASS_INFO.entrySet()) {
+                String hitDice = entry.getValue()[0];
+                String description = entry.getValue()[1];
+                classInfoMap.put(entry.getKey(), ("N/A".equals(hitDice) ? "" : "Hit Dice: " + hitDice + "\n\n") + description);
+            }
+        };
+        rebuildClassInfoMap.run();
         List<String> classNames = new ArrayList<>(GameData.CLASS_INFO.keySet());
 
         CheckListResult classCheckList = buildCheckListPanel(
@@ -5914,6 +5991,12 @@ public class App {
         wizard.add(sidebarWrap, BorderLayout.EAST);
 
         Runnable reset = () -> {
+            // Pick up homebrew species / classes / backgrounds added or changed in the Asset Library
+            speciesCheckList.setOptions.accept(new ArrayList<>(GameData.SPECIES_INFO.keySet()), GameData.SPECIES_INFO);
+            rebuildClassInfoMap.run();
+            classCheckList.setOptions.accept(new ArrayList<>(GameData.CLASS_INFO.keySet()), classInfoMap);
+            backgroundCheckList.setOptions.accept(new ArrayList<>(GameData.BACKGROUND_INFO.keySet()), GameData.BACKGROUND_INFO);
+
             editIndexHolder[0] = null;
             touchedSpecies[0] = false;
             touchedLineage[0] = false;

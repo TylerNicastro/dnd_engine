@@ -78,6 +78,13 @@ class MiniJsonParser {
                 switch (esc) {
                     case 'n': sb.append('\n'); break;
                     case 't': sb.append('\t'); break;
+                    case 'r': sb.append('\r'); break;
+                    case 'b': sb.append('\b'); break;
+                    case 'f': sb.append('\f'); break;
+                    case 'u':
+                        sb.append((char) Integer.parseInt(s.substring(pos + 1, pos + 5), 16));
+                        pos += 4;
+                        break;
                     case '"': sb.append('"'); break;
                     case '\\': sb.append('\\'); break;
                     case '/': sb.append('/'); break;

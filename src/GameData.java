@@ -21,7 +21,7 @@ static {
     CLASS_INFO.put("Sorcerer", new String[]{"d6", "Spellcasters who wield innate magic born from a mysterious bloodline or event."});
     CLASS_INFO.put("Warlock", new String[]{"d8", "Spellcasters who draw power from a pact made with a mysterious otherworldly patron."});
     CLASS_INFO.put("Wizard", new String[]{"d6", "Scholarly spellcasters who master arcane magic through rigorous study of ancient tomes."});
-    CLASS_INFO.put("Assets", new String[]{"N/A", "Select a homebrew class."});
+    // Homebrew classes from the Asset Library are inserted here by CustomAssets.applyToRuntime()
     CLASS_INFO.put("Custom", new String[]{"N/A", "Enter all stats and abilities manually, level-by-level."});
 }
 
@@ -255,7 +255,7 @@ static {
     SPECIES_INFO.put("Tabaxi", "Feline and restless, tabaxi are driven by insatiable curiosity and a love of adventure.");
     SPECIES_INFO.put("Changeling", "Natural shapeshifters, changelings can alter their appearance and voice at will.");
     SPECIES_INFO.put("Warforged", "Living constructs built for war, warforged are tireless bodies animated with a spark of sentience.");
-    SPECIES_INFO.put("Asset", "Select a homebrew species.");
+    // Homebrew species from the Asset Library are inserted here by CustomAssets.applyToRuntime()
     SPECIES_INFO.put("Custom", "Create your own species with traits of your choosing.");
 }
 
@@ -270,6 +270,8 @@ static {
 }
 
 static int computeSpeed(String species, String lineage) {
+    Map<String, Object> homebrew = CustomAssets.speciesAsset(species);
+    if (homebrew != null) return CustomAssets.intVal(homebrew, "speed", 30);
     if ("Goliath".equals(species)) return 35;
     if ("Elf".equals(species) && "Wood Elf".equals(lineage)) return 35;
     if ("Dwarf".equals(species) || "Halfling".equals(species) || "Gnome".equals(species)) return 25;
@@ -281,11 +283,15 @@ static Integer computeClimbSpeed(String species) {
 }
 
 static String computeSize(String species) {
+    Map<String, Object> homebrew = CustomAssets.speciesAsset(species);
+    if (homebrew != null && !CustomAssets.str(homebrew, "size").isEmpty()) return CustomAssets.str(homebrew, "size");
     if ("Halfling".equals(species) || "Gnome".equals(species)) return "Small";
     return "Medium";
 }
 
 static String computeCreatureType(String species) {
+    Map<String, Object> homebrew = CustomAssets.speciesAsset(species);
+    if (homebrew != null && !CustomAssets.str(homebrew, "creatureType").isEmpty()) return CustomAssets.str(homebrew, "creatureType");
     if ("Changeling".equals(species)) return "Fey";
     if ("Warforged".equals(species)) return "Construct";
     return "Humanoid";
@@ -488,7 +494,11 @@ static {
     ARMOR_AC.put("Chain shirt", new ArmorInfo(13, 2, false));
     ARMOR_AC.put("Scale mail armor", new ArmorInfo(14, 2, false));
     ARMOR_AC.put("Chain mail", new ArmorInfo(16, 0, false));
-    ARMOR_AC.put("Shield", new ArmorInfo(0, 0, true));
+    ARMOR_AC.put("Shield", new ArmorInfo(2, 0, true)); // for shields, baseAC is the AC bonus
+}
+
+static int shieldBonus(ArmorInfo info) {
+    return info.baseAC > 0 ? info.baseAC : 2;
 }
 
 // Strips a trailing count like " (2)" so equipment strings match the ARMOR_AC keys
@@ -498,13 +508,13 @@ static String stripEquipmentCount(String item) {
 
 static int computeAC(List<String> equipment, int dexMod) {
     int bodyAC = 10 + dexMod; // unarmored default
-    boolean shield = false;
+    int shield = 0; // best shield bonus (shields don't stack)
     if (equipment != null) {
         for (String item : equipment) {
             ArmorInfo info = ARMOR_AC.get(stripEquipmentCount(item));
             if (info == null) continue;
             if (info.isShield) {
-                shield = true;
+                shield = Math.max(shield, shieldBonus(info));
             } else {
                 int dexContribution = info.maxDexBonus <= 0 ? 0 : Math.min(dexMod, info.maxDexBonus);
                 int candidate = info.baseAC + dexContribution;
@@ -512,7 +522,7 @@ static int computeAC(List<String> equipment, int dexMod) {
             }
         }
     }
-    return bodyAC + (shield ? 2 : 0);
+    return bodyAC + shield;
 }
 
 // Fixed background skill proficiencies (Custom is handled separately as a free pick)

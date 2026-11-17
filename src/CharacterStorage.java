@@ -215,6 +215,16 @@ static void carryOverProgression(Map<?, ?> oldRec, Map<String, Object> newRec) {
     if (oldRec.get("conditions") != null) newRec.put("conditions", oldRec.get("conditions"));
     if (oldRec.get("spellSlotsUsed") != null) newRec.put("spellSlotsUsed", oldRec.get("spellSlotsUsed"));
     if (oldRec.get("pactSlotsUsed") != null) newRec.put("pactSlotsUsed", oldRec.get("pactSlotsUsed"));
+    // Homebrew subclass picks made on level up ({className: subclassName})
+    if (oldRec.get("subclasses") instanceof Map) {
+        Map<String, Object> subs = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> en : ((Map<?, ?>) oldRec.get("subclasses")).entrySet()) {
+            String key = String.valueOf(en.getKey());
+            if (key.equals(oldClass) && !oldClass.equals(newClass)) continue; // subclass doesn't follow a class change
+            subs.put(key, en.getValue());
+        }
+        newRec.put("subclasses", subs);
+    }
     carryOverClassSpells(oldRec, newRec, oldClass, newClass);
 
     Map<String, Integer> stats = recStatsMap(newRec);
@@ -390,6 +400,11 @@ static LinkedHashMap<String, String> recLanguageSources(Map<?, ?> rec) {
     String primary = recStr(rec, "characterClass");
     String granted = GameData.CLASS_LANGUAGES.get(primary);
     if (granted != null) out.putIfAbsent(granted, primary + " class feature");
+    String species = recStr(rec, "species");
+    Map<String, Object> homebrew = CustomAssets.speciesAsset(species);
+    if (homebrew != null) {
+        for (String l : CustomAssets.speciesLanguageList(homebrew)) out.putIfAbsent(l, species + " species");
+    }
     return out;
 }
 

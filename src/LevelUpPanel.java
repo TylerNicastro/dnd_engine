@@ -202,7 +202,60 @@ class LevelUpPanel {
             }
         }
         if (SpellData.isCaster(cls)) add(content, bullet("Spells: see the Spells section below."));
+
+        // Homebrew class / subclass features gained at this level (Asset Library)
+        Map<String, Object> classAsset = CustomAssets.classAsset(cls);
+        if (classAsset != null) {
+            for (Map<String, Object> f : CustomAssets.featuresAt(classAsset, newClassLevel)) {
+                add(content, featureBullet(f, cls + " " + newClassLevel, infoTitle, infoText));
+            }
+        }
+        String currentSub = CustomAssets.recSubclasses(rec).get(cls);
+        Map<String, Object> subAsset = currentSub == null ? null : CustomAssets.subclassAsset(cls, currentSub);
+        if (subAsset != null) {
+            for (Map<String, Object> f : CustomAssets.featuresAt(subAsset, newClassLevel)) {
+                add(content, featureBullet(f, currentSub + " " + newClassLevel, infoTitle, infoText));
+            }
+        }
         add(content, gap(24));
+
+        // ---- Homebrew subclass choice (offered once the character reaches a subclass's level) ----
+        String[] subclassPick = {null};
+        if (currentSub == null || subAsset == null) {
+            List<String> subNames = new ArrayList<>();
+            Map<String, String> subInfo = new LinkedHashMap<>();
+            for (Map<String, Object> s : CustomAssets.subclassesFor(cls)) {
+                if (CustomAssets.intVal(s, "subclassLevel", 3) > newClassLevel) continue;
+                String n = CustomAssets.str(s, "name");
+                subNames.add(n);
+                StringBuilder sb = new StringBuilder(CustomAssets.str(s, "description"));
+                for (Map<String, Object> f : CustomAssets.featuresUpTo(s, newClassLevel)) {
+                    sb.append(sb.length() > 0 ? "\n\n" : "").append("Level ").append(CustomAssets.intVal(f, "level", 1))
+                            .append(": ").append(CustomAssets.str(f, "name"));
+                    if (!CustomAssets.str(f, "description").isEmpty()) sb.append(" — ").append(CustomAssets.str(f, "description"));
+                }
+                subInfo.put(n, sb.toString());
+            }
+            if (!subNames.isEmpty()) {
+                String none = "No homebrew subclass";
+                subNames.add(none);
+                subInfo.put(none, "Keep going without one of the Asset Library's subclasses (for example, if you use a published subclass). You'll be offered the choice again next level.");
+                add(content, subheading(cls + " Subclass"));
+                add(content, gap(8));
+                add(content, muted("Homebrew subclasses available at " + cls + " level " + newClassLevel + ". Their features up to this level apply right away."));
+                add(content, gap(8));
+                App.CheckListResult subList = App.buildCheckListPanel(subNames, 1, subInfo, infoTitle, infoText, false,
+                        Math.min(6, subNames.size()), sel -> {
+                            subclassPick[0] = sel.isEmpty() || none.equals(sel.get(0)) ? null : sel.get(0);
+                            if (!sel.isEmpty()) {
+                                infoTitle.setText(sel.get(0));
+                                infoText.setText(subInfo.get(sel.get(0)));
+                            }
+                        });
+                add(content, subList.component);
+                add(content, gap(24));
+            }
+        }
 
         // ---- Feat selection state (built before HP so the HP preview can see CON changes) ----
         @SuppressWarnings("unchecked")
@@ -406,7 +459,7 @@ class LevelUpPanel {
                     return;
                 }
             }
-            applyLevelUp(cls, newClassLevels, newClassLevel, newLevel, roll, pick, spells);
+            applyLevelUp(cls, newClassLevels, newClassLevel, newLevel, roll, pick, spells, subclassPick[0]);
         });
 
         boolean caster = spellSupplier != null;
@@ -941,9 +994,14 @@ class LevelUpPanel {
     }
 
     private void applyLevelUp(String cls, LinkedHashMap<String, Integer> newClassLevels, int newClassLevel,
-                              int newLevel, int roll, FeatPick pick, SpellChoice spells) {
+                              int newLevel, int roll, FeatPick pick, SpellChoice spells, String subclass) {
         Map<String, Object> out = new LinkedHashMap<>(rec);
         if (CharacterStorage.recStr(out, "characterClass").isEmpty()) out.put("characterClass", cls);
+        if (subclass != null) {
+            Map<String, Object> subs = new LinkedHashMap<>(CustomAssets.recSubclasses(rec));
+            subs.put(cls, subclass);
+            out.put("subclasses", subs);
+        }
 
         Map<String, Object> clOut = new LinkedHashMap<>();
         for (Map.Entry<String, Integer> en : newClassLevels.entrySet()) clOut.put(en.getKey(), en.getValue());
@@ -1182,6 +1240,20 @@ class LevelUpPanel {
         JLabel l = new JLabel(text);
         l.setForeground(App.TEXT_MUTED);
         l.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        return l;
+    }
+
+    // A homebrew feature line: click it to read the full text in the info panel
+    private static JLabel featureBullet(Map<String, Object> f, String source, JLabel infoTitle, JTextArea infoText) {
+        String name = CustomAssets.str(f, "name");
+        JLabel l = bullet("Feature: " + name + "   (" + source + ")");
+        l.setForeground(App.GOLD);
+        l.setToolTipText("Click to read this feature");
+        App.clickable(l, () -> {
+            infoTitle.setText(name);
+            String d = CustomAssets.str(f, "description");
+            infoText.setText(source + "\n\n" + (d.isEmpty() ? "No description." : d));
+        });
         return l;
     }
 

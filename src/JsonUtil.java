@@ -57,4 +57,50 @@ static String toJson(Object o) {
     return "\"" + jsonEscape(String.valueOf(o)) + "\"";
 }
 
+// Indented JSON for files people read or share (homebrew packs). Short lists of plain
+// values stay on one line so map rows and tag lists don't explode vertically.
+static String toPrettyJson(Object o) {
+    StringBuilder sb = new StringBuilder();
+    writePretty(sb, o, 0);
+    return sb.toString();
+}
+
+private static void writePretty(StringBuilder sb, Object o, int indent) {
+    if (o instanceof Map) {
+        Map<?, ?> m = (Map<?, ?>) o;
+        if (m.isEmpty()) { sb.append("{}"); return; }
+        sb.append("{\n");
+        int i = 0;
+        for (Map.Entry<?, ?> en : m.entrySet()) {
+            pad(sb, indent + 1);
+            sb.append("\"").append(jsonEscape(String.valueOf(en.getKey()))).append("\": ");
+            writePretty(sb, en.getValue(), indent + 1);
+            if (++i < m.size()) sb.append(",");
+            sb.append("\n");
+        }
+        pad(sb, indent);
+        sb.append("}");
+    } else if (o instanceof List) {
+        List<?> l = (List<?>) o;
+        boolean flat = true;
+        for (Object item : l) if (item instanceof Map || item instanceof List) { flat = false; break; }
+        if (l.isEmpty() || flat) { sb.append(toJson(o)); return; }
+        sb.append("[\n");
+        for (int i = 0; i < l.size(); i++) {
+            pad(sb, indent + 1);
+            writePretty(sb, l.get(i), indent + 1);
+            if (i < l.size() - 1) sb.append(",");
+            sb.append("\n");
+        }
+        pad(sb, indent);
+        sb.append("]");
+    } else {
+        sb.append(toJson(o));
+    }
+}
+
+private static void pad(StringBuilder sb, int indent) {
+    for (int i = 0; i < indent; i++) sb.append("  ");
+}
+
 }

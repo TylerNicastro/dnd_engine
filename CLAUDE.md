@@ -17,3 +17,6 @@ Java Swing app (`src/`). Main entry point is `App.java`; the main screens are ca
 - Colors: use the palette constants at the top of `App.java`. The character sheet uses `SHEET_BG` (#1E202C), `SHEET_CARD` (#252836), `SHEET_ROW_ALT` (#2A2E3F) and `GOLD` (#D4AF37).
 - Characters are saved to `characters.json` through `CharacterStorage`. Fields the wizard doesn't edit (coins, conditions, level-up progression) are kept on edit by `CharacterStorage.carryOverProgression`, so add new sheet-only fields there.
 - Rules data (classes, skills, languages, conditions, equipment) lives in `GameData.java`.
+- Homebrew content lives in `CustomAssets.java` and is saved to `custom_assets.json`. Each category's fields are one schema block in `CustomAssets.SCHEMAS`; the Asset Library's editor form, detail overlay, validation and import/export are all built from it.
+  - `CustomAssets.applyToRuntime()` merges homebrew into the GameData / SpellData / WeaponData tables. It snapshots the built-in tables on first run and restores them before every re-apply. If you add a new rules table that homebrew writes to, add it to the `snapshot(...)` call, or deleted assets will leave stale entries behind.
+  - Maps are edited in `MapEditorPanel` (card `MAP_EDITOR`). Its grid model is documented at the top of that file.
