@@ -1,0 +1,7 @@
+# Personal save data (stays on your machine, never published)
+characters.json
+custom_assets.json
+
+# Build output
+bin/
+*.class
