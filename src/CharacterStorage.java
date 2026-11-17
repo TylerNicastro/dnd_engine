@@ -209,6 +209,10 @@ static void carryOverProgression(Map<?, ?> oldRec, Map<String, Object> newRec) {
 
     newRec.put("feats", new ArrayList<Object>(recFeats(oldRec)));
 
+    // Character-sheet trackers (non-GP coins, conditions) aren't part of the wizard draft
+    if (oldRec.get("coins") != null) newRec.put("coins", oldRec.get("coins"));
+    if (oldRec.get("conditions") != null) newRec.put("conditions", oldRec.get("conditions"));
+
     Map<String, Integer> stats = recStatsMap(newRec);
     for (Map.Entry<String, Integer> en : recFeatStatIncreases(oldRec).entrySet()) stats.merge(en.getKey(), en.getValue(), Integer::sum);
     Map<String, Object> statsOut = new LinkedHashMap<>();

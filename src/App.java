@@ -41,11 +41,11 @@ public class App {
             WizardResult wizardResult = buildNewPCWizardPanel(cardLayout, cards);
             cards.add(wizardResult.panel, "NEW_PC_WIZARD");
 
-            CharacterDetailResult detailResult = buildCharacterDetailPanel(cardLayout, cards);
-            cards.add(detailResult.panel, "CHARACTER_DETAIL");
-
             LevelUpPanel levelUpPanel = new LevelUpPanel(cardLayout, cards);
             cards.add(levelUpPanel.panel, "LEVEL_UP");
+
+            CharacterDetailResult detailResult = buildCharacterDetailPanel(cardLayout, cards, levelUpPanel.show);
+            cards.add(detailResult.panel, "CHARACTER_DETAIL");
 
             cards.add(buildCharactersPanel(cardLayout, cards, wizardResult.resetForEdit, detailResult.show, levelUpPanel.show), "CHARACTERS");
             cards.add(buildAddCharacterTypePanel(cardLayout, cards, wizardResult.reset), "ADD_CHAR_TYPE");
@@ -1061,7 +1061,8 @@ public class App {
     // ---------------------------------------------------------------
     // CHARACTER DETAIL (blank placeholder page reached by clicking a character's icon)
     // ---------------------------------------------------------------
-    private static CharacterDetailResult buildCharacterDetailPanel(CardLayout cardLayout, JPanel cards) {
+    private static CharacterDetailResult buildCharacterDetailPanel(CardLayout cardLayout, JPanel cards,
+                                                                   java.util.function.IntConsumer showLevelUp) {
         JPanel panel = buildSectionShell("Character", cardLayout, cards, "CHARACTERS");
 
         CardLayout innerCardLayout = new CardLayout();
@@ -1069,9 +1070,12 @@ public class App {
         innerCards.setBackground(BG_DARK);
 
         ScrollableContentPanel sheetContent = new ScrollableContentPanel();
-        sheetContent.setBackground(BG_DARK);
+        sheetContent.setBackground(SHEET_BG);
         JScrollPane sheetScroll = new JScrollPane(sheetContent);
         applyDarkScrollBar(sheetScroll);
+        sheetScroll.getViewport().setBackground(SHEET_BG);
+        sheetScroll.setBorder(BorderFactory.createEmptyBorder());
+        sheetScroll.getVerticalScrollBar().setUnitIncrement(16);
 
         JPanel spellsContent = new JPanel();
         spellsContent.setBackground(BG_DARK);
@@ -1112,11 +1116,27 @@ public class App {
         wrap.add(innerCards, BorderLayout.CENTER);
         panel.add(wrap, BorderLayout.CENTER);
 
+        // Re-renders only the sheet tab (used after in-sheet edits so the tab/scroll stay put)
+        java.util.function.IntConsumer[] renderSheet = new java.util.function.IntConsumer[1];
+        renderSheet[0] = idx -> {
+            List<Object> characters = CharacterStorage.loadSavedCharacters();
+            if (idx < 0 || idx >= characters.size() || !(characters.get(idx) instanceof Map)) return;
+            Map<?, ?> rec = (Map<?, ?>) characters.get(idx);
+            populateCharacterSheet(sheetContent, rec, () -> showLevelUp.accept(idx), updated -> {
+                List<Object> all = CharacterStorage.loadSavedCharacters();
+                if (idx < all.size()) {
+                    all.set(idx, updated);
+                    CharacterStorage.saveAllCharacters(all);
+                }
+                renderSheet[0].accept(idx);
+            });
+        };
+
         java.util.function.IntConsumer show = idx -> {
             List<Object> characters = CharacterStorage.loadSavedCharacters();
             if (idx < 0 || idx >= characters.size() || !(characters.get(idx) instanceof Map)) return;
             Map<?, ?> rec = (Map<?, ?>) characters.get(idx);
-            populateCharacterSheet(sheetContent, rec);
+            renderSheet[0].accept(idx);
             populateCharacterSpells(spellsContent, rec);
             showTab.accept("SHEET");
             cardLayout.show(cards, "CHARACTER_DETAIL");
@@ -1125,10 +1145,23 @@ public class App {
         return new CharacterDetailResult(panel, show);
     }
 
-    private static void populateCharacterSheet(JPanel container, Map<?, ?> rec) {
+    // ---------------------------------------------------------------
+    // CHARACTER SHEET (classic 3-column 5e layout, centered at SHEET_MAX_WIDTH)
+    // ---------------------------------------------------------------
+    static final Color SHEET_BG = new Color(0x1E, 0x20, 0x2C);
+    static final Color SHEET_CARD = new Color(0x25, 0x28, 0x36);
+    static final Color SHEET_ROW_ALT = new Color(0x2A, 0x2E, 0x3F);
+    static final Color SHEET_BORDER = new Color(0x3A, 0x3F, 0x55);
+    static final Color GOLD_SOFT = new Color(212, 175, 55, 130);
+    static final int SHEET_MAX_WIDTH = 1100;
+    private static final String[] STAT_FULL_NAMES = {"Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Charisma"};
+
+    private static void populateCharacterSheet(JPanel container, Map<?, ?> rec, Runnable onLevelUp,
+                                               java.util.function.Consumer<Map<String, Object>> onSave) {
         container.removeAll();
-        container.setLayout(new BorderLayout());
-        container.setBorder(new EmptyBorder(24, 28, 24, 28));
+        container.setLayout(new MaxWidthCenterLayout(SHEET_MAX_WIDTH));
+        container.setBackground(SHEET_BG);
+        container.setBorder(new EmptyBorder(20, 16, 28, 16));
 
         String name = CharacterStorage.recStr(rec, "name");
         String characterClass = CharacterStorage.recStr(rec, "characterClass");
@@ -1156,248 +1189,299 @@ public class App {
         Integer hp = CharacterStorage.recInt(rec, "hp");
         Integer speed = CharacterStorage.recInt(rec, "speed");
         Integer gold = CharacterStorage.recInt(rec, "gold");
-        int ac = GameData.computeAC(CharacterStorage.recList(rec, "equipment"), dexMod);
+        List<String> equipment = CharacterStorage.recList(rec, "equipment");
+        int ac = GameData.computeAC(equipment, dexMod);
 
-        // ---- Identity bar: name + labeled fields, laid out horizontally ----
-        JPanel identityBar = new JPanel();
-        identityBar.setLayout(new BoxLayout(identityBar, BoxLayout.X_AXIS));
-        identityBar.setOpaque(false);
-        identityBar.setBorder(new EmptyBorder(0, 0, 24, 0));
-        identityBar.setAlignmentX(Component.LEFT_ALIGNMENT);
-
-        identityBar.add(buildIdentityField("NAME", name.isEmpty() ? "Unnamed Character" : name, true));
-        identityBar.add(Box.createHorizontalGlue());
-
-        JPanel fieldsCluster = new JPanel();
-        fieldsCluster.setLayout(new BoxLayout(fieldsCluster, BoxLayout.X_AXIS));
-        fieldsCluster.setOpaque(false);
         String lineageSuffix = lineage.isEmpty() ? "" : " (" + lineage + ")";
         String classText;
-        if (classLevels.size() > 1) {
+        if (!classLevels.isEmpty()) {
             List<String> parts = new ArrayList<>();
             for (Map.Entry<String, Integer> en : classLevels.entrySet()) parts.add(en.getKey() + " " + en.getValue());
             classText = String.join(" / ", parts);
         } else {
-            classText = characterClass.isEmpty() ? "—" : characterClass;
+            classText = characterClass.isEmpty() ? "—" : characterClass + " " + level;
         }
-        fieldsCluster.add(buildIdentityField("CLASS", classText, false));
-        fieldsCluster.add(Box.createRigidArea(new Dimension(28, 0)));
-        fieldsCluster.add(buildIdentityField("LEVEL", "Level " + level, false));
-        fieldsCluster.add(Box.createRigidArea(new Dimension(28, 0)));
-        fieldsCluster.add(buildIdentityField("BACKGROUND", background.isEmpty() ? "—" : background, false));
-        fieldsCluster.add(Box.createRigidArea(new Dimension(28, 0)));
-        fieldsCluster.add(buildIdentityField("SPECIES", (species.isEmpty() ? "—" : species) + lineageSuffix, false));
-        identityBar.add(fieldsCluster);
 
-        container.add(identityBar, BorderLayout.NORTH);
+        // ================= HEADER =================
+        JPanel nameBox = new JPanel(new BorderLayout(0, 4));
+        nameBox.setBackground(SHEET_CARD);
+        nameBox.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(GOLD_SOFT, 1, true), new EmptyBorder(12, 18, 10, 18)));
+        JLabel nameLbl = new JLabel(name.isEmpty() ? "Unnamed Character" : name);
+        nameLbl.setForeground(GOLD);
+        nameLbl.setFont(new Font("Serif", Font.BOLD, 32));
+        nameBox.add(nameLbl, BorderLayout.CENTER);
+        nameBox.add(sheetCaption("CHARACTER NAME", SwingConstants.LEFT), BorderLayout.SOUTH);
 
-        // ---- Body: 3 weighted columns via GridBagLayout so the sheet rebalances on resize ----
-        JPanel bodyPanel = new JPanel(new GridBagLayout());
-        bodyPanel.setOpaque(false);
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridy = 0;
-        gbc.weighty = 1.0;
-        gbc.fill = GridBagConstraints.BOTH;
-        gbc.anchor = GridBagConstraints.NORTHWEST;
-
-        // ---- Left column: ability scores + combat stats (saves moved out, AC promoted) ----
-        JPanel leftCol = new JPanel();
-        leftCol.setLayout(new BoxLayout(leftCol, BoxLayout.Y_AXIS));
-        leftCol.setOpaque(false);
-
-        JPanel abilityGrid = new JPanel(new GridLayout(3, 2, 12, 12));
-        abilityGrid.setOpaque(false);
-        abilityGrid.setAlignmentX(Component.LEFT_ALIGNMENT);
-        for (String stat : GameData.STAT_ORDER) {
-            abilityGrid.add(buildAbilityBox(stat, stats.getOrDefault(stat, 10)));
+        JPanel idGrid = new JPanel(new GridLayout(2, 2, 8, 8));
+        idGrid.setOpaque(false);
+        idGrid.add(headerField("CLASS & LEVEL", classText));
+        idGrid.add(headerField("BACKGROUND", background.isEmpty() ? "—" : background));
+        idGrid.add(headerField("SPECIES", (species.isEmpty() ? "—" : species) + lineageSuffix));
+        if (level < FeatData.MAX_LEVEL && onLevelUp != null) {
+            idGrid.add(levelUpButton(level, onLevelUp));
+        } else {
+            idGrid.add(headerField("TOTAL LEVEL", String.valueOf(level)));
         }
-        Dimension abilityGridPref = abilityGrid.getPreferredSize();
-        abilityGrid.setMaximumSize(new Dimension(Integer.MAX_VALUE, abilityGridPref.height));
-        leftCol.add(abilityGrid);
-        leftCol.add(Box.createRigidArea(new Dimension(0, 18)));
 
-        leftCol.add(statLine("Proficiency Bonus", signed(profBonus)));
-        leftCol.add(Box.createRigidArea(new Dimension(0, 10)));
-        leftCol.add(statLine("Hit Point Maximum", hp != null ? String.valueOf(hp) : "—"));
-        leftCol.add(statLine("Hit Dice", hitDice));
-        leftCol.add(statLine("Initiative", signed(dexMod)));
-        leftCol.add(statLine("Passive Perception", String.valueOf(passivePerception)));
-        leftCol.add(Box.createRigidArea(new Dimension(0, 16)));
+        JPanel header = new JPanel(new GridBagLayout());
+        header.setOpaque(false);
+        GridBagConstraints hc = new GridBagConstraints();
+        hc.gridy = 0;
+        hc.fill = GridBagConstraints.BOTH;
+        hc.weighty = 1.0;
+        hc.gridx = 0;
+        hc.weightx = 0.35;
+        hc.insets = new Insets(0, 0, 0, 12);
+        header.add(fixedWidth(nameBox, 380), hc);
+        hc.gridx = 1;
+        hc.weightx = 0.65;
+        hc.insets = new Insets(0, 0, 0, 0);
+        header.add(fixedWidth(idGrid, 708), hc);
 
-        ShieldPanel shield = new ShieldPanel(ac);
-        shield.setAlignmentX(Component.CENTER_ALIGNMENT);
-        leftCol.add(shield);
-        leftCol.add(Box.createRigidArea(new Dimension(0, 16)));
+        // ================= COLUMN 1 =================
+        JPanel abilityStrip = new JPanel(new GridLayout(6, 1, 0, 8));
+        abilityStrip.setOpaque(false);
+        for (String stat : GameData.STAT_ORDER) abilityStrip.add(buildAbilityBox(stat, stats.getOrDefault(stat, 10)));
 
-        leftCol.add(statLine("Speed", speed != null ? speed + " ft." : "—"));
-        leftCol.add(statLine("Gold", (gold != null ? gold : 0) + " gp"));
-
-        gbc.gridx = 0;
-        gbc.weightx = 0.30;
-        gbc.insets = new Insets(0, 0, 0, 18);
-        bodyPanel.add(leftCol, gbc);
-
-        // ---- Center column: Saving Throws directly above Skills ----
-        JPanel centerCol = new JPanel();
-        centerCol.setLayout(new BoxLayout(centerCol, BoxLayout.Y_AXIS));
-        centerCol.setOpaque(false);
-
-        centerCol.add(sectionTitle("Saving Throws"));
-        centerCol.add(Box.createRigidArea(new Dimension(0, 10)));
-        for (String stat : GameData.STAT_ORDER) {
+        JPanel saveRows = new JPanel(new GridLayout(0, 1, 0, 0));
+        saveRows.setOpaque(false);
+        for (int i = 0; i < GameData.STAT_ORDER.length; i++) {
+            String stat = GameData.STAT_ORDER[i];
             boolean prof = saveProfs.contains(stat);
             int mod = GameData.abilityModifier(stats.getOrDefault(stat, 10)) + (prof ? profBonus : 0);
-            centerCol.add(proficiencyRow(prof, stat, signed(mod)));
+            saveRows.add(sheetProfRow(prof, signed(mod), STAT_FULL_NAMES[i], null, false));
         }
-        centerCol.add(Box.createRigidArea(new Dimension(0, 20)));
 
-        JPanel divider = new JPanel();
-        divider.setBackground(BG_FIELD);
-        divider.setAlignmentX(Component.LEFT_ALIGNMENT);
-        divider.setMaximumSize(new Dimension(Integer.MAX_VALUE, 1));
-        divider.setPreferredSize(new Dimension(10, 1));
-        centerCol.add(divider);
-        centerCol.add(Box.createRigidArea(new Dimension(0, 20)));
-
-        centerCol.add(sectionTitle("Skills"));
-        centerCol.add(Box.createRigidArea(new Dimension(0, 10)));
+        JPanel skillRows = new JPanel(new GridLayout(0, 1, 0, 0));
+        skillRows.setOpaque(false);
+        int skillIdx = 0;
         for (String skill : GameData.ALL_SKILLS) {
             boolean prof = skillProfs.contains(skill);
             String ability = GameData.SKILL_ABILITY.get(skill);
             int mod = GameData.abilityModifier(stats.getOrDefault(ability, 10)) + (prof ? profBonus : 0);
-            centerCol.add(proficiencyRow(prof, skill + " (" + ability + ")", signed(mod)));
+            skillRows.add(sheetProfRow(prof, signed(mod), skill, ability, skillIdx++ % 2 == 1));
         }
 
-        gbc.gridx = 1;
-        gbc.weightx = 0.42;
-        gbc.insets = new Insets(0, 0, 0, 18);
-        bodyPanel.add(centerCol, gbc);
+        JPanel innerLeft = sheetStack(10, false,
+                horizontalBadge(signed(profBonus), "PROFICIENCY BONUS"),
+                sheetCard("Saving Throws", saveRows),
+                sheetCard("Skills", skillRows));
 
-        // ---- Right column: features (left blank for now) ----
-        JPanel featuresPanel = new JPanel(new BorderLayout());
-        featuresPanel.setBackground(BG_PANEL);
-        featuresPanel.setBorder(BorderFactory.createCompoundBorder(
-                new LineBorder(BG_FIELD, 1, true),
-                new EmptyBorder(14, 16, 14, 16)));
+        JPanel col1 = new JPanel(new GridBagLayout());
+        col1.setOpaque(false);
+        GridBagConstraints c1 = new GridBagConstraints();
+        c1.gridy = 0;
+        c1.gridx = 0;
+        c1.fill = GridBagConstraints.BOTH;
+        c1.anchor = GridBagConstraints.NORTH;
+        c1.insets = new Insets(0, 0, 0, 10);
+        col1.add(fixedWidth(abilityStrip, 105), c1);
+        c1.gridx = 1;
+        c1.weightx = 1.0;
+        c1.insets = new Insets(0, 0, 0, 0);
+        col1.add(innerLeft, c1);
+        c1.gridx = 0;
+        c1.gridy = 1;
+        c1.gridwidth = 2;
+        c1.fill = GridBagConstraints.HORIZONTAL;
+        c1.insets = new Insets(10, 0, 0, 0);
+        col1.add(horizontalBadge(String.valueOf(passivePerception), "PASSIVE WISDOM (PERCEPTION)"), c1);
+        c1.gridy = 2;
+        c1.weighty = 1.0;
+        c1.fill = GridBagConstraints.BOTH;
+        col1.add(sheetCard("Other Proficiencies & Languages", otherProficienciesContent(rec, characterClass, species)), c1);
+        c1.gridy = 3;
+        c1.weighty = 0.0;
+        c1.fill = GridBagConstraints.HORIZONTAL;
+        col1.add(conditionsCard(rec, onSave), c1);
 
-        JLabel featuresTitle = new JLabel("Features");
-        featuresTitle.setForeground(GOLD);
-        featuresTitle.setFont(new Font("SansSerif", Font.BOLD, 18));
-        featuresPanel.add(featuresTitle, BorderLayout.NORTH);
+        // ================= COLUMN 2 =================
+        JPanel combatRow = new JPanel(new GridLayout(1, 3, 8, 0));
+        combatRow.setOpaque(false);
+        combatRow.add(new ShieldPanel(ac, 108, 116));
+        combatRow.add(statTile(signed(dexMod), "INITIATIVE"));
+        combatRow.add(statTile(speed != null ? speed + " ft." : "—", "SPEED"));
 
-        JPanel featuresList = new JPanel();
-        featuresList.setLayout(new BoxLayout(featuresList, BoxLayout.Y_AXIS));
-        featuresList.setOpaque(false);
-        featuresList.setBorder(new EmptyBorder(10, 0, 0, 0));
-        if (feats.isEmpty()) {
-            JLabel none = new JLabel("No features yet.");
-            none.setForeground(TEXT_MUTED);
-            none.setFont(new Font("SansSerif", Font.PLAIN, 14));
-            featuresList.add(none);
-        }
-        for (Map<String, Object> f : feats) {
-            String category = String.valueOf(f.get("category"));
-            String kind = FeatData.CATEGORY_EPIC.equals(category) ? "Epic Boon"
-                    : FeatData.CATEGORY_CUSTOM.equals(category) ? "Custom Feat" : "Feat";
-            Object fClass = f.get("className");
-            Object fLevel = f.get("classLevel");
-            String source = (fClass != null && fLevel instanceof Number) ? " • " + fClass + " " + ((Number) fLevel).intValue() : "";
-            List<String> incParts = new ArrayList<>();
-            for (Map.Entry<String, Integer> en : CharacterStorage.featStatIncreases(f).entrySet()) {
-                incParts.add(en.getKey() + " +" + en.getValue());
-            }
-            String desc = f.get("description") == null ? "" : String.valueOf(f.get("description"));
-            if (FeatData.CATEGORY_ASI.equals(category)) desc = ""; // the increases line already says it all
+        JPanel hdDsRow = new JPanel(new GridLayout(1, 2, 8, 0));
+        hdDsRow.setOpaque(false);
+        hdDsRow.add(hitDiceCard(hitDice));
+        hdDsRow.add(deathSavesCard());
 
-            StringBuilder html = new StringBuilder("<html><div style='width:210px'>");
-            html.append("<b style='color:#d4af37'>").append(escapeHtml(String.valueOf(f.get("name")))).append("</b><br>");
-            html.append("<span style='color:#aaa5a0'>").append(kind).append(escapeHtml(source));
-            if (!incParts.isEmpty()) html.append(" • ").append(String.join(", ", incParts));
-            html.append("</span>");
-            if (!desc.isEmpty()) html.append("<br>").append(escapeHtml(desc));
-            html.append("</div></html>");
+        JPanel col2 = sheetStack(10, true,
+                combatRow,
+                hitPointsCard(hp),
+                hdDsRow,
+                equipmentCard(rec, equipment, onSave));
 
-            JLabel featLbl = new JLabel(html.toString());
-            featLbl.setForeground(TEXT_LIGHT);
-            featLbl.setFont(new Font("SansSerif", Font.PLAIN, 13));
-            featLbl.setBorder(new EmptyBorder(0, 0, 12, 0));
-            featLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
-            featuresList.add(featLbl);
-        }
-        JPanel featuresListWrap = new JPanel(new BorderLayout());
-        featuresListWrap.setOpaque(false);
-        featuresListWrap.add(featuresList, BorderLayout.NORTH);
-        featuresPanel.add(featuresListWrap, BorderLayout.CENTER);
+        // ================= COLUMN 3 =================
+        JPanel col3 = sheetCard("Features & Traits", featuresContent(rec, characterClass, species, lineageSuffix, feats));
 
-        gbc.gridx = 2;
-        gbc.weightx = 0.28;
-        gbc.insets = new Insets(0, 0, 0, 0);
-        bodyPanel.add(featuresPanel, gbc);
+        // ================= BODY =================
+        JPanel body = new JPanel(new GridBagLayout());
+        body.setOpaque(false);
+        GridBagConstraints g = new GridBagConstraints();
+        g.gridy = 0;
+        g.fill = GridBagConstraints.BOTH;
+        g.weighty = 1.0;
+        g.anchor = GridBagConstraints.NORTH;
+        g.gridx = 0;
+        g.weightx = 0.30;
+        g.insets = new Insets(0, 0, 0, 14);
+        body.add(fixedWidth(col1, 330), g);
+        g.gridx = 1;
+        g.weightx = 0.34;
+        body.add(fixedWidth(col2, 360), g);
+        g.gridx = 2;
+        g.weightx = 0.36;
+        g.insets = new Insets(0, 0, 0, 0);
+        body.add(fixedWidth(col3, 382), g);
 
-        container.add(bodyPanel, BorderLayout.CENTER);
+        JPanel sheet = new JPanel(new BorderLayout(0, 14));
+        sheet.setOpaque(false);
+        sheet.add(header, BorderLayout.NORTH);
+        sheet.add(body, BorderLayout.CENTER);
+        container.add(sheet);
 
         container.revalidate();
         container.repaint();
     }
 
-    private static JPanel buildIdentityField(String captionText, String value, boolean hero) {
-        JPanel box = new JPanel();
-        box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
-        box.setOpaque(false);
-        box.setAlignmentX(Component.LEFT_ALIGNMENT);
+    // Wraps a component so its preferred width is fixed (height still comes from its content)
+    private static JPanel fixedWidth(JComponent c, int width) {
+        JPanel w = new JPanel(new BorderLayout()) {
+            @Override
+            public Dimension getPreferredSize() {
+                return new Dimension(width, super.getPreferredSize().height);
+            }
 
-        JLabel caption = new JLabel(captionText);
-        caption.setForeground(TEXT_MUTED);
-        caption.setFont(new Font("SansSerif", Font.BOLD, 11));
-        caption.setAlignmentX(Component.LEFT_ALIGNMENT);
+            @Override
+            public Dimension getMinimumSize() {
+                return new Dimension(width, super.getMinimumSize().height);
+            }
+        };
+        w.setOpaque(false);
+        w.add(c, BorderLayout.CENTER);
+        return w;
+    }
 
+    // Vertical stack of full-width items; either the last item or trailing glue absorbs extra height
+    private static JPanel sheetStack(int gap, boolean stretchLast, JComponent... items) {
+        JPanel p = new JPanel(new GridBagLayout());
+        p.setOpaque(false);
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx = 0;
+        c.weightx = 1.0;
+        c.anchor = GridBagConstraints.NORTH;
+        for (int i = 0; i < items.length; i++) {
+            boolean last = i == items.length - 1;
+            c.gridy = i;
+            c.insets = new Insets(i == 0 ? 0 : gap, 0, 0, 0);
+            c.fill = (last && stretchLast) ? GridBagConstraints.BOTH : GridBagConstraints.HORIZONTAL;
+            c.weighty = (last && stretchLast) ? 1.0 : 0.0;
+            p.add(items[i], c);
+        }
+        if (!stretchLast) {
+            c.gridy = items.length;
+            c.weighty = 1.0;
+            c.fill = GridBagConstraints.BOTH;
+            c.insets = new Insets(0, 0, 0, 0);
+            p.add(Box.createGlue(), c);
+        }
+        return p;
+    }
+
+    private static JPanel sheetCard(String title, JComponent content) {
+        JPanel card = new JPanel(new BorderLayout(0, 8));
+        card.setBackground(SHEET_CARD);
+        card.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(10, 10, 10, 10)));
+        if (title != null) {
+            JLabel t = new JLabel(title.toUpperCase());
+            t.setForeground(GOLD);
+            t.setFont(new Font("SansSerif", Font.BOLD, 12));
+            card.add(t, BorderLayout.NORTH);
+        }
+        if (content != null) card.add(content, BorderLayout.CENTER);
+        return card;
+    }
+
+    private static JLabel sheetCaption(String text, int align) {
+        JLabel l = new JLabel(text, align);
+        l.setForeground(TEXT_MUTED);
+        l.setFont(new Font("SansSerif", Font.BOLD, 10));
+        return l;
+    }
+
+    private static JPanel headerField(String caption, String value) {
+        JPanel box = new JPanel(new BorderLayout(0, 2));
+        box.setBackground(SHEET_CARD);
+        box.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(7, 12, 6, 12)));
         JLabel val = new JLabel(value);
-        val.setForeground(hero ? GOLD : TEXT_LIGHT);
-        val.setFont(new Font(hero ? "Serif" : "SansSerif", Font.BOLD, hero ? 34 : 18));
-        val.setAlignmentX(Component.LEFT_ALIGNMENT);
-
-        box.add(caption);
-        box.add(Box.createRigidArea(new Dimension(0, 2)));
-        box.add(val);
+        val.setForeground(TEXT_LIGHT);
+        val.setFont(new Font("SansSerif", Font.BOLD, 16));
+        box.add(val, BorderLayout.CENTER);
+        box.add(sheetCaption(caption, SwingConstants.LEFT), BorderLayout.SOUTH);
         return box;
     }
 
-    private static JLabel sectionTitle(String text) {
-        JLabel title = new JLabel(text);
-        title.setForeground(GOLD);
-        title.setFont(new Font("SansSerif", Font.BOLD, 18));
-        title.setAlignmentX(Component.LEFT_ALIGNMENT);
-        return title;
+    private static JButton levelUpButton(int level, Runnable onLevelUp) {
+        JButton b = new JButton("LEVEL UP  →  " + (level + 1));
+        b.setFont(new Font("SansSerif", Font.BOLD, 14));
+        b.setForeground(GOLD);
+        b.setBackground(SHEET_CARD);
+        b.setOpaque(true);
+        b.setFocusPainted(false);
+        b.setContentAreaFilled(true);
+        b.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        b.setBorder(new LineBorder(GOLD, 1, true));
+        b.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                b.setBackground(GOLD);
+                b.setForeground(SHEET_BG);
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                b.setBackground(SHEET_CARD);
+                b.setForeground(GOLD);
+            }
+        });
+        b.addActionListener(e -> onLevelUp.run());
+        return b;
     }
 
     private static JPanel buildAbilityBox(String stat, int score) {
-        JPanel box = new JPanel();
-        box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
-        box.setBackground(BG_PANEL);
+        JPanel box = new JPanel(new BorderLayout(0, 0));
+        box.setBackground(SHEET_CARD);
         box.setBorder(BorderFactory.createCompoundBorder(
-                new LineBorder(BG_FIELD, 1, true),
-                new EmptyBorder(14, 14, 12, 14)));
+                new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(6, 6, 7, 6)));
 
-        JLabel statLabel = new JLabel(stat);
+        JLabel statLabel = new JLabel(stat, SwingConstants.CENTER);
         statLabel.setForeground(TEXT_MUTED);
-        statLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
-        statLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        statLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
 
-        JLabel modLabel = new JLabel(signed(GameData.abilityModifier(score)));
+        JLabel modLabel = new JLabel(signed(GameData.abilityModifier(score)), SwingConstants.CENTER);
         modLabel.setForeground(GOLD);
-        modLabel.setFont(new Font("Serif", Font.BOLD, 26));
-        modLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        modLabel.setFont(new Font("Serif", Font.BOLD, 28));
 
-        JLabel scoreLabel = new JLabel(String.valueOf(score));
+        JLabel scoreLabel = new JLabel(String.valueOf(score), SwingConstants.CENTER);
         scoreLabel.setForeground(TEXT_LIGHT);
-        scoreLabel.setFont(new Font("SansSerif", Font.PLAIN, 14));
-        scoreLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        scoreLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+        scoreLabel.setOpaque(true);
+        scoreLabel.setBackground(SHEET_ROW_ALT);
+        scoreLabel.setBorder(new LineBorder(GOLD_SOFT, 1, true));
+        Dimension pill = new Dimension(40, 20);
+        scoreLabel.setPreferredSize(pill);
+        JPanel pillWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 0));
+        pillWrap.setOpaque(false);
+        pillWrap.add(scoreLabel);
 
-        box.add(statLabel);
-        box.add(Box.createRigidArea(new Dimension(0, 3)));
-        box.add(modLabel);
-        box.add(Box.createRigidArea(new Dimension(0, 3)));
-        box.add(scoreLabel);
+        box.add(statLabel, BorderLayout.NORTH);
+        box.add(modLabel, BorderLayout.CENTER);
+        box.add(pillWrap, BorderLayout.SOUTH);
         return box;
     }
 
@@ -1405,54 +1489,925 @@ public class App {
         return n >= 0 ? "+" + n : String.valueOf(n);
     }
 
-    private static JPanel statLine(String label, String value) {
-        JPanel row = new JPanel(new BorderLayout());
-        row.setOpaque(false);
-        row.setAlignmentX(Component.LEFT_ALIGNMENT);
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
-        row.setBorder(new EmptyBorder(5, 2, 5, 2));
+    // Small value box on the left, caption on the right (Proficiency Bonus, Passive Perception)
+    private static JPanel horizontalBadge(String value, String label) {
+        JPanel badge = new JPanel(new BorderLayout(10, 0));
+        badge.setBackground(SHEET_CARD);
+        badge.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(5, 5, 5, 10)));
+        JLabel v = new JLabel(value, SwingConstants.CENTER);
+        v.setForeground(GOLD);
+        v.setFont(new Font("Serif", Font.BOLD, 20));
+        v.setOpaque(true);
+        v.setBackground(SHEET_ROW_ALT);
+        v.setBorder(new LineBorder(GOLD_SOFT, 1, true));
+        v.setPreferredSize(new Dimension(46, 32));
+        JLabel l = new JLabel(label);
+        l.setForeground(TEXT_LIGHT);
+        l.setFont(new Font("SansSerif", Font.BOLD, 11));
+        badge.add(v, BorderLayout.WEST);
+        badge.add(l, BorderLayout.CENTER);
+        return badge;
+    }
 
-        JLabel labelLbl = new JLabel(label);
-        labelLbl.setForeground(TEXT_MUTED);
-        labelLbl.setFont(new Font("SansSerif", Font.PLAIN, 14));
+    // One save/skill row: proficiency pip, modifier, then name right beside it
+    private static JPanel sheetProfRow(boolean prof, String mod, String name, String abilityTag, boolean tinted) {
+        JPanel row = new JPanel();
+        row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
+        row.setOpaque(tinted);
+        row.setBackground(SHEET_ROW_ALT);
+        row.setBorder(new EmptyBorder(3, 6, 3, 6));
 
-        JLabel valueLbl = new JLabel(value);
-        valueLbl.setForeground(TEXT_LIGHT);
-        valueLbl.setFont(new Font("SansSerif", Font.BOLD, 15));
+        JLabel pip = new JLabel(prof ? "●" : "○");
+        pip.setForeground(prof ? GOLD : TEXT_MUTED);
+        pip.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        lockSize(pip, 12, 18);
 
-        row.add(labelLbl, BorderLayout.WEST);
-        row.add(valueLbl, BorderLayout.EAST);
+        JLabel modL = new JLabel(mod, SwingConstants.RIGHT);
+        modL.setForeground(prof ? GOLD : TEXT_LIGHT);
+        modL.setFont(new Font("SansSerif", Font.BOLD, 14));
+        lockSize(modL, 26, 18);
+
+        JLabel nameL = new JLabel(name);
+        nameL.setForeground(TEXT_LIGHT);
+        nameL.setFont(new Font("SansSerif", Font.PLAIN, 13));
+
+        row.add(pip);
+        row.add(Box.createRigidArea(new Dimension(4, 0)));
+        row.add(modL);
+        row.add(Box.createRigidArea(new Dimension(8, 0)));
+        row.add(nameL);
+        row.add(Box.createHorizontalGlue());
+        if (abilityTag != null) {
+            JLabel tag = new JLabel(abilityTag);
+            tag.setForeground(TEXT_MUTED);
+            tag.setFont(new Font("SansSerif", Font.PLAIN, 10));
+            row.add(tag);
+        }
         return row;
     }
 
-    private static JPanel proficiencyRow(boolean proficient, String label, String value) {
-        JPanel row = new JPanel(new BorderLayout(6, 0));
+    private static void lockSize(JComponent c, int w, int h) {
+        Dimension d = new Dimension(w, h);
+        c.setPreferredSize(d);
+        c.setMinimumSize(d);
+        c.setMaximumSize(d);
+    }
+
+    private static JPanel statTile(String value, String caption) {
+        JPanel tile = new JPanel(new BorderLayout(0, 2));
+        tile.setBackground(SHEET_CARD);
+        tile.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(8, 4, 8, 4)));
+        JLabel v = new JLabel(value, SwingConstants.CENTER);
+        v.setForeground(TEXT_LIGHT);
+        v.setFont(new Font("Serif", Font.BOLD, 26));
+        tile.add(v, BorderLayout.CENTER);
+        tile.add(sheetCaption(caption, SwingConstants.CENTER), BorderLayout.SOUTH);
+        return tile;
+    }
+
+    private static JPanel hitPointsCard(Integer hp) {
+        String max = hp != null ? String.valueOf(hp) : "—";
+
+        JPanel top = new JPanel(new BorderLayout());
+        top.setOpaque(false);
+        JLabel maxCap = new JLabel("Hit Point Maximum");
+        maxCap.setForeground(TEXT_MUTED);
+        maxCap.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        JLabel maxVal = new JLabel(max);
+        maxVal.setForeground(TEXT_LIGHT);
+        maxVal.setFont(new Font("SansSerif", Font.BOLD, 14));
+        top.add(maxCap, BorderLayout.WEST);
+        top.add(maxVal, BorderLayout.EAST);
+        top.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, SHEET_BORDER), new EmptyBorder(0, 2, 6, 2)));
+
+        JPanel mid = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 4));
+        mid.setOpaque(false);
+        JLabel cur = new JLabel(max);
+        cur.setForeground(TEXT_LIGHT);
+        cur.setFont(new Font("Serif", Font.BOLD, 44));
+        JLabel ofMax = new JLabel("/ " + max);
+        ofMax.setForeground(TEXT_MUTED);
+        ofMax.setFont(new Font("Serif", Font.BOLD, 22));
+        mid.add(cur);
+        mid.add(ofMax);
+
+        JPanel card = new JPanel(new BorderLayout(0, 4));
+        card.setBackground(SHEET_CARD);
+        card.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(10, 12, 8, 12)));
+        card.add(top, BorderLayout.NORTH);
+        card.add(mid, BorderLayout.CENTER);
+        card.add(sheetCaption("CURRENT HIT POINTS", SwingConstants.CENTER), BorderLayout.SOUTH);
+        return card;
+    }
+
+    private static JPanel hitDiceCard(String hitDice) {
+        JLabel total = new JLabel("<html><span style='color:#aaa5a0'>Total:</span> <b>" + escapeHtml(hitDice) + "</b></html>");
+        total.setForeground(TEXT_LIGHT);
+        total.setFont(new Font("SansSerif", Font.PLAIN, 12));
+
+        JLabel big = new JLabel(hitDice, SwingConstants.CENTER);
+        big.setForeground(TEXT_LIGHT);
+        big.setFont(new Font("Serif", Font.BOLD, hitDice.length() > 6 ? 16 : 24));
+
+        JPanel card = new JPanel(new BorderLayout(0, 4));
+        card.setBackground(SHEET_CARD);
+        card.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(8, 10, 8, 10)));
+        card.add(total, BorderLayout.NORTH);
+        card.add(big, BorderLayout.CENTER);
+        card.add(sheetCaption("HIT DICE", SwingConstants.CENTER), BorderLayout.SOUTH);
+        return card;
+    }
+
+    // Death save pips are in-session trackers only; they are not saved to the character file
+    private static JPanel deathSavesCard() {
+        JPanel rows = new JPanel(new GridLayout(2, 1, 0, 4));
+        rows.setOpaque(false);
+        rows.add(deathSaveRow("Success", GOLD));
+        rows.add(deathSaveRow("Failure", ACCENT_HOVER));
+
+        JPanel card = new JPanel(new BorderLayout(0, 4));
+        card.setBackground(SHEET_CARD);
+        card.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(8, 10, 8, 10)));
+        card.add(rows, BorderLayout.CENTER);
+        card.add(sheetCaption("DEATH SAVES", SwingConstants.CENTER), BorderLayout.SOUTH);
+        return card;
+    }
+
+    private static JPanel deathSaveRow(String label, Color fill) {
+        JPanel row = new JPanel(new BorderLayout(4, 0));
         row.setOpaque(false);
-        row.setAlignmentX(Component.LEFT_ALIGNMENT);
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
-        row.setBorder(new EmptyBorder(2, 0, 2, 0));
-
-        JLabel checkLbl = new JLabel(proficient ? "✓" : " ");
-        checkLbl.setForeground(proficient ? GOLD : TEXT_MUTED);
-        checkLbl.setFont(new Font("SansSerif", Font.BOLD, 15));
-        checkLbl.setPreferredSize(new Dimension(18, 18));
-
-        JLabel labelLbl = new JLabel(label);
-        labelLbl.setForeground(TEXT_LIGHT);
-        labelLbl.setFont(new Font("SansSerif", Font.PLAIN, 14));
-
-        JLabel valueLbl = new JLabel(value);
-        valueLbl.setForeground(TEXT_LIGHT);
-        valueLbl.setFont(new Font("SansSerif", Font.BOLD, 15));
-
-        JPanel leftWrap = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        leftWrap.setOpaque(false);
-        leftWrap.add(checkLbl);
-        leftWrap.add(labelLbl);
-
-        row.add(leftWrap, BorderLayout.WEST);
-        row.add(valueLbl, BorderLayout.EAST);
+        JLabel l = new JLabel(label);
+        l.setForeground(TEXT_MUTED);
+        l.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        JPanel pips = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+        pips.setOpaque(false);
+        for (int i = 0; i < 3; i++) {
+            JCheckBox cb = new JCheckBox();
+            cb.setIcon(new PipIcon(false, fill));
+            cb.setSelectedIcon(new PipIcon(true, fill));
+            cb.setOpaque(false);
+            cb.setFocusPainted(false);
+            cb.setBorder(new EmptyBorder(0, 1, 0, 1));
+            cb.setCursor(new Cursor(Cursor.HAND_CURSOR));
+            pips.add(cb);
+        }
+        row.add(l, BorderLayout.WEST);
+        row.add(pips, BorderLayout.EAST);
         return row;
+    }
+
+    // ---------------- Coins ----------------
+    // GP stays in the record's existing "gold" field; CP/SP/EP/PP live in a "coins" map.
+    static final String[] COIN_KEYS = {"CP", "SP", "EP", "GP", "PP"};
+    static final String[] COIN_NAMES = {"Copper", "Silver", "Electrum", "Gold", "Platinum"};
+
+    static int recCoin(Map<?, ?> rec, String coin) {
+        if ("GP".equals(coin)) {
+            Integer g = CharacterStorage.recInt(rec, "gold");
+            return g != null ? g : 0;
+        }
+        Object coins = rec.get("coins");
+        if (coins instanceof Map) {
+            Object v = ((Map<?, ?>) coins).get(coin);
+            if (v instanceof Number) return ((Number) v).intValue();
+        }
+        return 0;
+    }
+
+    static void setCoin(Map<String, Object> rec, String coin, int value) {
+        value = Math.max(0, value);
+        if ("GP".equals(coin)) {
+            rec.put("gold", value);
+            return;
+        }
+        Map<String, Object> coins = new LinkedHashMap<>();
+        Object existing = rec.get("coins");
+        if (existing instanceof Map) {
+            for (Map.Entry<?, ?> en : ((Map<?, ?>) existing).entrySet()) coins.put(String.valueOf(en.getKey()), en.getValue());
+        }
+        coins.put(coin, value);
+        rec.put("coins", coins);
+    }
+
+    static Map<String, Object> recCopy(Map<?, ?> rec) {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> en : rec.entrySet()) copy.put(String.valueOf(en.getKey()), en.getValue());
+        return copy;
+    }
+
+    // ---------------- Equipment ----------------
+    // Placeholder preset items (name -> description) for the "add item" picker.
+    static final Map<String, String> ITEM_PRESETS = new LinkedHashMap<>();
+    static {
+        ITEM_PRESETS.put("Dagger", "Simple melee weapon. 1d4 piercing; Finesse, Light, Thrown (20/60).");
+        ITEM_PRESETS.put("Handaxe", "Simple melee weapon. 1d6 slashing; Light, Thrown (20/60).");
+        ITEM_PRESETS.put("Shortsword", "Martial melee weapon. 1d6 piercing; Finesse, Light.");
+        ITEM_PRESETS.put("Longsword", "Martial melee weapon. 1d8 slashing; Versatile (1d10).");
+        ITEM_PRESETS.put("Shortbow", "Simple ranged weapon. 1d6 piercing; Ammunition (80/320), Two-Handed.");
+        ITEM_PRESETS.put("Arrows", "Ammunition for bows. Placeholder description.");
+        ITEM_PRESETS.put("Shield", "Grants +2 to Armor Class while wielded.");
+        ITEM_PRESETS.put("Leather armor", "Light armor. AC 11 + Dex modifier.");
+        ITEM_PRESETS.put("Potion of Healing", "Drink to regain 2d4 + 2 Hit Points. Placeholder description.");
+        ITEM_PRESETS.put("Backpack", "Holds up to 30 lb. of gear. Placeholder description.");
+        ITEM_PRESETS.put("Bedroll", "For sleeping in the wild. Placeholder description.");
+        ITEM_PRESETS.put("Rations", "One day of travel food. Placeholder description.");
+        ITEM_PRESETS.put("Torch", "Bright light in a 20 ft. radius for 1 hour. Placeholder description.");
+        ITEM_PRESETS.put("Rope (50 ft.)", "Hempen rope. Placeholder description.");
+        ITEM_PRESETS.put("Waterskin", "Holds 4 pints of liquid. Placeholder description.");
+    }
+
+    static int itemCount(String item) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\((\\d+)\\)\\s*$").matcher(item);
+        return m.find() ? Integer.parseInt(m.group(1)) : 1;
+    }
+
+    static String itemString(String base, int count) {
+        return count > 1 ? base + " (" + count + ")" : base;
+    }
+
+    // Adds `delta` of the item at `index` (removes the entry when the count reaches 0)
+    static void changeItemCount(List<String> equipment, int index, int delta) {
+        String base = GameData.stripEquipmentCount(equipment.get(index));
+        int n = itemCount(equipment.get(index)) + delta;
+        if (n <= 0) equipment.remove(index);
+        else equipment.set(index, itemString(base, n));
+    }
+
+    static void addItem(List<String> equipment, String base) {
+        for (int i = 0; i < equipment.size(); i++) {
+            String existing = GameData.stripEquipmentCount(equipment.get(i));
+            // "Dagger" merges into an existing "Daggers (2)" (and vice versa)
+            if (existing.equalsIgnoreCase(base) || existing.equalsIgnoreCase(base + "s") || base.equalsIgnoreCase(existing + "s")) {
+                changeItemCount(equipment, i, 1);
+                return;
+            }
+        }
+        equipment.add(base);
+    }
+
+    static String itemDescription(String base) {
+        List<String> candidates = new ArrayList<>();
+        candidates.add(base);
+        if (base.endsWith("s")) candidates.add(base.substring(0, base.length() - 1));
+        for (String cand : candidates) {
+            for (WeaponEntry we : WeaponData.WEAPON_DB.weapons) {
+                if (we.name.equalsIgnoreCase(cand)) {
+                    return we.category + " weapon.\nDamage: " + we.damage
+                            + "\nProperties: " + (we.properties.isEmpty() ? "—" : String.join(", ", we.properties))
+                            + "\nMastery: " + we.mastery + "\nWeight: " + we.weight + "   Cost: " + we.cost;
+                }
+            }
+            GameData.ArmorInfo armor = GameData.ARMOR_AC.get(cand);
+            if (armor != null) {
+                if (armor.isShield) return "Shield. +2 to Armor Class while wielded.";
+                String dex = armor.maxDexBonus <= 0 ? "" : armor.maxDexBonus == Integer.MAX_VALUE
+                        ? " + Dex modifier" : " + Dex modifier (max " + armor.maxDexBonus + ")";
+                return "Armor. AC " + armor.baseAC + dex + ".";
+            }
+            for (Map.Entry<String, String> en : ITEM_PRESETS.entrySet()) {
+                if (en.getKey().equalsIgnoreCase(cand)) return en.getValue();
+            }
+        }
+        return "No description yet.";
+    }
+
+    private static JPanel equipmentCard(Map<?, ?> rec, List<String> equipment,
+                                        java.util.function.Consumer<Map<String, Object>> onSave) {
+        // Coin purse badge: all five denominations, click to edit
+        JPanel purse = new JPanel(new GridLayout(0, 1, 0, 1));
+        purse.setBackground(SHEET_ROW_ALT);
+        purse.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(GOLD_SOFT, 1, true), new EmptyBorder(6, 10, 6, 10)));
+        purse.setToolTipText("Click to edit coins");
+        purse.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        for (String coin : COIN_KEYS) {
+            JPanel row = new JPanel(new BorderLayout(10, 0));
+            row.setOpaque(false);
+            JLabel k = new JLabel(coin);
+            k.setForeground("GP".equals(coin) ? GOLD : TEXT_MUTED);
+            k.setFont(new Font("SansSerif", Font.BOLD, 11));
+            JLabel v = new JLabel(String.valueOf(recCoin(rec, coin)), SwingConstants.RIGHT);
+            v.setForeground("GP".equals(coin) ? GOLD : TEXT_LIGHT);
+            v.setFont(new Font("SansSerif", Font.BOLD, "GP".equals(coin) ? 15 : 13));
+            row.add(k, BorderLayout.WEST);
+            row.add(v, BorderLayout.EAST);
+            purse.add(row);
+        }
+        purse.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                showCoinEditor(purse, rec, onSave);
+            }
+
+            @Override
+            public void mouseEntered(MouseEvent e) {
+                purse.setBorder(BorderFactory.createCompoundBorder(
+                        new LineBorder(GOLD, 1, true), new EmptyBorder(6, 10, 6, 10)));
+            }
+
+            @Override
+            public void mouseExited(MouseEvent e) {
+                purse.setBorder(BorderFactory.createCompoundBorder(
+                        new LineBorder(GOLD_SOFT, 1, true), new EmptyBorder(6, 10, 6, 10)));
+            }
+        });
+        JPanel purseWrap = new JPanel(new BorderLayout());
+        purseWrap.setOpaque(false);
+        purseWrap.add(purse, BorderLayout.NORTH);
+
+        // Item rows: click for description / quantity controls
+        JPanel itemList = new JPanel(new GridLayout(0, 1, 0, 0));
+        itemList.setOpaque(false);
+        if (equipment.isEmpty()) {
+            JLabel none = new JLabel("No equipment.");
+            none.setForeground(TEXT_MUTED);
+            none.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            itemList.add(none);
+        }
+        for (int i = 0; i < equipment.size(); i++) {
+            final int index = i;
+            JLabel item = new JLabel("• " + equipment.get(i));
+            item.setForeground(TEXT_LIGHT);
+            item.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            item.setOpaque(false);
+            item.setBackground(SHEET_ROW_ALT);
+            item.setBorder(new EmptyBorder(1, 4, 1, 4));
+            item.setCursor(new Cursor(Cursor.HAND_CURSOR));
+            item.addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    showItemDetail(item, rec, index, onSave);
+                }
+
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    item.setOpaque(true);
+                    item.setForeground(GOLD);
+                    item.repaint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    item.setOpaque(false);
+                    item.setForeground(TEXT_LIGHT);
+                    item.repaint();
+                }
+            });
+            itemList.add(item);
+        }
+        JPanel itemsWrap = new JPanel(new BorderLayout());
+        itemsWrap.setOpaque(false);
+        itemsWrap.add(itemList, BorderLayout.NORTH);
+
+        JPanel content = new JPanel(new BorderLayout(12, 0));
+        content.setOpaque(false);
+        content.add(purseWrap, BorderLayout.WEST);
+        content.add(itemsWrap, BorderLayout.CENTER);
+
+        JButton add = sheetIconButton("+", "Add an item");
+        add.addActionListener(e -> showAddItem(add, rec, onSave));
+        return sheetCardWithAction("Equipment", add, content);
+    }
+
+    // Card whose title row has a small action button on the right
+    private static JPanel sheetCardWithAction(String title, JComponent action, JComponent content) {
+        JPanel card = sheetCard(null, content);
+        JPanel head = new JPanel(new BorderLayout());
+        head.setOpaque(false);
+        JLabel t = new JLabel(title.toUpperCase());
+        t.setForeground(GOLD);
+        t.setFont(new Font("SansSerif", Font.BOLD, 12));
+        head.add(t, BorderLayout.WEST);
+        head.add(action, BorderLayout.EAST);
+        card.add(head, BorderLayout.NORTH);
+        return card;
+    }
+
+    private static JButton sheetIconButton(String text, String tooltip) {
+        JButton b = new JButton(text);
+        b.setToolTipText(tooltip);
+        b.setFont(new Font("SansSerif", Font.BOLD, 14));
+        b.setForeground(GOLD);
+        b.setBackground(SHEET_ROW_ALT);
+        b.setOpaque(true);
+        b.setFocusPainted(false);
+        b.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        b.setBorder(BorderFactory.createCompoundBorder(new LineBorder(GOLD_SOFT, 1, true), new EmptyBorder(0, 7, 1, 7)));
+        return b;
+    }
+
+    private static JButton overlayButton(String text, boolean primary) {
+        JButton b = new JButton(text);
+        b.setFont(new Font("SansSerif", Font.BOLD, 13));
+        b.setForeground(primary ? SHEET_BG : TEXT_LIGHT);
+        b.setBackground(primary ? GOLD : SHEET_ROW_ALT);
+        b.setOpaque(true);
+        b.setFocusPainted(false);
+        b.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        b.setBorder(BorderFactory.createCompoundBorder(
+                new LineBorder(primary ? GOLD : SHEET_BORDER, 1, true), new EmptyBorder(6, 12, 6, 12)));
+        return b;
+    }
+
+    private static JTextField overlayField(String text, int columns) {
+        JTextField tf = new JTextField(text, columns);
+        tf.setFont(new Font("SansSerif", Font.PLAIN, 14));
+        tf.setBackground(SHEET_BG);
+        tf.setForeground(TEXT_LIGHT);
+        tf.setCaretColor(TEXT_LIGHT);
+        tf.setBorder(BorderFactory.createCompoundBorder(new LineBorder(SHEET_BORDER, 1, true), new EmptyBorder(4, 6, 4, 6)));
+        return tf;
+    }
+
+    private static int parseNonNegative(String s, int fallback) {
+        try {
+            return Math.max(0, Integer.parseInt(s.trim()));
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    // Coin editor: an amount box for +/- steps, and each coin's total can be typed directly
+    private static void showCoinEditor(Component anchor, Map<?, ?> rec, java.util.function.Consumer<Map<String, Object>> onSave) {
+        Map<String, Object> work = recCopy(rec);
+
+        JPanel body = new JPanel(new GridBagLayout());
+        body.setOpaque(false);
+        GridBagConstraints c = new GridBagConstraints();
+        c.insets = new Insets(4, 4, 4, 4);
+        c.fill = GridBagConstraints.HORIZONTAL;
+
+        JLabel amtLbl = new JLabel("Amount to add / remove");
+        amtLbl.setForeground(TEXT_MUTED);
+        amtLbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        JTextField amount = overlayField("1", 5);
+        amount.setHorizontalAlignment(JTextField.CENTER);
+        c.gridy = 0;
+        c.gridx = 0;
+        c.gridwidth = 2;
+        body.add(amtLbl, c);
+        c.gridx = 2;
+        c.gridwidth = 2;
+        body.add(amount, c);
+        c.gridwidth = 1;
+
+        for (int i = 0; i < COIN_KEYS.length; i++) {
+            String coin = COIN_KEYS[i];
+            JLabel name = new JLabel(COIN_NAMES[i] + " (" + coin + ")");
+            name.setForeground("GP".equals(coin) ? GOLD : TEXT_LIGHT);
+            name.setFont(new Font("SansSerif", Font.BOLD, 13));
+            JButton minus = overlayButton("−", false);
+            JTextField value = overlayField(String.valueOf(recCoin(work, coin)), 6);
+            value.setHorizontalAlignment(JTextField.CENTER);
+            JButton plus = overlayButton("+", false);
+
+            Runnable commitTyped = () -> {
+                int v = parseNonNegative(value.getText(), recCoin(work, coin));
+                if (v != recCoin(work, coin)) {
+                    setCoin(work, coin, v);
+                    onSave.accept(recCopy(work));
+                }
+                value.setText(String.valueOf(recCoin(work, coin)));
+            };
+            java.util.function.IntConsumer step = sign -> {
+                commitTyped.run();
+                int amt = parseNonNegative(amount.getText(), 1);
+                setCoin(work, coin, recCoin(work, coin) + sign * amt);
+                value.setText(String.valueOf(recCoin(work, coin)));
+                onSave.accept(recCopy(work));
+            };
+            minus.addActionListener(e -> step.accept(-1));
+            plus.addActionListener(e -> step.accept(1));
+            value.addActionListener(e -> commitTyped.run());
+            value.addFocusListener(new FocusAdapter() {
+                @Override
+                public void focusLost(FocusEvent e) {
+                    commitTyped.run();
+                }
+            });
+
+            c.gridy = i + 1;
+            c.gridx = 0;
+            c.weightx = 1.0;
+            body.add(name, c);
+            c.weightx = 0.0;
+            c.gridx = 1;
+            body.add(minus, c);
+            c.gridx = 2;
+            body.add(value, c);
+            c.gridx = 3;
+            body.add(plus, c);
+        }
+
+        JLabel hint = new JLabel("Type a total and press Enter, or use − / + with the amount above.");
+        hint.setForeground(TEXT_MUTED);
+        hint.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        c.gridy = COIN_KEYS.length + 1;
+        c.gridx = 0;
+        c.gridwidth = 4;
+        c.insets = new Insets(10, 4, 0, 4);
+        body.add(hint, c);
+
+        showSheetOverlay(anchor, "Coin Purse", body, null);
+    }
+
+    private static void showItemDetail(Component anchor, Map<?, ?> rec, int index,
+                                       java.util.function.Consumer<Map<String, Object>> onSave) {
+        Map<String, Object> work = recCopy(rec);
+        List<String> equipment = CharacterStorage.recList(work, "equipment");
+        if (index < 0 || index >= equipment.size()) return;
+        String base = GameData.stripEquipmentCount(equipment.get(index));
+
+        JTextArea desc = new JTextArea(itemDescription(base));
+        styleInfoTextArea(desc);
+        desc.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        desc.setBorder(new EmptyBorder(0, 0, 0, 0));
+        desc.setColumns(28);
+
+        JLabel qty = new JLabel("Quantity: " + itemCount(equipment.get(index)));
+        qty.setForeground(GOLD);
+        qty.setFont(new Font("SansSerif", Font.BOLD, 14));
+
+        JButton removeOne = overlayButton("− Remove one", false);
+        JButton addOne = overlayButton("+ Add one", false);
+        JButton removeAll = overlayButton("Remove item", false);
+        removeAll.setForeground(ACCENT_HOVER);
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        buttons.setOpaque(false);
+        buttons.add(removeOne);
+        buttons.add(Box.createRigidArea(new Dimension(6, 0)));
+        buttons.add(addOne);
+        buttons.add(Box.createRigidArea(new Dimension(6, 0)));
+        buttons.add(removeAll);
+
+        JPanel body = new JPanel(new BorderLayout(0, 12));
+        body.setOpaque(false);
+        body.add(desc, BorderLayout.NORTH);
+        body.add(qty, BorderLayout.CENTER);
+        body.add(buttons, BorderLayout.SOUTH);
+
+        Runnable[] close = new Runnable[1];
+        java.util.function.IntConsumer change = delta -> {
+            if (delta == Integer.MIN_VALUE) equipment.remove(index);
+            else changeItemCount(equipment, index, delta);
+            work.put("equipment", new ArrayList<Object>(equipment));
+            onSave.accept(recCopy(work));
+            if (index >= equipment.size() || !GameData.stripEquipmentCount(equipment.get(index)).equals(base)) {
+                close[0].run();
+            } else {
+                qty.setText("Quantity: " + itemCount(equipment.get(index)));
+            }
+        };
+        removeOne.addActionListener(e -> change.accept(-1));
+        addOne.addActionListener(e -> change.accept(1));
+        removeAll.addActionListener(e -> change.accept(Integer.MIN_VALUE));
+
+        close[0] = showSheetOverlay(anchor, base, body, null);
+    }
+
+    private static void showAddItem(Component anchor, Map<?, ?> rec, java.util.function.Consumer<Map<String, Object>> onSave) {
+        Runnable[] close = new Runnable[1];
+        java.util.function.Consumer<String> add = name -> {
+            if (name == null || name.trim().isEmpty()) return;
+            Map<String, Object> work = recCopy(rec);
+            List<String> equipment = CharacterStorage.recList(work, "equipment");
+            addItem(equipment, name.trim());
+            work.put("equipment", new ArrayList<Object>(equipment));
+            onSave.accept(work);
+            close[0].run();
+        };
+
+        JPanel custom = new JPanel(new BorderLayout(6, 0));
+        custom.setOpaque(false);
+        JTextField customName = overlayField("", 16);
+        JButton customAdd = overlayButton("Add", true);
+        customAdd.addActionListener(e -> add.accept(customName.getText()));
+        customName.addActionListener(e -> add.accept(customName.getText()));
+        JLabel customLbl = new JLabel("Custom:");
+        customLbl.setForeground(TEXT_MUTED);
+        custom.add(customLbl, BorderLayout.WEST);
+        custom.add(customName, BorderLayout.CENTER);
+        custom.add(customAdd, BorderLayout.EAST);
+
+        JPanel list = new JPanel(new GridLayout(0, 1, 0, 4));
+        list.setOpaque(false);
+        for (Map.Entry<String, String> en : ITEM_PRESETS.entrySet()) {
+            JButton row = new JButton("<html><div style='width:250px'><b>" + escapeHtml(en.getKey())
+                    + "</b><br><span style='color:#aaa5a0; font-size:9px'>" + escapeHtml(en.getValue()) + "</span></div></html>");
+            row.setHorizontalAlignment(SwingConstants.LEFT);
+            row.setForeground(TEXT_LIGHT);
+            row.setBackground(SHEET_ROW_ALT);
+            row.setOpaque(true);
+            row.setFocusPainted(false);
+            row.setCursor(new Cursor(Cursor.HAND_CURSOR));
+            row.setBorder(new EmptyBorder(6, 10, 6, 10));
+            row.addActionListener(e -> add.accept(en.getKey()));
+            list.add(row);
+        }
+        JPanel listWrap = new JPanel(new BorderLayout());
+        listWrap.setOpaque(false);
+        listWrap.add(list, BorderLayout.NORTH);
+        JScrollPane scroll = new JScrollPane(listWrap);
+        applyDarkScrollBar(scroll);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.getViewport().setBackground(SHEET_CARD);
+        scroll.getVerticalScrollBar().setUnitIncrement(16);
+        scroll.setPreferredSize(new Dimension(380, 300));
+
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        body.setOpaque(false);
+        body.add(custom, BorderLayout.NORTH);
+        body.add(scroll, BorderLayout.CENTER);
+
+        close[0] = showSheetOverlay(anchor, "Add Equipment", body, customName);
+    }
+
+    // ---------------- Conditions ----------------
+    static final String[] CONDITION_PRESETS = {"Blinded", "Charmed", "Deafened", "Exhaustion", "Frightened", "Grappled",
+            "Incapacitated", "Invisible", "Paralyzed", "Petrified", "Poisoned", "Prone", "Restrained", "Stunned"};
+
+    // Saved as a "conditions" list; "Conscious"/"Unconscious" is always the first entry.
+    static List<String> recConditions(Map<?, ?> rec) {
+        List<String> raw = CharacterStorage.recList(rec, "conditions");
+        List<String> out = new ArrayList<>();
+        out.add(raw.contains("Unconscious") ? "Unconscious" : "Conscious");
+        for (String s : raw) if (!"Conscious".equals(s) && !"Unconscious".equals(s) && !out.contains(s)) out.add(s);
+        return out;
+    }
+
+    private static JPanel conditionsCard(Map<?, ?> rec, java.util.function.Consumer<Map<String, Object>> onSave) {
+        List<String> conditions = recConditions(rec);
+        java.util.function.Consumer<List<String>> save = list -> {
+            Map<String, Object> work = recCopy(rec);
+            work.put("conditions", new ArrayList<Object>(list));
+            onSave.accept(work);
+        };
+
+        JPanel chips = new JPanel(new GridLayout(0, 2, 6, 6));
+        chips.setOpaque(false);
+        for (int i = 0; i < conditions.size(); i++) {
+            String cond = conditions.get(i);
+            boolean isState = i == 0;
+            boolean down = "Unconscious".equals(cond);
+            Color tone = isState ? (down ? ACCENT_HOVER : new Color(110, 190, 120)) : GOLD;
+
+            JPanel chip = new JPanel(new BorderLayout(4, 0));
+            chip.setBackground(SHEET_ROW_ALT);
+            chip.setBorder(BorderFactory.createCompoundBorder(new LineBorder(tone, 1, true), new EmptyBorder(3, 8, 3, 4)));
+            JLabel name = new JLabel(cond);
+            name.setForeground(tone);
+            name.setFont(new Font("SansSerif", Font.BOLD, 12));
+            chip.add(name, BorderLayout.CENTER);
+
+            JButton action = new JButton(isState ? "⇄" : "✕");
+            action.setToolTipText(isState ? "Switch to " + (down ? "Conscious" : "Unconscious") : "Remove " + cond);
+            action.setFont(new Font("SansSerif", Font.BOLD, 12));
+            action.setForeground(TEXT_MUTED);
+            action.setContentAreaFilled(false);
+            action.setBorderPainted(false);
+            action.setFocusPainted(false);
+            action.setBorder(new EmptyBorder(0, 4, 0, 4));
+            action.setCursor(new Cursor(Cursor.HAND_CURSOR));
+            final int idx = i;
+            action.addActionListener(e -> {
+                List<String> next = new ArrayList<>(conditions);
+                if (isState) next.set(0, down ? "Conscious" : "Unconscious");
+                else next.remove(idx);
+                save.accept(next);
+            });
+            chip.add(action, BorderLayout.EAST);
+            chips.add(chip);
+        }
+
+        JButton add = sheetIconButton("+", "Add a condition");
+        add.addActionListener(e -> {
+            JPanel grid = new JPanel(new GridLayout(0, 2, 6, 6));
+            grid.setOpaque(false);
+            Runnable[] close = new Runnable[1];
+            for (String cond : CONDITION_PRESETS) {
+                if (conditions.contains(cond)) continue;
+                JButton b = overlayButton(cond, false);
+                b.addActionListener(ev -> {
+                    List<String> next = new ArrayList<>(conditions);
+                    next.add(cond);
+                    save.accept(next);
+                    close[0].run();
+                });
+                grid.add(b);
+            }
+            if (grid.getComponentCount() == 0) {
+                JLabel all = new JLabel("All conditions are already applied.");
+                all.setForeground(TEXT_MUTED);
+                grid.add(all);
+            }
+            close[0] = showSheetOverlay(add, "Add Condition", grid, null);
+        });
+        return sheetCardWithAction("Conditions", add, chips);
+    }
+
+    // ---------------- In-window overlay ----------------
+    // Shows `body` in a card centered over the frame, on the root pane's layered pane (no new
+    // window). Clicking the dimmed backdrop, the close button, or pressing Esc dismisses it.
+    // Returns a Runnable that closes the overlay.
+    static Runnable showSheetOverlay(Component anchor, String title, JComponent body, JComponent focus) {
+        JRootPane root = SwingUtilities.getRootPane(anchor);
+        if (root == null) return () -> { };
+        JLayeredPane layers = root.getLayeredPane();
+
+        JPanel scrim = new JPanel(new GridBagLayout()) {
+            @Override
+            protected void paintComponent(Graphics g) {
+                g.setColor(new Color(0, 0, 0, 150));
+                g.fillRect(0, 0, getWidth(), getHeight());
+            }
+        };
+        scrim.setOpaque(false);
+
+        JPanel card = new JPanel(new BorderLayout(0, 12));
+        card.setBackground(SHEET_CARD);
+        card.setBorder(BorderFactory.createCompoundBorder(new LineBorder(GOLD, 1, true), new EmptyBorder(14, 16, 16, 16)));
+        JPanel head = new JPanel(new BorderLayout(12, 0));
+        head.setOpaque(false);
+        JLabel t = new JLabel(title);
+        t.setForeground(GOLD);
+        t.setFont(new Font("Serif", Font.BOLD, 20));
+        JButton x = new JButton("✕");
+        x.setForeground(TEXT_MUTED);
+        x.setFont(new Font("SansSerif", Font.BOLD, 14));
+        x.setContentAreaFilled(false);
+        x.setBorderPainted(false);
+        x.setFocusPainted(false);
+        x.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        head.add(t, BorderLayout.CENTER);
+        head.add(x, BorderLayout.EAST);
+        card.add(head, BorderLayout.NORTH);
+        card.add(body, BorderLayout.CENTER);
+        card.addMouseListener(new MouseAdapter() { }); // swallow clicks so they don't reach the backdrop
+        scrim.add(card);
+
+        ComponentAdapter resize = new ComponentAdapter() {
+            @Override
+            public void componentResized(ComponentEvent e) {
+                scrim.setBounds(0, 0, layers.getWidth(), layers.getHeight());
+                scrim.revalidate();
+            }
+        };
+        Runnable close = () -> {
+            if (scrim.getParent() == null) return;
+            layers.remove(scrim);
+            layers.removeComponentListener(resize);
+            layers.repaint();
+        };
+        x.addActionListener(e -> close.run());
+        scrim.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                close.run();
+            }
+        });
+        scrim.addMouseWheelListener(e -> { }); // keep the sheet behind from scrolling
+        scrim.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "closeOverlay");
+        scrim.getActionMap().put("closeOverlay", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                close.run();
+            }
+        });
+
+        scrim.setBounds(0, 0, layers.getWidth(), layers.getHeight());
+        layers.add(scrim, JLayeredPane.MODAL_LAYER);
+        layers.addComponentListener(resize);
+        layers.revalidate();
+        layers.repaint();
+        if (focus != null) SwingUtilities.invokeLater(focus::requestFocusInWindow);
+        return close;
+    }
+
+    private static JComponent otherProficienciesContent(Map<?, ?> rec, String characterClass, String species) {
+        List<String[]> lines = new ArrayList<>();
+        String size = CharacterStorage.recStr(rec, "size");
+        String type = CharacterStorage.recStr(rec, "creatureType");
+        Integer climb = CharacterStorage.recInt(rec, "climbSpeed");
+        if (!size.isEmpty()) lines.add(new String[]{"Size", size});
+        if (!type.isEmpty()) lines.add(new String[]{"Creature Type", type});
+        if (climb != null && climb > 0) lines.add(new String[]{"Climb Speed", climb + " ft."});
+        List<DecisionItem> decisions = GameData.CLASS_DECISIONS.get(characterClass);
+        if (decisions != null) {
+            Map<String, List<String>> choices = CharacterStorage.recChoicesMap(rec);
+            for (DecisionItem item : decisions) {
+                if (!"TEXT".equals(item.type)) continue;
+                List<String> chosen = choices.get(item.label);
+                if (chosen != null && !chosen.isEmpty()) lines.add(new String[]{cleanDecisionLabel(item.label), String.join(", ", chosen)});
+            }
+        }
+
+        JPanel list = new JPanel(new GridLayout(0, 1, 0, 2));
+        list.setOpaque(false);
+        if (lines.isEmpty()) {
+            JLabel none = new JLabel("None recorded.");
+            none.setForeground(TEXT_MUTED);
+            none.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            list.add(none);
+        }
+        for (String[] ln : lines) {
+            JLabel l = new JLabel("<html><span style='color:#aaa5a0'>" + escapeHtml(ln[0]) + ":</span> " + escapeHtml(ln[1]) + "</html>");
+            l.setForeground(TEXT_LIGHT);
+            l.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            list.add(l);
+        }
+        JPanel wrap = new JPanel(new BorderLayout());
+        wrap.setOpaque(false);
+        wrap.add(list, BorderLayout.NORTH);
+        return wrap;
+    }
+
+    private static JComponent featuresContent(Map<?, ?> rec, String characterClass, String species,
+                                              String lineageSuffix, List<Map<String, Object>> feats) {
+        List<JComponent> cards = new ArrayList<>();
+
+        if (!species.isEmpty()) {
+            List<String> sub = new ArrayList<>();
+            sub.add("Species");
+            String size = CharacterStorage.recStr(rec, "size");
+            String type = CharacterStorage.recStr(rec, "creatureType");
+            if (!size.isEmpty()) sub.add(size);
+            if (!type.isEmpty()) sub.add(type);
+            String info = GameData.SPECIES_INFO.get(species);
+            cards.add(featureCard(species + lineageSuffix, String.join(" · ", sub), info == null ? "" : info));
+        }
+
+        List<DecisionItem> decisions = GameData.CLASS_DECISIONS.get(characterClass);
+        if (decisions != null) {
+            Map<String, List<String>> choices = CharacterStorage.recChoicesMap(rec);
+            for (DecisionItem item : decisions) {
+                if (!"CHOICE".equals(item.type)) continue;
+                List<String> chosen = choices.get(item.label);
+                if (chosen == null || chosen.isEmpty()) continue;
+                cards.add(featureCard(String.join(", ", chosen),
+                        cleanDecisionLabel(item.label) + " · " + characterClass + " 1", ""));
+            }
+        }
+
+        for (Map<String, Object> f : feats) {
+            String category = String.valueOf(f.get("category"));
+            String kind = FeatData.CATEGORY_EPIC.equals(category) ? "Epic Boon"
+                    : FeatData.CATEGORY_CUSTOM.equals(category) ? "Custom Feat" : "Feat";
+            List<String> sub = new ArrayList<>();
+            if (!FeatData.CATEGORY_ASI.equals(category)) sub.add(kind);
+            Object fClass = f.get("className");
+            Object fLevel = f.get("classLevel");
+            if (fClass != null && fLevel instanceof Number) sub.add(fClass + " " + ((Number) fLevel).intValue());
+            List<String> incParts = new ArrayList<>();
+            for (Map.Entry<String, Integer> en : CharacterStorage.featStatIncreases(f).entrySet()) {
+                incParts.add(en.getKey() + " +" + en.getValue());
+            }
+            if (!incParts.isEmpty()) sub.add(String.join(", ", incParts));
+            String desc = f.get("description") == null ? "" : String.valueOf(f.get("description"));
+            if (FeatData.CATEGORY_ASI.equals(category)) desc = ""; // the increases tag already says it all
+            cards.add(featureCard(String.valueOf(f.get("name")), String.join(" · ", sub), desc));
+        }
+
+        if (cards.isEmpty()) {
+            JLabel none = new JLabel("No features yet.");
+            none.setForeground(TEXT_MUTED);
+            none.setFont(new Font("SansSerif", Font.PLAIN, 13));
+            cards.add(none);
+        }
+        return sheetStack(8, false, cards.toArray(new JComponent[0]));
+    }
+
+    private static JPanel featureCard(String title, String subtitle, String description) {
+        StringBuilder html = new StringBuilder("<html><div style='width:290px'>");
+        html.append("<b style='color:#d4af37; font-size:12px'>").append(escapeHtml(title)).append("</b>");
+        if (!subtitle.isEmpty()) {
+            html.append("<br><span style='color:#aaa5a0; font-size:9px'>").append(escapeHtml(subtitle.toUpperCase())).append("</span>");
+        }
+        if (!description.isEmpty()) {
+            html.append("<div style='margin-top:4px'>").append(escapeHtml(description)).append("</div>");
+        }
+        html.append("</div></html>");
+        JLabel lbl = new JLabel(html.toString());
+        lbl.setForeground(TEXT_LIGHT);
+        lbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+
+        JPanel card = new JPanel(new BorderLayout());
+        card.setBackground(SHEET_ROW_ALT);
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 3, 0, 0, GOLD), new EmptyBorder(8, 10, 8, 10)));
+        card.add(lbl, BorderLayout.CENTER);
+        return card;
+    }
+
+    // "Fighting Style?" -> "Fighting Style", "Skills? (2)" -> "Skills"
+    private static String cleanDecisionLabel(String label) {
+        return label.replaceAll("\\s*\\(\\d+\\)\\s*$", "").replace("?", "").trim();
     }
 
     private static void populateCharacterSpells(JPanel container, Map<?, ?> rec) {
@@ -3911,8 +4866,12 @@ public class App {
         private final int ac;
 
         ShieldPanel(int ac) {
+            this(ac, 150, 168);
+        }
+
+        ShieldPanel(int ac, int width, int height) {
             this.ac = ac;
-            Dimension d = new Dimension(150, 168);
+            Dimension d = new Dimension(width, height);
             setPreferredSize(d);
             setMinimumSize(d);
             setMaximumSize(d);
@@ -3935,7 +4894,7 @@ public class App {
             shield.quadTo(pad + dw * -0.02, pad + dh * 0.45, pad + dw * 0.06, pad + dh * 0.08);
             shield.closePath();
 
-            GradientPaint fill = new GradientPaint(0, (float) pad, BG_FIELD, 0, h - (float) pad, BG_PANEL);
+            GradientPaint fill = new GradientPaint(0, (float) pad, SHEET_ROW_ALT, 0, h - (float) pad, SHEET_CARD);
             g2.setPaint(fill);
             g2.fill(shield);
 
@@ -3983,14 +4942,95 @@ public class App {
             return 100;
         }
 
+        // Track the viewport width only while it is wide enough for the content's minimum
+        // width; below that, fall back to horizontal scrolling instead of crushing the layout.
         @Override
         public boolean getScrollableTracksViewportWidth() {
-            return true;
+            Container parent = getParent();
+            return !(parent instanceof JViewport) || parent.getWidth() >= getMinimumSize().width;
         }
 
         @Override
         public boolean getScrollableTracksViewportHeight() {
             return false;
+        }
+    }
+
+    // Lays out a single child at a fixed content width, horizontally centered in the
+    // container (used to cap the character sheet at SHEET_MAX_WIDTH on wide monitors).
+    static class MaxWidthCenterLayout implements LayoutManager {
+        private final int maxWidth;
+
+        MaxWidthCenterLayout(int maxWidth) {
+            this.maxWidth = maxWidth;
+        }
+
+        @Override
+        public void addLayoutComponent(String name, Component comp) {
+        }
+
+        @Override
+        public void removeLayoutComponent(Component comp) {
+        }
+
+        @Override
+        public Dimension preferredLayoutSize(Container parent) {
+            Insets in = parent.getInsets();
+            int h = 0;
+            for (Component c : parent.getComponents()) h = Math.max(h, c.getPreferredSize().height);
+            return new Dimension(maxWidth + in.left + in.right, h + in.top + in.bottom);
+        }
+
+        @Override
+        public Dimension minimumLayoutSize(Container parent) {
+            return preferredLayoutSize(parent);
+        }
+
+        @Override
+        public void layoutContainer(Container parent) {
+            Insets in = parent.getInsets();
+            int avail = parent.getWidth() - in.left - in.right;
+            int x = in.left + Math.max(0, (avail - maxWidth) / 2);
+            int availH = parent.getHeight() - in.top - in.bottom;
+            for (Component c : parent.getComponents()) {
+                c.setBounds(x, in.top, maxWidth, Math.max(availH, c.getPreferredSize().height));
+            }
+        }
+    }
+
+    // Round pip used for the death-save checkboxes (outline when empty, filled when checked)
+    static class PipIcon implements Icon {
+        private final boolean filled;
+        private final Color color;
+
+        PipIcon(boolean filled, Color color) {
+            this.filled = filled;
+            this.color = color;
+        }
+
+        @Override
+        public void paintIcon(Component c, Graphics g, int x, int y) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            if (filled) {
+                g2.setColor(color);
+                g2.fillOval(x + 1, y + 1, 12, 12);
+            } else {
+                g2.setColor(TEXT_MUTED);
+                g2.setStroke(new BasicStroke(1.5f));
+                g2.drawOval(x + 1, y + 1, 12, 12);
+            }
+            g2.dispose();
+        }
+
+        @Override
+        public int getIconWidth() {
+            return 14;
+        }
+
+        @Override
+        public int getIconHeight() {
+            return 14;
         }
     }
 
