@@ -20,8 +20,8 @@ static final String PACK_FORMAT = "dnd-engine-homebrew";
 
 static final String ITEMS = "Items", WEAPONS = "Weapons", ARMOR = "Armor", NPCS = "NPCs", MAPS = "Maps",
         CONDITIONS = "Conditions", SPELLS = "Spells", BACKGROUNDS = "Backgrounds", SPECIES = "Species",
-        CLASSES = "Classes", SUBCLASSES = "Subclasses";
-static final String[] CATEGORIES = {ITEMS, WEAPONS, ARMOR, NPCS, MAPS, CONDITIONS, SPELLS, BACKGROUNDS, SPECIES, CLASSES, SUBCLASSES};
+        CLASSES = "Classes", SUBCLASSES = "Subclasses", FEATS = "Feats";
+static final String[] CATEGORIES = {ITEMS, WEAPONS, ARMOR, NPCS, MAPS, CONDITIONS, SPELLS, FEATS, BACKGROUNDS, SPECIES, CLASSES, SUBCLASSES};
 
 static final Map<String, String> JSON_KEYS = new LinkedHashMap<>();
 static final Map<String, String> SINGULAR = new LinkedHashMap<>();
@@ -29,7 +29,7 @@ static {
     String[][] rows = {
             {ITEMS, "items", "Item"}, {WEAPONS, "weapons", "Weapon"}, {ARMOR, "armor", "Armor"},
             {NPCS, "npcs", "NPC"}, {MAPS, "maps", "Map"}, {CONDITIONS, "conditions", "Condition"},
-            {SPELLS, "spells", "Spell"}, {BACKGROUNDS, "backgrounds", "Background"}, {SPECIES, "species", "Species"},
+            {SPELLS, "spells", "Spell"}, {FEATS, "feats", "Feat"}, {BACKGROUNDS, "backgrounds", "Background"}, {SPECIES, "species", "Species"},
             {CLASSES, "classes", "Class"}, {SUBCLASSES, "subclasses", "Subclass"}};
     for (String[] r : rows) {
         JSON_KEYS.put(r[0], r[1]);
@@ -78,6 +78,8 @@ static final String[] SPELLCASTING = {"None", "Half", "Full", "Pact"};
 static final String[] ARMOR_TRAINING = {"Light", "Medium", "Heavy", "Shields"};
 static final String[] WEAPON_TRAINING = {"Simple", "Martial"};
 static final String OWN_SPELL_LIST = "(Its own list)";
+static final String FEAT_GENERAL = "General", FEAT_ORIGIN = "Origin", FEAT_EPIC = "Epic Boon";
+static final String[] FEAT_TYPES = {FEAT_GENERAL, FEAT_ORIGIN, FEAT_EPIC};
 
 // 2024 Origin feats (short summaries) offered for backgrounds alongside the general feats
 static final Map<String, String> ORIGIN_FEATS = new LinkedHashMap<>();
@@ -126,10 +128,10 @@ static String featDescription(String name) {
 // Field schema
 // ===============================================================
 static final String TEXT = "TEXT", AREA = "AREA", INT = "INT", BOOL = "BOOL", CHOICE = "CHOICE",
-        MULTI = "MULTI", LIST = "LIST", ABILITIES = "ABILITIES", ENTRIES = "ENTRIES";
+        MULTI = "MULTI", LIST = "LIST", ABILITIES = "ABILITIES", ENTRIES = "ENTRIES", TAGS = "TAGS";
 // Link kinds: what clicking a value in the detail overlay opens
 static final String LINK_SKILL = "skill", LINK_CONDITION = "condition", LINK_CLASS = "class",
-        LINK_LANGUAGE = "language", LINK_STAT = "stat", LINK_FEAT = "feat";
+        LINK_LANGUAGE = "language", LINK_STAT = "stat", LINK_FEAT = "feat", LINK_TAG = "tag";
 
 static class Field {
     final String key, label, type;
@@ -173,6 +175,10 @@ private static Field choice(String k, String l, String... o) { return new Field(
 private static Field multi(String k, String l, String... o) { return new Field(k, l, MULTI).opts(o); }
 private static Field list(String k, String l) { return new Field(k, l, LIST); }
 private static Field entries(String k, String l) { return new Field(k, l, ENTRIES); }
+private static Field tagsField() {
+    return new Field("tags", "Tags", TAGS).link(LINK_TAG).section("Tags")
+            .help("Used for searching, sorting and campaign content filters. New homebrew starts with HOMEBREW.");
+}
 
 static final Map<String, List<Field>> SCHEMAS = new LinkedHashMap<>();
 static {
@@ -260,6 +266,15 @@ static {
                     .help("Leave empty to detect conditions named in the description automatically."),
             text("imagePath", "Card art (optional)").hint("e.g. art/spells/ember_lance.png")));
 
+    SCHEMAS.put(FEATS, Arrays.asList(
+            text("name", "Name").hint("e.g. Stormborn Resolve"),
+            choice("featType", "Feat type", FEAT_TYPES)
+                    .help("General feats are offered at level up, Epic Boons at level 19, and Origin feats can be given to backgrounds."),
+            area("description", "Description"),
+            new Field("abilityOptions", "Ability score increase", MULTI).opts(GameData.STAT_ORDER).link(LINK_STAT)
+                    .help("+1 to one of these (max 20, or 30 for an Epic Boon). Leave empty for none."),
+            bool("repeatable", "Can be taken more than once")));
+
     SCHEMAS.put(BACKGROUNDS, Arrays.asList(
             text("name", "Name").hint("e.g. Lighthouse Keeper"),
             area("description", "Description"),
@@ -314,6 +329,13 @@ static {
             area("description", "Description"),
             num("subclassLevel", "Chosen at class level", 1, 20, 3),
             entries("features", "Subclass features").levels().section("Features")));
+
+    // Every category carries tags (stored in the asset's "tags" list)
+    for (Map.Entry<String, List<Field>> en : SCHEMAS.entrySet()) {
+        List<Field> withTags = new ArrayList<>(en.getValue());
+        withTags.add(tagsField());
+        en.setValue(Collections.unmodifiableList(withTags));
+    }
 }
 
 // Field whose value sorts/filters a category in the library ("All" + each distinct value)
@@ -324,6 +346,7 @@ static {
     FILTER_KEYS.put(ARMOR, "armorCategory");
     FILTER_KEYS.put(NPCS, "creatureType");
     FILTER_KEYS.put(SPELLS, "level");
+    FILTER_KEYS.put(FEATS, "featType");
     FILTER_KEYS.put(SPECIES, "size");
     FILTER_KEYS.put(CLASSES, "spellcasting");
     FILTER_KEYS.put(SUBCLASSES, "parentClass");
@@ -437,6 +460,7 @@ static Map<String, Object> newAsset(String cat) {
     a.put("id", newId());
     for (Field f : SCHEMAS.get(cat)) {
         if (f.def != null) a.put(f.key, f.def);
+        else if (TAGS.equals(f.type)) a.put(f.key, new ArrayList<Object>(Collections.singletonList(Tags.HOMEBREW)));
         else if (MULTI.equals(f.type) || LIST.equals(f.type) || ENTRIES.equals(f.type)) a.put(f.key, new ArrayList<>());
         else if (ABILITIES.equals(f.type)) {
             Map<String, Object> ab = new LinkedHashMap<>();
@@ -502,6 +526,9 @@ static String overridesBuiltIn(String cat, String name) {
     if (table != null && table.containsKey(name)) return name;
     if (WEAPONS.equals(cat) && weaponSnapshot != null) {
         for (WeaponEntry we : weaponSnapshot) if (we.name.equalsIgnoreCase(name)) return we.name;
+    }
+    if (FEATS.equals(cat)) {
+        for (String f : builtinNames(FEATS)) if (f.equalsIgnoreCase(name)) return f;
     }
     return null;
 }
@@ -599,12 +626,16 @@ private static void commit() {
 // ===============================================================
 static void load() {
     for (String c : CATEGORIES) DATA.get(c).clear();
+    Tags.read(null);
     try {
         java.nio.file.Path p = DataPaths.userFile(FILE);
         if (!java.nio.file.Files.exists(p)) return;
         String content = new String(java.nio.file.Files.readAllBytes(p), java.nio.charset.StandardCharsets.UTF_8);
         Object parsed = new MiniJsonParser(content).parse();
-        if (parsed instanceof Map) readCategories((Map<?, ?>) parsed, (cat, asset) -> DATA.get(cat).add(asset));
+        if (parsed instanceof Map) {
+            readCategories((Map<?, ?>) parsed, (cat, asset) -> DATA.get(cat).add(asset));
+            Tags.read(((Map<?, ?>) parsed).get("tagSettings"));
+        }
     } catch (Exception ex) {
         // custom_assets.json unreadable: start empty rather than crash (the file is left untouched until the next save)
     }
@@ -612,8 +643,10 @@ static void load() {
 
 static void save() {
     try {
+        Map<String, Object> root = packOf(Arrays.asList(CATEGORIES));
+        root.put("tagSettings", Tags.toJson()); // campaign content filters, custom tags, built-in tag edits
         java.nio.file.Files.write(DataPaths.userFile(FILE),
-                JsonUtil.toPrettyJson(packOf(Arrays.asList(CATEGORIES))).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                JsonUtil.toPrettyJson(root).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     } catch (Exception ex) {
         // best-effort save (e.g. read-only folder); the session keeps working from memory
     }
@@ -645,6 +678,7 @@ private static void readCategories(Map<?, ?> root, java.util.function.BiConsumer
             for (Map.Entry<?, ?> en : ((Map<?, ?>) o).entrySet()) asset.put(String.valueOf(en.getKey()), en.getValue());
             if (str(asset, "id").isEmpty()) asset.put("id", newId());
             if (str(asset, "name").trim().isEmpty()) continue;
+            if (!(asset.get("tags") instanceof List)) asset.put("tags", new ArrayList<Object>(Collections.singletonList(Tags.HOMEBREW)));
             if (MAPS.equals(c) && !(asset.get("grid") instanceof Map)) {
                 asset.put("grid", MapEditorPanel.MapModel.blank(intVal(asset, "width", 20), intVal(asset, "height", 15)).toJson());
             }
@@ -806,7 +840,7 @@ static void applyToRuntime() {
             GameData.CLASS_PACKAGE_B_GOLD, GameData.CONDITION_INFO, GameData.CLASS_SAVING_THROWS,
             GameData.CLASS_DECISIONS, GameData.LANGUAGE_INFO, GameData.ARMOR_AC, GameData.SPELL_SLOTS_LEVEL1,
             SpellData.SPELLS, SpellData.CASTING_ABILITY, SpellData.CASTER_TYPE, SpellData.CANTRIPS_BY_LEVEL,
-            SpellData.PREPARED_BY_LEVEL);
+            SpellData.PREPARED_BY_LEVEL, FeatData.GENERAL_FEATS, FeatData.EPIC_BOONS, ORIGIN_FEATS);
     restoreSnapshots();
 
     // Conditions first: spell descriptions are scanned for condition names
@@ -886,6 +920,24 @@ static void applyToRuntime() {
         GameData.CLASS_PACKAGE_B_GOLD.put(name, intVal(a, "packageBGold", 0));
     }
     insertBeforeCustom(GameData.CLASS_INFO, classes);
+
+    // Feats (a homebrew feat replaces a built-in of the same name, whatever its type)
+    for (Map<String, Object> a : DATA.get(FEATS)) {
+        String name = str(a, "name");
+        FeatData.GENERAL_FEATS.remove(name);
+        FeatData.EPIC_BOONS.remove(name);
+        ORIGIN_FEATS.remove(name);
+        String type = str(a, "featType");
+        if (FEAT_ORIGIN.equals(type)) {
+            ORIGIN_FEATS.put(name, str(a, "description"));
+            continue;
+        }
+        boolean epic = FEAT_EPIC.equals(type);
+        Feat f = new Feat(name, epic ? FeatData.CATEGORY_EPIC : FeatData.CATEGORY_GENERAL, str(a, "description"),
+                list(a, "abilityOptions").toArray(new String[0]), epic ? FeatData.EPIC_STAT_CAP : FeatData.NORMAL_STAT_CAP);
+        if (bool(a, "repeatable")) f.repeatable();
+        (epic ? FeatData.EPIC_BOONS : FeatData.GENERAL_FEATS).put(name, f);
+    }
 
     // Spells (after conditions and classes)
     for (Map<String, Object> a : DATA.get(SPELLS)) {
@@ -1043,6 +1095,253 @@ private static String classInfoText(Map<String, Object> a) {
     if (sb.length() > 0 && !facts.isEmpty()) sb.append("\n\n");
     sb.append(String.join("\n", facts)).append(sb.length() > 0 ? "\n\n" : "").append("Homebrew class.");
     return sb.toString();
+}
+
+// ===============================================================
+// Built-in (official) content, as it was before homebrew was merged in
+// ===============================================================
+private static void addKeys(List<String> out, Map<?, ?> table, String... skip) {
+    List<String> skipList = Arrays.asList(skip);
+    for (Object k : table.keySet()) {
+        String n = String.valueOf(k);
+        if (!skipList.contains(n) && !out.contains(n)) out.add(n);
+    }
+}
+
+// Names of the built-in assets in a category (empty for NPCs, Maps and Subclasses)
+static List<String> builtinNames(String cat) {
+    List<String> out = new ArrayList<>();
+    switch (cat) {
+        case SPELLS: addKeys(out, snapshotOf(SpellData.SPELLS)); break;
+        case FEATS:
+            addKeys(out, snapshotOf(ORIGIN_FEATS));
+            addKeys(out, snapshotOf(FeatData.GENERAL_FEATS));
+            addKeys(out, snapshotOf(FeatData.EPIC_BOONS));
+            break;
+        case CLASSES: addKeys(out, snapshotOf(GameData.CLASS_INFO), "Custom"); break;
+        case SPECIES: addKeys(out, snapshotOf(GameData.SPECIES_INFO), "Custom"); break;
+        case BACKGROUNDS: addKeys(out, snapshotOf(GameData.BACKGROUND_INFO), "Custom"); break;
+        case CONDITIONS: addKeys(out, snapshotOf(GameData.CONDITION_INFO), "Conscious", "Unconscious"); break;
+        case ARMOR: addKeys(out, snapshotOf(GameData.ARMOR_AC)); break;
+        case WEAPONS: for (WeaponEntry w : builtinWeapons()) if (!out.contains(w.name)) out.add(w.name); break;
+        case ITEMS:
+            for (String n : App.ITEM_PRESETS.keySet()) {
+                if (builtinWeapon(n) == null && !snapshotOf(GameData.ARMOR_AC).containsKey(n)) out.add(n);
+            }
+            break;
+        default:
+    }
+    return out;
+}
+
+private static List<WeaponEntry> builtinWeapons() {
+    return weaponSnapshot != null ? weaponSnapshot : WeaponData.WEAPON_DB.weapons;
+}
+
+static WeaponEntry builtinWeapon(String name) {
+    for (WeaponEntry w : builtinWeapons()) if (w.name.equalsIgnoreCase(name)) return w;
+    return null;
+}
+
+static Spell builtinSpell(String name) {
+    Object s = snapshotOf(SpellData.SPELLS).get(name);
+    return s instanceof Spell ? (Spell) s : null;
+}
+
+// General feat or epic boon (null for an origin feat, whose text is builtinDescription)
+static Feat builtinFeat(String name) {
+    Object f = snapshotOf(FeatData.GENERAL_FEATS).get(name);
+    if (f == null) f = snapshotOf(FeatData.EPIC_BOONS).get(name);
+    return f instanceof Feat ? (Feat) f : null;
+}
+
+static String builtinFeatType(String name) {
+    if (snapshotOf(ORIGIN_FEATS).containsKey(name)) return FEAT_ORIGIN;
+    Feat f = builtinFeat(name);
+    return f != null && FeatData.CATEGORY_EPIC.equals(f.category) ? FEAT_EPIC : FEAT_GENERAL;
+}
+
+private static String casterLabel(String cls) {
+    Object t = snapshotOf(SpellData.CASTER_TYPE).get(cls);
+    if (SpellData.FULL.equals(t)) return "Full";
+    if (SpellData.HALF.equals(t)) return "Half";
+    if (SpellData.PACT.equals(t)) return "Pact";
+    return "None";
+}
+
+private static String armorCategory(GameData.ArmorInfo a) {
+    if (a.isShield) return "Shield";
+    if (a.maxDexBonus == Integer.MAX_VALUE) return "Light";
+    return a.maxDexBonus > 0 ? "Medium" : "Heavy";
+}
+
+private static String armorAcText(GameData.ArmorInfo a) {
+    if (a.isShield) return "+" + GameData.shieldBonus(a) + " AC";
+    return "AC " + a.baseAC + (a.maxDexBonus <= 0 ? "" : a.maxDexBonus == Integer.MAX_VALUE ? " + DEX" : " + DEX (max " + a.maxDexBonus + ")");
+}
+
+// Value for the library's per-category filter (same buckets as filterValue for homebrew), or null
+static String builtinFilterValue(String cat, String name) {
+    switch (cat) {
+        case SPELLS: {
+            Spell s = builtinSpell(name);
+            return s == null ? null : s.level == 0 ? "Cantrip" : "Level " + s.level;
+        }
+        case FEATS: return builtinFeatType(name);
+        case ITEMS: return "Gear";
+        case WEAPONS: {
+            WeaponEntry w = builtinWeapon(name);
+            return w == null || w.category == null ? "—" : w.category.split(" ")[0];
+        }
+        case ARMOR: {
+            Object a = snapshotOf(GameData.ARMOR_AC).get(name);
+            return a instanceof GameData.ArmorInfo ? armorCategory((GameData.ArmorInfo) a) : "—";
+        }
+        case SPECIES: return GameData.computeSize(name);
+        case CLASSES: return casterLabel(name);
+        default: return null;
+    }
+}
+
+// One-line summary for a built-in asset's list row
+static String builtinSummary(String cat, String name) {
+    List<String> p = new ArrayList<>();
+    switch (cat) {
+        case SPELLS: {
+            Spell s = builtinSpell(name);
+            if (s == null) break;
+            p.add(s.levelLine());
+            if (s.concentration) p.add("Concentration");
+            if (s.ritual) p.add("Ritual");
+            if (!s.classes.isEmpty()) p.add(String.join(", ", s.classes));
+            break;
+        }
+        case FEATS: {
+            String type = builtinFeatType(name);
+            p.add(FEAT_EPIC.equals(type) ? "Epic Boon" : type + " feat");
+            Feat f = builtinFeat(name);
+            if (f != null && f.statOptions.length > 0) p.add("+1 " + String.join("/", f.statOptions));
+            if (f != null && f.repeatable) p.add("Repeatable");
+            break;
+        }
+        case CLASSES: {
+            Object info = snapshotOf(GameData.CLASS_INFO).get(name);
+            if (info instanceof String[]) p.add("Hit die " + ((String[]) info)[0]);
+            String c = casterLabel(name);
+            p.add("None".equals(c) ? "No spellcasting" : c + " caster");
+            break;
+        }
+        case SPECIES:
+            p.add(GameData.computeSize(name));
+            p.add(GameData.computeSpeed(name, "") + " ft.");
+            if (GameData.SPECIES_LINEAGES.containsKey(name)) p.add(GameData.SPECIES_LINEAGES.get(name).length + " lineages");
+            break;
+        case BACKGROUNDS: {
+            Object skills = snapshotOf(GameData.BACKGROUND_SKILL_PROFICIENCIES).get(name);
+            if (skills instanceof String[]) p.add("Skills: " + String.join(", ", (String[]) skills));
+            Object stats = snapshotOf(GameData.BACKGROUND_STATS).get(name);
+            if (stats instanceof String[]) p.add(String.join(", ", (String[]) stats));
+            break;
+        }
+        case CONDITIONS:
+            p.add(snippet(String.valueOf(snapshotOf(GameData.CONDITION_INFO).get(name)), 90));
+            break;
+        case ARMOR: {
+            Object a = snapshotOf(GameData.ARMOR_AC).get(name);
+            if (a instanceof GameData.ArmorInfo) {
+                GameData.ArmorInfo ai = (GameData.ArmorInfo) a;
+                p.add(ai.isShield ? "Shield" : armorCategory(ai) + " armor");
+                p.add(armorAcText(ai));
+            }
+            break;
+        }
+        case WEAPONS: {
+            WeaponEntry w = builtinWeapon(name);
+            if (w != null) {
+                p.add(w.category);
+                p.add(w.damage);
+                if (w.mastery != null && !"—".equals(w.mastery)) p.add("Mastery: " + w.mastery);
+            }
+            break;
+        }
+        case ITEMS:
+            p.add(snippet(App.ITEM_PRESETS.getOrDefault(name, "").replace(" Placeholder description.", ""), 90));
+            break;
+        default:
+    }
+    p.removeIf(s -> s == null || s.trim().isEmpty() || "null".equals(s));
+    return String.join(" · ", p);
+}
+
+// Full rules text for a built-in asset's detail overlay
+static String builtinDescription(String cat, String name) {
+    switch (cat) {
+        case SPELLS: {
+            Spell s = builtinSpell(name);
+            return s == null ? "" : s.infoText();
+        }
+        case FEATS: {
+            Feat f = builtinFeat(name);
+            if (f != null) return f.infoText();
+            Object d = snapshotOf(ORIGIN_FEATS).get(name);
+            return d == null ? "" : d + "\n\nOrigin feat (granted by a background).";
+        }
+        case CLASSES: {
+            Object info = snapshotOf(GameData.CLASS_INFO).get(name);
+            if (!(info instanceof String[])) return "";
+            StringBuilder sb = new StringBuilder(((String[]) info)[1]).append("\n\nHit die: ").append(((String[]) info)[0]);
+            Object saves = snapshotOf(GameData.CLASS_SAVING_THROWS).get(name);
+            if (saves instanceof String[]) sb.append("\nSaving throws: ").append(String.join(", ", (String[]) saves));
+            String c = casterLabel(name);
+            if (!"None".equals(c)) sb.append("\nSpellcasting: ").append(c).append(" caster (").append(snapshotOf(SpellData.CASTING_ABILITY).get(name)).append(")");
+            return sb.toString();
+        }
+        case SPECIES: {
+            StringBuilder sb = new StringBuilder(String.valueOf(snapshotOf(GameData.SPECIES_INFO).get(name)));
+            sb.append("\n\nSize: ").append(GameData.computeSize(name)).append("\nSpeed: ").append(GameData.computeSpeed(name, "")).append(" ft.");
+            String[] lin = GameData.SPECIES_LINEAGES.get(name);
+            if (lin != null) sb.append("\nLineages: ").append(String.join(", ", lin));
+            return sb.toString();
+        }
+        case BACKGROUNDS: {
+            StringBuilder sb = new StringBuilder(String.valueOf(snapshotOf(GameData.BACKGROUND_INFO).get(name)));
+            Object skills = snapshotOf(GameData.BACKGROUND_SKILL_PROFICIENCIES).get(name);
+            if (skills instanceof String[]) sb.append("\n\nSkill proficiencies: ").append(String.join(", ", (String[]) skills));
+            Object stats = snapshotOf(GameData.BACKGROUND_STATS).get(name);
+            if (stats instanceof String[]) sb.append("\nAbility scores: ").append(String.join(", ", (String[]) stats));
+            return sb.toString();
+        }
+        case CONDITIONS:
+            return String.valueOf(snapshotOf(GameData.CONDITION_INFO).get(name));
+        case ARMOR: {
+            Object a = snapshotOf(GameData.ARMOR_AC).get(name);
+            if (!(a instanceof GameData.ArmorInfo)) return "";
+            GameData.ArmorInfo ai = (GameData.ArmorInfo) a;
+            return (ai.isShield ? "Shield" : armorCategory(ai) + " armor") + ". " + armorAcText(ai) + ".";
+        }
+        case WEAPONS: {
+            WeaponEntry w = builtinWeapon(name);
+            if (w == null) return "";
+            return w.category + " weapon.\nDamage: " + w.damage
+                    + "\nProperties: " + (w.properties.isEmpty() ? "—" : String.join(", ", w.properties))
+                    + "\nMastery: " + w.mastery + "\nWeight: " + w.weight + "   Cost: " + w.cost;
+        }
+        case ITEMS:
+            return App.ITEM_PRESETS.getOrDefault(name, "").replace(" Placeholder description.", "");
+        default:
+            return "";
+    }
+}
+
+// Deleting a custom tag strips it from every homebrew asset
+static void removeTagFromAssets(String tag) {
+    for (String c : CATEGORIES) {
+        for (Map<String, Object> a : DATA.get(c)) {
+            Object t = a.get("tags");
+            if (t instanceof List) ((List<?>) t).removeIf(x -> String.valueOf(x).equalsIgnoreCase(tag));
+        }
+    }
+    save();
 }
 
 // ===============================================================
@@ -1284,6 +1583,14 @@ static String summary(String cat, Map<String, Object> a) {
             String casting = str(a, "spellcasting");
             p.add("None".equals(casting) || casting.isEmpty() ? "No spellcasting" : casting + " caster");
             p.add(plural(entries(a, "features").size(), "feature"));
+            break;
+        }
+        case FEATS: {
+            String type = str(a, "featType").isEmpty() ? FEAT_GENERAL : str(a, "featType");
+            p.add(FEAT_EPIC.equals(type) ? "Epic Boon" : type + " feat");
+            List<String> st = list(a, "abilityOptions");
+            if (!st.isEmpty()) p.add("+1 " + String.join("/", st));
+            if (bool(a, "repeatable")) p.add("Repeatable");
             break;
         }
         case SUBCLASSES:

@@ -45,6 +45,7 @@ class LevelUpPanel {
         for (Map.Entry<?, ?> en : ((Map<?, ?>) all.get(index)).entrySet()) copy.put(String.valueOf(en.getKey()), en.getValue());
         if (CharacterStorage.recLevel(copy) >= FeatData.MAX_LEVEL) return;
         rec = copy;
+        Tags.setOwned(null); // level-up pickers follow the content filters (Asset Library > Tags & Filters)
         charIndex = index;
         showChooseStep();
         outerLayout.show(outerCards, "LEVEL_UP");
@@ -226,6 +227,7 @@ class LevelUpPanel {
             Map<String, String> subInfo = new LinkedHashMap<>();
             for (Map<String, Object> s : CustomAssets.subclassesFor(cls)) {
                 if (CustomAssets.intVal(s, "subclassLevel", 3) > newClassLevel) continue;
+                if (!Tags.allowedAsset(CustomAssets.SUBCLASSES, s)) continue;
                 String n = CustomAssets.str(s, "name");
                 subNames.add(n);
                 StringBuilder sb = new StringBuilder(CustomAssets.str(s, "description"));
@@ -377,12 +379,14 @@ class LevelUpPanel {
             Map<String, String> infoMap = new LinkedHashMap<>();
             if (epic) {
                 for (Feat f : FeatData.EPIC_BOONS.values()) {
+                    if (!Tags.allowed(CustomAssets.FEATS, f.name)) continue;
                     if (f.repeatable || !taken.contains(f.name)) { names.add(f.name); infoMap.put(f.name, f.infoText()); }
                 }
             } else {
                 names.add(FeatData.ASI_NAME);
                 infoMap.put(FeatData.ASI_NAME, FeatData.ASI_DESCRIPTION);
                 for (Feat f : FeatData.GENERAL_FEATS.values()) {
+                    if (!Tags.allowed(CustomAssets.FEATS, f.name)) continue;
                     if (f.repeatable || !taken.contains(f.name)) { names.add(f.name); infoMap.put(f.name, f.infoText()); }
                 }
             }
@@ -808,7 +812,8 @@ class LevelUpPanel {
 
     private static List<Spell> filter(List<Spell> spells, Set<String> exclude) {
         List<Spell> out = new ArrayList<>();
-        for (Spell s : spells) if (!exclude.contains(s.name)) out.add(s);
+        // ...and spells hidden by the content filters (Tags & Filters); owned spells never pass through here
+        for (Spell s : spells) if (!exclude.contains(s.name) && Tags.allowed(CustomAssets.SPELLS, s.name)) out.add(s);
         return out;
     }
 
@@ -1101,7 +1106,9 @@ class LevelUpPanel {
 
     private static List<String> multiclassChoices(Map<String, Integer> classLevels) {
         List<String> out = new ArrayList<>();
-        for (String c : FeatData.multiclassOptions()) if (!classLevels.containsKey(c)) out.add(c);
+        for (String c : FeatData.multiclassOptions()) {
+            if (!classLevels.containsKey(c) && Tags.allowed(CustomAssets.CLASSES, c)) out.add(c);
+        }
         return out;
     }
 

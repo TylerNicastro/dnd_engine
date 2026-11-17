@@ -699,7 +699,7 @@ public class App {
                 int spellLevel = "CANTRIPS".equals(item.type) ? 0 : 1;
                 List<String> names = new ArrayList<>();
                 Map<String, String> infoMap = new LinkedHashMap<>();
-                for (Spell sp : SpellData.classSpells(className, spellLevel, spellLevel)) {
+                for (Spell sp : Tags.visibleSpells(SpellData.classSpells(className, spellLevel, spellLevel))) {
                     names.add(sp.name);
                     infoMap.put(sp.name, sp.infoText());
                 }
@@ -2321,9 +2321,15 @@ public class App {
         JPanel list = new JPanel(new GridLayout(0, 1, 0, 4));
         list.setOpaque(false);
         // Homebrew items / weapons / armor from the Asset Library first, then the standard presets
+        // (minus anything whose tags are turned off in the Asset Library's Tags & Filters)
         List<String[]> presets = new ArrayList<>();
         for (String[] hb : CustomAssets.equipmentPresets()) presets.add(new String[]{hb[0], "Homebrew · " + hb[1]});
-        for (Map.Entry<String, String> en : ITEM_PRESETS.entrySet()) presets.add(new String[]{en.getKey(), en.getValue()});
+        for (Map.Entry<String, String> en : ITEM_PRESETS.entrySet()) {
+            String cat = CustomAssets.builtinWeapon(en.getKey()) != null ? CustomAssets.WEAPONS
+                    : GameData.ARMOR_AC.containsKey(en.getKey()) ? CustomAssets.ARMOR : CustomAssets.ITEMS;
+            if (Tags.allowed(cat, en.getKey())) presets.add(new String[]{en.getKey(), en.getValue()});
+        }
+        presets.removeIf(p -> p[1].startsWith("Homebrew · ") && !homebrewEquipmentAllowed(p[0]));
         for (String[] en : presets) {
             JButton row = new JButton("<html><div style='width:250px'><b>" + escapeHtml(en[0])
                     + "</b><br><span style='color:#aaa5a0; font-size:9px'>" + escapeHtml(en[1]) + "</span></div></html>");
@@ -2354,6 +2360,14 @@ public class App {
         body.add(scroll, BorderLayout.CENTER);
 
         close[0] = showSheetOverlay(anchor, "Add Equipment", body, customName);
+    }
+
+    private static boolean homebrewEquipmentAllowed(String name) {
+        for (String cat : new String[]{CustomAssets.ITEMS, CustomAssets.WEAPONS, CustomAssets.ARMOR}) {
+            Map<String, Object> a = CustomAssets.findByName(cat, name);
+            if (a != null) return Tags.allowedAsset(cat, a);
+        }
+        return true;
     }
 
     // ---------------- Conditions ----------------
@@ -2423,7 +2437,7 @@ public class App {
             List<String> options = new ArrayList<>(Arrays.asList(CONDITION_PRESETS));
             for (String hb : CustomAssets.conditionNames()) if (!options.contains(hb)) options.add(hb); // homebrew conditions
             for (String cond : options) {
-                if (conditions.contains(cond)) continue;
+                if (conditions.contains(cond) || !Tags.allowed(CustomAssets.CONDITIONS, cond)) continue;
                 JButton b = overlayButton(cond, false);
                 b.addActionListener(ev -> {
                     List<String> next = new ArrayList<>(conditions);
@@ -5281,7 +5295,7 @@ public class App {
             EquipmentPackage pkg = GameData.BACKGROUND_EQUIPMENT.get(draft.background);
             if (pkg != null) {
                 for (EquipmentChoice c : pkg.choices) {
-                    List<String> options = c.weaponPool != null ? WeaponData.weaponsInPool(c.weaponPool) : Arrays.asList(c.options);
+                    List<String> options = c.weaponPool != null ? Tags.visible(CustomAssets.WEAPONS, WeaponData.weaponsInPool(c.weaponPool)) : Arrays.asList(c.options);
                     Map<String, String> info = c.weaponPool != null ? WeaponData.weaponInfoMap(options) : null;
 
                     JPanel section = new JPanel();
@@ -5446,7 +5460,7 @@ public class App {
             EquipmentPackage pkg = GameData.CLASS_EQUIPMENT.get(draft.characterClass);
             if (pkg != null) {
                 for (EquipmentChoice c : pkg.choices) {
-                    List<String> options = c.weaponPool != null ? WeaponData.weaponsInPool(c.weaponPool) : Arrays.asList(c.options);
+                    List<String> options = c.weaponPool != null ? Tags.visible(CustomAssets.WEAPONS, WeaponData.weaponsInPool(c.weaponPool)) : Arrays.asList(c.options);
                     Map<String, String> info = c.weaponPool != null ? WeaponData.weaponInfoMap(options) : null;
 
                     JPanel section = new JPanel();
@@ -5996,11 +6010,13 @@ public class App {
         wizard.add(sidebarWrap, BorderLayout.EAST);
 
         Runnable reset = () -> {
-            // Pick up homebrew species / classes / backgrounds added or changed in the Asset Library
-            speciesCheckList.setOptions.accept(new ArrayList<>(GameData.SPECIES_INFO.keySet()), GameData.SPECIES_INFO);
+            // Pick up homebrew species / classes / backgrounds added or changed in the Asset Library,
+            // minus anything whose tags are turned off in Tags & Filters
+            Tags.setOwned(null);
+            speciesCheckList.setOptions.accept(Tags.visible(CustomAssets.SPECIES, GameData.SPECIES_INFO.keySet()), GameData.SPECIES_INFO);
             rebuildClassInfoMap.run();
-            classCheckList.setOptions.accept(new ArrayList<>(GameData.CLASS_INFO.keySet()), classInfoMap);
-            backgroundCheckList.setOptions.accept(new ArrayList<>(GameData.BACKGROUND_INFO.keySet()), GameData.BACKGROUND_INFO);
+            classCheckList.setOptions.accept(Tags.visible(CustomAssets.CLASSES, GameData.CLASS_INFO.keySet()), classInfoMap);
+            backgroundCheckList.setOptions.accept(Tags.visible(CustomAssets.BACKGROUNDS, GameData.BACKGROUND_INFO.keySet()), GameData.BACKGROUND_INFO);
 
             editIndexHolder[0] = null;
             touchedSpecies[0] = false;
@@ -6216,6 +6232,17 @@ public class App {
             draft.asiIncreases = CharacterStorage.recAsiIncreases(rec);
             draft.backgroundPackage = CharacterStorage.recStr(rec, "backgroundPackage");
             draft.classPackage = CharacterStorage.recStr(rec, "classPackage");
+
+            // Content filters never take anything away from an existing character: its own picks stay
+            // visible in the pickers even if their tags are turned off
+            List<String> owned = new ArrayList<>(Arrays.asList(draft.species, draft.characterClass, draft.background));
+            owned.addAll(draft.cantripsKnown);
+            owned.addAll(draft.spellsKnown);
+            owned.addAll(draft.equipment);
+            Tags.setOwned(owned);
+            speciesCheckList.setOptions.accept(Tags.visible(CustomAssets.SPECIES, GameData.SPECIES_INFO.keySet()), GameData.SPECIES_INFO);
+            classCheckList.setOptions.accept(Tags.visible(CustomAssets.CLASSES, GameData.CLASS_INFO.keySet()), classInfoMap);
+            backgroundCheckList.setOptions.accept(Tags.visible(CustomAssets.BACKGROUNDS, GameData.BACKGROUND_INFO.keySet()), GameData.BACKGROUND_INFO);
 
             // Prefill the persistent UI widgets that don't get rebuilt on every visit
             nameField.setText(draft.name);
