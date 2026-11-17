@@ -7,7 +7,7 @@ class CharacterStorage {
 static List<Object> loadSavedCharacters() {
     try {
         String content = new String(
-                java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("characters.json")),
+                java.nio.file.Files.readAllBytes(DataPaths.userFile("characters.json")),
                 java.nio.charset.StandardCharsets.UTF_8);
         Object parsed = new MiniJsonParser(content).parse();
         if (parsed instanceof Map) {
@@ -24,7 +24,7 @@ static void saveAllCharacters(List<Object> characters) {
     Map<String, Object> root = new LinkedHashMap<>();
     root.put("characters", characters);
     try {
-        java.nio.file.Files.write(java.nio.file.Paths.get("characters.json"),
+        java.nio.file.Files.write(DataPaths.userFile("characters.json"),
                 JsonUtil.toJson(root).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     } catch (Exception ex) {
         // best-effort save; ignore failures (e.g. read-only filesystem)

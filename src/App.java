@@ -21,15 +21,20 @@ public class App {
     static final Color TEXT_MUTED = new Color(170, 165, 160);
 
     public static void main(String[] args) throws Exception {
+        DataPaths.init(args); // no args on desktop; "--web --data=..." when run in the browser via CheerpJ
+        if (DataPaths.web) WebBridge.applyPendingImport();
         SpellData.loadExtraSpells();
         WeaponData.WEAPON_DB = WeaponData.loadWeaponDatabase();
         // Homebrew from the Asset Library merges into the rules tables after the built-in data loads
         CustomAssets.CHANGE_LISTENERS.add(App::refreshConditionPattern);
         CustomAssets.load();
         CustomAssets.applyToRuntime();
+        if (DataPaths.web) WebBridge.applyPendingPack();
         SwingUtilities.invokeLater(() -> {
             JFrame frame = new JFrame("D&D Engine");
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+            // In the browser the window fills the page, so drop CheerpJ's window title bar
+            if (DataPaths.web) frame.setUndecorated(true);
             frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
             frame.setSize(900, 600);
             frame.getContentPane().setBackground(BG_DARK);
@@ -3725,7 +3730,7 @@ public class App {
         if (!SPELL_ART_CACHE.containsKey(sp.imagePath)) {
             java.awt.image.BufferedImage img = null;
             try {
-                img = javax.imageio.ImageIO.read(new java.io.File(sp.imagePath));
+                img = javax.imageio.ImageIO.read(DataPaths.resource(sp.imagePath).toFile());
             } catch (Exception ex) {
                 // missing or unreadable art; fall back to the placeholder frame
             }

@@ -1,0 +1,8 @@
+# D&D Engine: all pages may be crawled.
+# Note: crawlers only read robots.txt at a domain's root. On a GitHub Pages project site
+# (tylernicastro.github.io/dnd_engine/) this file takes effect if the site moves to a custom domain
+# or a user site; the <meta name="robots"> tag in index.html applies either way.
+User-agent: *
+Allow: /
+
+Sitemap: https://tylernicastro.github.io/dnd_engine/sitemap.xml

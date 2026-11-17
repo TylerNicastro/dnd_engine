@@ -600,7 +600,7 @@ private static void commit() {
 static void load() {
     for (String c : CATEGORIES) DATA.get(c).clear();
     try {
-        java.nio.file.Path p = java.nio.file.Paths.get(FILE);
+        java.nio.file.Path p = DataPaths.userFile(FILE);
         if (!java.nio.file.Files.exists(p)) return;
         String content = new String(java.nio.file.Files.readAllBytes(p), java.nio.charset.StandardCharsets.UTF_8);
         Object parsed = new MiniJsonParser(content).parse();
@@ -612,7 +612,7 @@ static void load() {
 
 static void save() {
     try {
-        java.nio.file.Files.write(java.nio.file.Paths.get(FILE),
+        java.nio.file.Files.write(DataPaths.userFile(FILE),
                 JsonUtil.toPrettyJson(packOf(Arrays.asList(CATEGORIES))).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     } catch (Exception ex) {
         // best-effort save (e.g. read-only folder); the session keeps working from memory
@@ -676,7 +676,7 @@ static int exportPack(Collection<String> cats, String path) throws java.io.IOExc
     Map<String, Object> pack = packOf(cats);
     int n = 0;
     for (String c : cats) n += DATA.get(c).size();
-    java.nio.file.Files.write(java.nio.file.Paths.get(path),
+    java.nio.file.Files.write(DataPaths.userFile(path),
             JsonUtil.toPrettyJson(pack).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     return n;
 }

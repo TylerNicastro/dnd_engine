@@ -11,7 +11,7 @@ static WeaponDatabase loadWeaponDatabase() {
     WeaponDatabase db = new WeaponDatabase();
     try {
         String content = new String(
-                java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("weapons.json")),
+                java.nio.file.Files.readAllBytes(DataPaths.resource("weapons.json")),
                 java.nio.charset.StandardCharsets.UTF_8);
         Object parsed = new MiniJsonParser(content).parse();
         if (parsed instanceof Map) {

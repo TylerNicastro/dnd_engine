@@ -1250,7 +1250,7 @@ private void showImport(Component anchor) {
 
     JTextField path = App.overlayField("", 30);
     List<String> files = new ArrayList<>();
-    try (java.nio.file.DirectoryStream<java.nio.file.Path> ds = java.nio.file.Files.newDirectoryStream(java.nio.file.Paths.get("."), "*.json")) {
+    try (java.nio.file.DirectoryStream<java.nio.file.Path> ds = java.nio.file.Files.newDirectoryStream(DataPaths.userDirectory(), "*.json")) {
         for (java.nio.file.Path p : ds) {
             String n = p.getFileName().toString();
             if (!NON_PACK_FILES.contains(n)) files.add(n);
@@ -1313,7 +1313,7 @@ private void showImport(Component anchor) {
                 return;
             }
             try {
-                json = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(p)), java.nio.charset.StandardCharsets.UTF_8);
+                json = new String(java.nio.file.Files.readAllBytes(DataPaths.userFile(p)), java.nio.charset.StandardCharsets.UTF_8);
             } catch (Exception ex) {
                 error.setText("Couldn't read \"" + p + "\" (" + ex.getClass().getSimpleName() + ").");
                 return;
@@ -1356,7 +1356,7 @@ private void showExport(Component anchor) {
     add(body, overlayLabel("Save as"));
     JTextField path = App.overlayField("homebrew_pack.json", 30);
     add(body, path);
-    add(body, overlayHint("Relative paths are saved next to the app: " + java.nio.file.Paths.get(".").toAbsolutePath().normalize()));
+    add(body, overlayHint("Relative paths are saved next to the app: " + DataPaths.userDirectory().toAbsolutePath().normalize()));
 
     JLabel error = new JLabel(" ");
     error.setForeground(App.ACCENT_HOVER);
@@ -1388,12 +1388,12 @@ private void showExport(Component anchor) {
             return;
         }
         if (!p.toLowerCase().endsWith(".json")) p += ".json";
-        String fileName = java.nio.file.Paths.get(p).getFileName().toString();
+        String fileName = DataPaths.userFile(p).getFileName().toString();
         if (NON_PACK_FILES.contains(fileName)) {
             error.setText("\"" + fileName + "\" is one of the app's own data files; pick another name.");
             return;
         }
-        if (java.nio.file.Files.exists(java.nio.file.Paths.get(p)) && !overwriteOk[0]) {
+        if (java.nio.file.Files.exists(DataPaths.userFile(p)) && !overwriteOk[0]) {
             overwriteOk[0] = true;
             error.setText("\"" + p + "\" already exists. Click Export again to overwrite it.");
             return;
@@ -1401,7 +1401,7 @@ private void showExport(Component anchor) {
         try {
             int n = CustomAssets.exportPack(chosen, p);
             close[0].run();
-            statusLabel.setText("Exported " + n + " assets to " + java.nio.file.Paths.get(p).toAbsolutePath().normalize() + ".");
+            statusLabel.setText("Exported " + n + " assets to " + DataPaths.userFile(p).toAbsolutePath().normalize() + ".");
         } catch (Exception ex) {
             error.setText("Couldn't write \"" + p + "\" (" + ex.getClass().getSimpleName() + ").");
         }

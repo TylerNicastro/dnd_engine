@@ -830,7 +830,7 @@ static List<String> detectConditions(String text) {
 static void loadExtraSpells() {
     try {
         String content = new String(
-                java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("spells.json")),
+                java.nio.file.Files.readAllBytes(DataPaths.resource("spells.json")),
                 java.nio.charset.StandardCharsets.UTF_8);
         Object parsed = new MiniJsonParser(content).parse();
         if (!(parsed instanceof Map)) return;
