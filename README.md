@@ -17,7 +17,9 @@ A fan-made character builder and campaign toolkit for Dungeons & Dragons 5th Edi
 
 ### Desktop
 
-You need a JDK (version 11 or newer).
+Ready-made download: [dnd_engine-desktop.zip](https://tylernicastro.github.io/dnd_engine/download.html) (needs Java 11 or newer; see the Download page for Windows, macOS and Linux steps).
+
+To run from source you need a JDK (version 11 or newer).
 
 ```bash
 javac -encoding UTF-8 -d bin src/*.java
@@ -35,7 +37,7 @@ bash web/build.sh        # or: powershell web\build.ps1
 cd web && python3 -m http.server 8000
 ```
 
-Then open http://localhost:8000/. In the browser, your data is stored locally in your browser's storage. Pushes to `main` are deployed to GitHub Pages automatically (`.github/workflows/pages.yml`).
+Then open http://localhost:8000/. In the browser, your data is stored locally in your browser's storage; use **Backup & Restore** on the app's main menu to export or import a JSON backup. Pushes to `main` are deployed to GitHub Pages automatically (`.github/workflows/pages.yml`).
 
 ## Project layout
 

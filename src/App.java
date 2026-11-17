@@ -22,14 +22,12 @@ public class App {
 
     public static void main(String[] args) throws Exception {
         DataPaths.init(args); // no args on desktop; "--web --data=..." when run in the browser via CheerpJ
-        if (DataPaths.web) WebBridge.applyPendingImport();
         SpellData.loadExtraSpells();
         WeaponData.WEAPON_DB = WeaponData.loadWeaponDatabase();
         // Homebrew from the Asset Library merges into the rules tables after the built-in data loads
         CustomAssets.CHANGE_LISTENERS.add(App::refreshConditionPattern);
         CustomAssets.load();
         CustomAssets.applyToRuntime();
-        if (DataPaths.web) WebBridge.applyPendingPack();
         SwingUtilities.invokeLater(() -> {
             JFrame frame = new JFrame("D&D Engine");
             frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -120,11 +118,28 @@ public class App {
         pGbc.gridx = 1; buttonPanel.add(btnCombat, pGbc);
         pGbc.gridx = 2; buttonPanel.add(btnAssets, pGbc);
 
+        // Backup & Restore: Export / Import JSON of all characters and homebrew (browser download/upload on the web)
+        JButton btnBackup = overlayButton("Backup & Restore (Export / Import JSON)", false);
+        btnBackup.setToolTipText("Save all characters and homebrew to a .json file, or restore one");
+        btnBackup.addActionListener(e -> Backup.showOverlay(btnBackup));
+        JPanel backupRow = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        backupRow.setBackground(BG_DARK);
+        backupRow.add(btnBackup);
+
+        JPanel lower = new JPanel();
+        lower.setLayout(new BoxLayout(lower, BoxLayout.Y_AXIS));
+        lower.setBackground(BG_DARK);
+        buttonPanel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        backupRow.setAlignmentX(Component.CENTER_ALIGNMENT);
+        lower.add(buttonPanel);
+        lower.add(Box.createRigidArea(new Dimension(0, 28)));
+        lower.add(backupRow);
+
         gbc.gridy = 1;
         gbc.weighty = 0.6;
         gbc.anchor = GridBagConstraints.NORTH;
         gbc.insets = new Insets(40, 0, 0, 0);
-        panel.add(buttonPanel, gbc);
+        panel.add(lower, gbc);
 
         panel.addComponentListener(new ComponentAdapter() {
             @Override

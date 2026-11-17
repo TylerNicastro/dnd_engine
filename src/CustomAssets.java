@@ -643,13 +643,32 @@ static void load() {
 
 static void save() {
     try {
-        Map<String, Object> root = packOf(Arrays.asList(CATEGORIES));
-        root.put("tagSettings", Tags.toJson()); // campaign content filters, custom tags, built-in tag edits
         java.nio.file.Files.write(DataPaths.userFile(FILE),
-                JsonUtil.toPrettyJson(root).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                JsonUtil.toPrettyJson(saveData()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
     } catch (Exception ex) {
         // best-effort save (e.g. read-only folder); the session keeps working from memory
     }
+}
+
+// Everything custom_assets.json holds: all homebrew plus tag settings
+static Map<String, Object> saveData() {
+    Map<String, Object> root = packOf(Arrays.asList(CATEGORIES));
+    root.put("tagSettings", Tags.toJson()); // campaign content filters, custom tags, built-in tag edits
+    return root;
+}
+
+// Replaces all homebrew and tag settings (restoring a backup), then re-applies the rules
+static void replaceAll(Map<?, ?> data) throws java.io.IOException {
+    java.nio.file.Files.write(DataPaths.userFile(FILE),
+            JsonUtil.toPrettyJson(data).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    load();
+    applyToRuntime();
+}
+
+static int totalCount() {
+    int n = 0;
+    for (String c : CATEGORIES) n += count(c);
+    return n;
 }
 
 static Map<String, Object> packOf(Collection<String> cats) {

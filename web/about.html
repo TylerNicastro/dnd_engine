@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>About &amp; Guide · D&amp;D Engine</title>
+<meta name="description" content="What D&amp;D Engine is, what it can do, and how to use it: character creation, level up, the Asset Library, tags and content filters, browser saving and JSON backups.">
+<meta name="robots" content="index, follow">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#1E202C">
+<link rel="canonical" href="https://tylernicastro.github.io/dnd_engine/about.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="D&amp;D Engine">
+<meta property="og:title" content="About &amp; Guide · D&amp;D Engine">
+<meta property="og:description" content="How to use D&amp;D Engine, the free D&amp;D 2024 character builder and homebrew toolkit.">
+<meta property="og:url" content="https://tylernicastro.github.io/dnd_engine/about.html">
+<meta property="og:image" content="https://tylernicastro.github.io/dnd_engine/og-image.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpolygon points='32,3 59,18 59,46 32,61 5,46 5,18' fill='%23252836' stroke='%23D4AF37' stroke-width='4'/%3E%3Ctext x='32' y='42' font-family='Georgia,serif' font-size='26' font-weight='700' fill='%23D4AF37' text-anchor='middle'%3E20%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site" id="siteHeader">
+  <div class="bar">
+    <a class="brand" href="./" aria-label="D&amp;D Engine home">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><polygon points="32,3 59,18 59,46 32,61 5,46 5,18" fill="#252836" stroke="#D4AF37" stroke-width="4"/><text x="32" y="42" font-family="Georgia,serif" font-size="26" font-weight="700" fill="#D4AF37" text-anchor="middle">20</text></svg>
+      <span>D&amp;D Engine</span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="./">App</a>
+      <a href="about.html" aria-current="page">Guide</a>
+      <a href="download.html">Download</a>
+    </nav>
+    <div class="search" id="search" role="search">
+      <label class="sr-only" for="q">Search this website</label>
+      <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="q" type="search" autocomplete="off" spellcheck="false" enterkeyhint="go"
+             placeholder="Search the site: guide, backups, download, privacy…"
+             role="combobox" aria-expanded="false" aria-controls="resultList" aria-autocomplete="list">
+      <button class="clear" id="qClear" type="button" aria-label="Clear search" hidden>&times;</button>
+      <div class="results" id="results" hidden><ul id="resultList" role="listbox" aria-label="Pages and sections"></ul></div>
+    </div>
+  </div>
+</header>
+
+<main id="main" class="page">
+  <article class="doc">
+    <span class="eyebrow">About / Guide</span>
+    <h1>How D&amp;D Engine works</h1>
+    <p class="lead">D&amp;D Engine is a free, unofficial character builder and homebrew toolkit for Dungeons &amp; Dragons using the 2024 rules (often called 5.5e). It runs in your browser or as a desktop app, and your data stays on your device.</p>
+
+    <nav class="toc" aria-label="On this page">
+      <strong>On this page</strong>
+      <ul>
+        <li><a href="#what">What it is</a></li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#using">How to use it</a></li>
+        <li><a href="#homebrew">Asset Library &amp; homebrew</a></li>
+        <li><a href="#tags">Tags &amp; content filters</a></li>
+        <li><a href="#saving">Browser saving</a></li>
+        <li><a href="#backups">JSON backups</a></li>
+        <li><a href="#faq">FAQ</a></li>
+      </ul>
+    </nav>
+
+    <h2 id="what">What is D&amp;D Engine?</h2>
+    <p>It's a Java application that handles the bookkeeping of building and playing a character: ability scores, proficiencies, spells and spell slots, hit points, feats and equipment. It knows the 2024 rules for character creation and leveling, so it can offer the right choices at each step and explain where every number comes from.</p>
+    <p>The same program runs in two places:</p>
+    <ul>
+      <li><strong>In your browser</strong> on the <a href="./">Main App</a> page. It uses <a href="https://cheerpj.com/" rel="noopener">CheerpJ</a> to run Java inside the page, so there's nothing to install.</li>
+      <li><strong>On your computer</strong> as a desktop app for Windows, macOS or Linux. See <a href="download.html">Download</a>.</li>
+    </ul>
+    <p>It's a fan project, not an official product. The rules text in it is short paraphrased summaries, not the full books. See the <a href="disclaimer.html">Fan Content Disclaimer</a>.</p>
+
+    <h2 id="features">Features</h2>
+    <div class="grid">
+      <div class="card"><h3>Character wizard</h3><p>Step by step: species, class, ability scores (point buy, rolled or custom), background, skills, languages, spells and starting equipment.</p></div>
+      <div class="card"><h3>Character sheet</h3><p>Stats, skills, spells and slots, equipment, coins and conditions. Click any value to see what it is and where it comes from.</p></div>
+      <div class="card"><h3>Level up</h3><p>Hit points, multiclassing, feats and epic boons, new spells and spell swaps, following the 2024 rules.</p></div>
+      <div class="card"><h3>Asset Library</h3><p>Browse every built-in spell, feat, class, species, background, condition and item, and create your own homebrew.</p></div>
+      <div class="card"><h3>Tags &amp; filters</h3><p>Every asset is tagged by source. Turn a tag off to keep it out of character creation and level up.</p></div>
+      <div class="card"><h3>Maps &amp; combat</h3><p>Grid maps with walls, doors and clickable encounter pins, linked to your NPCs.</p></div>
+    </div>
+
+    <h2 id="using">How to use the app</h2>
+    <ol>
+      <li><strong>Launch it.</strong> On the <a href="./">Main App</a> page, click <em>Launch the app</em>. The first launch downloads the Java runtime and can take a minute.</li>
+      <li><strong>Create a character.</strong> Choose <em>Characters</em> on the main menu, then add a new player character. The wizard walks through each step; the panel on the right explains every option, and you can jump back to any step from the progress bar.</li>
+      <li><strong>Use the sheet.</strong> Open a character to see their sheet. Click stats, skills, spells, items or conditions for details. Track hit points, spell slots, coins and conditions as you play.</li>
+      <li><strong>Level up.</strong> From the sheet, choose <em>Level Up</em>. Pick which class gains the level (or multiclass), then make the choices that level grants.</li>
+      <li><strong>Browse and build homebrew.</strong> Choose <em>Assets</em> on the main menu to open the Asset Library.</li>
+    </ol>
+    <p>Everything stays in one window: details, pickers and confirmations open as panels inside the app.</p>
+
+    <h2 id="homebrew">Asset Library &amp; homebrew</h2>
+    <p>The Asset Library lists every asset in one place: the built-in official content and anything you've created. The <strong>All</strong> tab shows everything together with category badges; the other tabs show one category each.</p>
+    <ul>
+      <li><strong>Search</strong> with the bar at the top of the library. It searches every category at once: names, rules text and tags.</li>
+      <li><strong>Sort</strong> by name, by tag / source, or by level / category.</li>
+      <li>On the <strong>Spells</strong> tab, filter by school, spell level and class with the chips under the title.</li>
+      <li><strong>Create homebrew</strong> with the <em>+ New</em> button on any category tab: items, weapons, armor, spells, feats, species, backgrounds, classes, subclasses, conditions, NPCs and maps. Homebrew joins the same lists the wizard, level up and the sheet use.</li>
+      <li><strong>Share homebrew</strong> with the library's <em>Export JSON</em> and <em>Import JSON</em> buttons, which save or load a homebrew pack.</li>
+    </ul>
+
+    <h2 id="tags">Tags &amp; content filters</h2>
+    <p>Every asset has tags. Built-in content starts with <code>OFFICIAL</code> plus its sourcebook (<code>CORE RULES</code>, <code>XANATHAR'S GUIDE</code>, <code>TASHA'S CAULDRON</code> and so on). Homebrew starts with <code>HOMEBREW</code>. Spells also get automatic tags for their school, level and class lists.</p>
+    <p>Use the tag button on any asset to add or remove tags, or create your own (for example <em>Banned</em> or <em>Setting: Eberron</em>). In the library, <strong>Tags &amp; Filters</strong> lets you turn tags off for your campaign. Anything carrying a turned-off tag is hidden from the character wizard, level up, and the equipment and condition pickers. Characters keep anything they already have.</p>
+
+    <h2 id="saving">Browser saving</h2>
+    <p>In the browser version, the app saves automatically as you go. Your characters, homebrew, tags and filters are stored in your browser's storage (IndexedDB) <strong>on this device only</strong>. Nothing is uploaded; there are no accounts and no server copy.</p>
+    <p>That means your data is <strong>not</strong> there if you:</p>
+    <ul>
+      <li>clear this site's data or your browser history,</li>
+      <li>use a private or incognito window, or</li>
+      <li>open the site in a different browser or on a different device.</li>
+    </ul>
+    <p>Browsers can also clear site storage on their own when a device runs low on space. Export a backup now and then.</p>
+    <p>The desktop version saves to files next to the app instead: <code>characters.json</code> and <code>custom_assets.json</code>.</p>
+
+    <h2 id="backups">JSON backups (Export / Import)</h2>
+    <p>Backups are made inside the app. On the app's main menu, click <strong>Backup &amp; Restore (Export / Import JSON)</strong>.</p>
+    <ul>
+      <li><strong>Export JSON</strong> saves one file containing every character and all your homebrew, including tags and content filters. In the browser it's downloaded like any other file; on the desktop it's saved in the app's folder.</li>
+      <li><strong>Import JSON</strong> loads a file and asks you to confirm before changing anything. It accepts:
+        <ul>
+          <li>a <strong>full backup</strong>, which replaces all characters and homebrew;</li>
+          <li>a <strong>characters.json</strong> file, which replaces your characters and keeps your homebrew;</li>
+          <li>a <strong>homebrew pack</strong>, which adds its assets to your library (name clashes are kept and renamed).</li>
+        </ul>
+      </li>
+    </ul>
+    <p>Backups are plain JSON, so they work in both versions. Export in the browser and import on the desktop, or the other way round, to move your data.</p>
+
+    <h2 id="faq">FAQ</h2>
+    <h3>Is it free?</h3>
+    <p>Yes. There are no ads, paywalls or paid features. The source code is on <a href="https://github.com/TylerNicastro/dnd_engine" rel="noopener">GitHub</a> under the MIT License.</p>
+    <h3>Does it work on a phone?</h3>
+    <p>It runs, but it's designed for larger screens. A tablet or computer works best; on a phone, turn it sideways.</p>
+    <h3>Does it work offline?</h3>
+    <p>The browser version needs a connection to download the Java runtime. The <a href="download.html">desktop version</a> works fully offline.</p>
+    <h3>Where are the full rules?</h3>
+    <p>D&amp;D Engine only includes short summaries. For the complete rules, use the official books or the free System Reference Document from Wizards of the Coast.</p>
+    <h3>I found a bug or a rules mistake.</h3>
+    <p>Please open an issue on <a href="https://github.com/TylerNicastro/dnd_engine/issues" rel="noopener">GitHub</a>. Your Dungeon Master's ruling always wins in the meantime.</p>
+  </article>
+</main>
+
+<footer class="site">
+  <div class="inner">
+    <nav aria-label="Site links">
+      <a href="./">Main App</a>
+      <a href="about.html" aria-current="page">About / Guide</a>
+      <a href="download.html">Download</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="terms.html">Terms of Service</a>
+      <a href="disclaimer.html">Fan Content Disclaimer</a>
+      <a href="https://github.com/TylerNicastro/dnd_engine">Source on GitHub</a>
+    </nav>
+    <p class="fan">D&amp;D Engine is unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC.</p>
+  </div>
+</footer>
+
+<script src="site.js"></script>
+</body>
+</html>

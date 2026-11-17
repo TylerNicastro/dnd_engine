@@ -3,8 +3,8 @@ import java.nio.file.Paths;
 
 // Where the app reads its bundled data and writes user data.
 //
-// Desktop (no arguments): both are the working directory, exactly as before
-//   (characters.json, custom_assets.json, weapons.json, spells.json next to the app).
+// Desktop (no arguments): both are the working directory (characters.json, custom_assets.json,
+//   weapons.json, spells.json next to the app). If spells.json isn't there, the jar's own folder is used.
 // Web (CheerpJ, started by web/index.html with "--web --data=/app/<site path>/"):
 //   - bundled read-only data (weapons.json, spells.json, spell art) comes from the site folder under /app/
 //   - user data (characters.json, custom_assets.json, exported packs) goes to /files/, which CheerpJ
@@ -28,6 +28,23 @@ static void init(String[] args) {
         }
     }
     if (web && dataDir.isEmpty()) dataDir = "/app/";
+    // Desktop jar started from another folder (e.g. double-clicked on macOS / Linux): use the jar's folder
+    if (!web && dataDir.isEmpty() && userDir.isEmpty() && !java.nio.file.Files.exists(Paths.get("spells.json"))) {
+        Path dir = appDirectory();
+        if (dir != null && java.nio.file.Files.exists(dir.resolve("spells.json"))) {
+            dataDir = userDir = withSlash(dir.toAbsolutePath().toString().replace('\\', '/'));
+        }
+    }
+}
+
+// Folder holding the running jar (or the folder above bin/ when run from classes); null if unknown
+private static Path appDirectory() {
+    try {
+        Path p = Paths.get(DataPaths.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+        return p.getParent();
+    } catch (Exception ex) {
+        return null;
+    }
 }
 
 private static String withSlash(String d) {

@@ -31,7 +31,8 @@ private final MapEditorPanel mapEditor;
 private final CardLayout innerLayout = new CardLayout();
 private final JPanel inner = new JPanel(innerLayout);
 
-private String category = CustomAssets.ITEMS;
+static final String ALL_CAT = "All"; // the first tab: every category combined
+private String category = ALL_CAT;
 private final JPanel tabColumn = new JPanel();
 private final JPanel listWrap = new JPanel();
 private final JTextField searchField = new JTextField();
@@ -135,9 +136,13 @@ static final class Entry {
     }
 }
 
-// Homebrew first (creation order), then the built-in assets
+// Homebrew first (creation order), then the built-in assets. ALL_CAT = every category.
 private static List<Entry> entriesFor(String cat) {
     List<Entry> out = new ArrayList<>();
+    if (ALL_CAT.equals(cat)) {
+        for (String c : CustomAssets.CATEGORIES) out.addAll(entriesFor(c));
+        return out;
+    }
     for (Map<String, Object> a : CustomAssets.all(cat)) out.add(Entry.homebrew(cat, a));
     for (String n : CustomAssets.builtinNames(cat)) out.add(Entry.builtin(cat, n));
     return out;
@@ -355,7 +360,9 @@ private void rebuildTabs() {
     head.setAlignmentX(Component.LEFT_ALIGNMENT);
     tabColumn.add(head);
     boolean searching = searching();
-    for (String cat : CustomAssets.CATEGORIES) {
+    List<String> tabs = new ArrayList<>(Collections.singletonList(ALL_CAT));
+    tabs.addAll(Arrays.asList(CustomAssets.CATEGORIES));
+    for (String cat : tabs) {
         boolean sel = cat.equals(category) && !searching;
         JPanel tab = new JPanel(new BorderLayout());
         tab.setBackground(sel ? App.SHEET_ROW_ALT : App.SHEET_CARD);
@@ -366,7 +373,11 @@ private void rebuildTabs() {
         JLabel name = new JLabel(cat);
         name.setForeground(sel ? App.GOLD : App.TEXT_LIGHT);
         name.setFont(new Font("SansSerif", Font.BOLD, 14));
-        int official = CustomAssets.builtinNames(cat).size(), homebrew = CustomAssets.count(cat);
+        int official = 0, homebrew = 0;
+        for (String c : ALL_CAT.equals(cat) ? CustomAssets.CATEGORIES : new String[]{cat}) {
+            official += CustomAssets.builtinNames(c).size();
+            homebrew += CustomAssets.count(c);
+        }
         JLabel count = new JLabel(String.valueOf(official + homebrew));
         count.setForeground(App.TEXT_MUTED);
         count.setFont(new Font("SansSerif", Font.PLAIN, 12));
@@ -381,11 +392,13 @@ private void rebuildTabs() {
             refresh();
         });
         tabColumn.add(tab);
-        tabColumn.add(Box.createRigidArea(new Dimension(0, 2)));
+        tabColumn.add(Box.createRigidArea(new Dimension(0, ALL_CAT.equals(cat) ? 10 : 2)));
     }
     tabColumn.revalidate();
     tabColumn.repaint();
-    createButton.setText("+ New " + CustomAssets.SINGULAR.get(category));
+    boolean all = ALL_CAT.equals(category);
+    createButton.setVisible(!all); // pick a category tab to create homebrew
+    if (!all) createButton.setText("+ New " + CustomAssets.SINGULAR.get(category));
 }
 
 private void rebuildFilter() {
@@ -396,10 +409,16 @@ private void rebuildFilter() {
 
     Object prev = filterCombo.getSelectedItem();
     filterCombo.removeAllItems();
+    boolean all = ALL_CAT.equals(category); // the All tab filters by category instead
     String key = CustomAssets.FILTER_KEYS.get(category);
-    boolean showFilter = key != null && !spells && !searching;
+    boolean showFilter = (key != null || all) && !spells && !searching;
     filterCombo.setVisible(showFilter);
-    if (showFilter) {
+    filterCombo.setToolTipText(all ? "Show one category" : "Filter this category");
+    if (showFilter && all) {
+        filterCombo.addItem(ALL);
+        for (String c : CustomAssets.CATEGORIES) filterCombo.addItem(c);
+        if (prev != null && Arrays.asList(CustomAssets.CATEGORIES).contains(String.valueOf(prev))) filterCombo.setSelectedItem(prev);
+    } else if (showFilter) {
         filterCombo.addItem(ALL);
         TreeSet<String> values = new TreeSet<>(this::filterOrder);
         for (Entry e : entries) if (e.filterValue != null) values.add(e.filterValue);
@@ -505,10 +524,10 @@ private void rebuildList() {
     String filter = filterCombo.isVisible() && filterCombo.getSelectedItem() != null ? String.valueOf(filterCombo.getSelectedItem()) : ALL;
     String tag = tagCombo.isVisible() && tagCombo.getSelectedItem() != null ? String.valueOf(tagCombo.getSelectedItem()) : ALL_TAGS;
     boolean spells = CustomAssets.SPELLS.equals(category);
+    boolean allTab = ALL_CAT.equals(category);
+    boolean multi = global || allTab; // rows from several categories: show category badges / group by category
 
-    List<Entry> pool = new ArrayList<>();
-    if (global) for (String c : CustomAssets.CATEGORIES) pool.addAll(entriesFor(c));
-    else pool.addAll(entriesFor(category));
+    List<Entry> pool = new ArrayList<>(entriesFor(global ? ALL_CAT : category));
 
     List<Entry> shown = new ArrayList<>();
     for (Entry e : pool) {
@@ -517,7 +536,7 @@ private void rebuildList() {
             for (String t : terms) if (!e.haystack().contains(t)) { ok = false; break; }
             if (!ok) continue;
         } else {
-            if (!ALL.equals(filter) && !filter.equals(e.filterValue)) continue;
+            if (!ALL.equals(filter) && !filter.equals(allTab ? e.cat : e.filterValue)) continue;
             if (!ALL_TAGS.equals(tag) && !Tags.containsCI(e.tags, tag)) continue;
             if (spells) {
                 if (!ALL.equals(spellSchool) && !spellSchool.equalsIgnoreCase(e.school)) continue;
@@ -528,9 +547,9 @@ private void rebuildList() {
         shown.add(e);
     }
     String sort = String.valueOf(sortCombo.getSelectedItem());
-    shown.sort(comparator(sort, global));
+    shown.sort(comparator(sort, multi));
 
-    listTitle.setText(global ? "Search results" : category);
+    listTitle.setText(global ? "Search results" : allTab ? "All Assets" : category);
     listCount.setText(global ? shown.size() + " match" + (shown.size() == 1 ? "" : "es") + " in all categories"
             : shown.size() == pool.size() ? pool.size() + " total" : shown.size() + " of " + pool.size());
 
@@ -538,12 +557,12 @@ private void rebuildList() {
     int n = 0;
     for (Entry e : shown) {
         if (n >= shownLimit) break;
-        String g = groupLabel(sort, e, global);
+        String g = groupLabel(sort, e, multi);
         if (g != null && !g.equals(lastGroup)) {
             listWrap.add(groupHeader(g));
             lastGroup = g;
         }
-        listWrap.add(assetRow(e, global));
+        listWrap.add(assetRow(e, multi));
         listWrap.add(Box.createRigidArea(new Dimension(0, 8)));
         n++;
     }
@@ -698,7 +717,15 @@ private JComponent assetRow(Entry e, boolean showCategory) {
         App.clickable(hidden, () -> showTagFilters(hidden, this::refresh));
         nameLine.add(hidden);
     }
-    String sum = (showCategory ? CustomAssets.SINGULAR.get(cat) + " · " : "") + e.summary;
+    if (showCategory) { // category badge (All tab / search results); click to open that tab
+        JLabel catBadge = badge(CustomAssets.SINGULAR.get(cat).toUpperCase(), App.TEXT_LIGHT);
+        catBadge.setOpaque(true);
+        catBadge.setBackground(App.SHEET_ROW_ALT);
+        catBadge.setToolTipText("Open the " + cat + " tab");
+        App.clickable(catBadge, () -> showCategory(cat));
+        nameLine.add(catBadge, 0);
+    }
+    String sum = e.summary;
     JLabel sub = new JLabel(sum.trim().isEmpty() ? " " : sum);
     sub.setForeground(App.TEXT_MUTED);
     sub.setFont(new Font("SansSerif", Font.PLAIN, 12));
@@ -2211,9 +2238,31 @@ private void showImport(Component anchor) {
     }
     Collections.sort(files);
 
-    add(body, overlayLabel("Pack file (path to a .json file)"));
-    add(body, path);
-    if (!files.isEmpty()) {
+    JTextArea paste = new JTextArea(5, 34);
+    JLabel error = new JLabel(" ");
+    if (DataPaths.web) {
+        // Browser: pick a file from the computer (fills the JSON box below)
+        add(body, overlayLabel("Pack file"));
+        JButton choose = App.overlayButton("Choose File…", false);
+        choose.addActionListener(e -> {
+            error.setText("Choose a .json file in your browser's file picker…");
+            WebBridge.pickTextFileAsync(text -> {
+                if (text == null) error.setText("The browser couldn't open a file.");
+                else if (text.isEmpty()) error.setText("No file chosen.");
+                else if (WebBridge.TOO_LARGE.equals(text)) error.setText("That file is larger than 8 MB.");
+                else {
+                    paste.setText(text);
+                    paste.setCaretPosition(0);
+                    error.setText("File loaded. Click Import to add it.");
+                }
+            });
+        });
+        add(body, choose);
+    } else {
+        add(body, overlayLabel("Pack file (path to a .json file)"));
+        add(body, path);
+    }
+    if (!files.isEmpty() && !DataPaths.web) {
         add(body, overlayHint("Packs found next to the app (click to pick):"));
         for (String n : files) {
             JLabel l = new JLabel("• " + n);
@@ -2226,7 +2275,6 @@ private void showImport(Component anchor) {
     }
     body.add(Box.createRigidArea(new Dimension(0, 10)));
     add(body, overlayLabel("…or paste pack JSON"));
-    JTextArea paste = new JTextArea(5, 34);
     paste.setLineWrap(true);
     paste.setBackground(App.SHEET_BG);
     paste.setForeground(App.TEXT_LIGHT);
@@ -2243,7 +2291,6 @@ private void showImport(Component anchor) {
     conflict.setMaximumSize(new Dimension(260, 30));
     add(body, conflict);
 
-    JLabel error = new JLabel(" ");
     error.setForeground(App.ACCENT_HOVER);
     error.setFont(new Font("SansSerif", Font.BOLD, 12));
     body.add(Box.createRigidArea(new Dimension(0, 8)));
@@ -2260,7 +2307,7 @@ private void showImport(Component anchor) {
         if (json.isEmpty()) {
             String p = path.getText().trim();
             if (p.isEmpty()) {
-                error.setText("Pick or type a pack file, or paste JSON.");
+                error.setText(DataPaths.web ? "Choose a file or paste JSON." : "Pick or type a pack file, or paste JSON.");
                 return;
             }
             try {
@@ -2304,10 +2351,11 @@ private void showExport(Component anchor) {
     }
     add(body, grid);
     body.add(Box.createRigidArea(new Dimension(0, 10)));
-    add(body, overlayLabel("Save as"));
+    add(body, overlayLabel(DataPaths.web ? "File name" : "Save as"));
     JTextField path = App.overlayField("homebrew_pack.json", 30);
     add(body, path);
-    add(body, overlayHint("Relative paths are saved next to the app: " + DataPaths.userDirectory().toAbsolutePath().normalize()));
+    add(body, overlayHint(DataPaths.web ? "The pack is downloaded by your browser."
+            : "Relative paths are saved next to the app: " + DataPaths.userDirectory().toAbsolutePath().normalize()));
 
     JLabel error = new JLabel(" ");
     error.setForeground(App.ACCENT_HOVER);
@@ -2339,6 +2387,19 @@ private void showExport(Component anchor) {
             return;
         }
         if (!p.toLowerCase().endsWith(".json")) p += ".json";
+        if (DataPaths.web) {
+            try {
+                String name = java.nio.file.Paths.get(p).getFileName().toString();
+                int n = 0;
+                for (String c : chosen) n += CustomAssets.count(c);
+                WebBridge.downloadFile(name, JsonUtil.toPrettyJson(CustomAssets.packOf(chosen)));
+                close[0].run();
+                statusLabel.setText("Downloaded " + n + " assets as " + name + ".");
+            } catch (Throwable ex) {
+                error.setText("The browser couldn't start the download (" + ex.getClass().getSimpleName() + ").");
+            }
+            return;
+        }
         String fileName = DataPaths.userFile(p).getFileName().toString();
         if (NON_PACK_FILES.contains(fileName)) {
             error.setText("\"" + fileName + "\" is one of the app's own data files; pick another name.");

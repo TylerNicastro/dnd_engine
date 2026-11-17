@@ -5,6 +5,8 @@ $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $Classes = Join-Path $Root "build\web-classes"
+$DesktopRoot = Join-Path $Root "build\desktop"
+$Desktop = Join-Path $DesktopRoot "dnd_engine"
 $Web = Join-Path $Root "web"
 
 if (Test-Path $Classes) { Remove-Item -Recurse -Force $Classes }
@@ -27,13 +29,14 @@ if (Test-Path $Art) {
     Copy-Item -Recurse $Art $WebArt
 }
 
-Write-Host "Exporting search index..."
-Push-Location $Root
-try {
-    java "-Djava.awt.headless=true" -cp $Classes SearchIndexExport (Join-Path $Web "search-index.json")
-    if ($LASTEXITCODE -ne 0) { throw "search index export failed" }
-} finally {
-    Pop-Location
-}
+Write-Host "Packaging web/dnd_engine-desktop.zip..."
+if (Test-Path $DesktopRoot) { Remove-Item -Recurse -Force $DesktopRoot }
+New-Item -ItemType Directory -Force $Desktop | Out-Null
+Copy-Item (Join-Path $Web "dnd_engine.jar"), (Join-Path $Root "weapons.json"), (Join-Path $Root "spells.json"),
+          (Join-Path $Root "README.md"), (Join-Path $Root "LICENSE") $Desktop
+if (Test-Path $Art) { Copy-Item -Recurse $Art (Join-Path $Desktop "art") }
+$Zip = Join-Path $Web "dnd_engine-desktop.zip"
+if (Test-Path $Zip) { Remove-Item -Force $Zip }
+Compress-Archive -Path $Desktop -DestinationPath $Zip
 
 Write-Host "Done. Output is in web/"

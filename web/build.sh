@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Builds the browser version into web/:
-#   web/dnd_engine.jar     the app, compiled for Java 11 (run in the browser by CheerpJ)
-#   web/weapons.json       bundled rules data the app reads at startup
+#   web/dnd_engine.jar           the app, compiled for Java 11 (run in the browser by CheerpJ)
+#   web/weapons.json             bundled rules data the app reads at startup
 #   web/spells.json
-#   web/search-index.json  rules/spells/feats/conditions/items for the site's search bar
+#   web/dnd_engine-desktop.zip   desktop download (same jar + data files), linked from download.html
 #
 # Usage (from anywhere):  bash web/build.sh
 # Preview locally:        cd web && python3 -m http.server 8000   then open http://localhost:8000/
@@ -12,6 +12,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLASSES="$ROOT/build/web-classes"
+DESKTOP="$ROOT/build/desktop/dnd_engine"
 WEB="$ROOT/web"
 
 rm -rf "$CLASSES"
@@ -30,7 +31,13 @@ if [ -d "$ROOT/art" ]; then
   cp -R "$ROOT/art" "$WEB/art"
 fi
 
-echo "Exporting search index..."
-(cd "$ROOT" && java -Djava.awt.headless=true -cp "$CLASSES" SearchIndexExport "$WEB/search-index.json")
+echo "Packaging web/dnd_engine-desktop.zip..."
+rm -rf "$ROOT/build/desktop"
+mkdir -p "$DESKTOP"
+cp "$WEB/dnd_engine.jar" "$ROOT/weapons.json" "$ROOT/spells.json" "$ROOT/README.md" "$ROOT/LICENSE" "$DESKTOP/"
+if [ -d "$ROOT/art" ]; then cp -R "$ROOT/art" "$DESKTOP/art"; fi
+rm -f "$WEB/dnd_engine-desktop.zip"
+# A jar without a manifest is a plain zip file
+jar --create --no-manifest --file "$WEB/dnd_engine-desktop.zip" -C "$ROOT/build/desktop" dnd_engine
 
 echo "Done. Output is in web/"

@@ -29,7 +29,7 @@ jobs:
           distribution: temurin
           java-version: "17"   # compiles with --release 11 for CheerpJ's Java 11 runtime
 
-      - name: Build jar, data files and search index
+      - name: Build jar, data files and desktop zip
         run: bash web/build.sh
 
       - name: Collect site files
