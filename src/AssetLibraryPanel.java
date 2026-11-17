@@ -39,6 +39,11 @@ private final JTextField searchField = new JTextField();
 private final JComboBox<String> sortCombo = new JComboBox<>(new String[]{SORT_NAME, SORT_SOURCE, SORT_LEVEL});
 private final JComboBox<String> filterCombo = new JComboBox<>();
 private final JComboBox<String> tagCombo = new JComboBox<>();
+// Per-category search (searches only the open tab; the top bar searches everything)
+private final JTextField tabSearch = new JTextField();
+private final JLabel tabSearchLabel = new JLabel();
+private JButton tabSearchClear;
+private final javax.swing.Timer tabSearchTimer = new javax.swing.Timer(150, e -> { shownLimit = PAGE; rebuildList(); });
 private final JPanel filterRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
 private final JPanel spellChips = new JPanel();
 private final JLabel statusLabel = new JLabel(" ");
@@ -229,6 +234,27 @@ private JComponent buildListView() {
     });
     statusLabel.setForeground(App.TEXT_MUTED);
     statusLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    tabSearchTimer.setRepeats(false);
+    tabSearchLabel.setForeground(App.TEXT_MUTED);
+    tabSearchLabel.setFont(new Font("SansSerif", Font.BOLD, 12));
+    App.styleTextField(tabSearch);
+    tabSearch.setFont(new Font("SansSerif", Font.PLAIN, 14));
+    tabSearch.setColumns(18);
+    tabSearch.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        public void insertUpdate(javax.swing.event.DocumentEvent e) { tabSearchTimer.restart(); }
+        public void removeUpdate(javax.swing.event.DocumentEvent e) { tabSearchTimer.restart(); }
+        public void changedUpdate(javax.swing.event.DocumentEvent e) { tabSearchTimer.restart(); }
+    });
+    tabSearch.addKeyListener(new KeyAdapter() {
+        @Override
+        public void keyPressed(KeyEvent e) {
+            if (e.getKeyCode() == KeyEvent.VK_ESCAPE) tabSearch.setText("");
+        }
+    });
+    filterRow.add(tabSearchLabel);
+    filterRow.add(tabSearch);
+    tabSearchClear = iconButton("✕", "Clear this search", () -> tabSearch.setText(""));
+    filterRow.add(tabSearchClear);
     filterRow.add(filterCombo);
     filterRow.add(tagCombo);
     filterRow.add(Box.createRigidArea(new Dimension(10, 0)));
@@ -389,6 +415,8 @@ private void rebuildTabs() {
             shownLimit = PAGE;
             searchField.setText("");
             searchTimer.stop();
+            tabSearch.setText("");
+            tabSearchTimer.stop();
             refresh();
         });
         tabColumn.add(tab);
@@ -439,6 +467,15 @@ private void rebuildFilter() {
         if (prevTag != null && ordered.contains(String.valueOf(prevTag))) tagCombo.setSelectedItem(prevTag);
     }
     filterRow.setVisible(!searching || !statusLabel.getText().trim().isEmpty());
+    // Category tabs get their own search box; the All tab uses the top bar's search
+    boolean tabSearchable = !searching && !ALL_CAT.equals(category);
+    tabSearchLabel.setVisible(tabSearchable);
+    tabSearch.setVisible(tabSearchable);
+    tabSearchClear.setVisible(tabSearchable);
+    if (tabSearchable) {
+        tabSearchLabel.setText("Search " + category + ":");
+        tabSearch.setToolTipText("Search only " + category.toLowerCase() + ": names, rules text, fields and tags");
+    }
     updatingFilter = false;
     rebuildSpellChips();
 }
@@ -528,6 +565,8 @@ private void rebuildList() {
     boolean multi = global || allTab; // rows from several categories: show category badges / group by category
 
     List<Entry> pool = new ArrayList<>(entriesFor(global ? ALL_CAT : category));
+    String tq = tabSearch.isVisible() ? tabSearch.getText().trim().toLowerCase() : "";
+    String[] tabTerms = tq.isEmpty() ? new String[0] : tq.split("\\s+");
 
     List<Entry> shown = new ArrayList<>();
     for (Entry e : pool) {
@@ -536,6 +575,9 @@ private void rebuildList() {
             for (String t : terms) if (!e.haystack().contains(t)) { ok = false; break; }
             if (!ok) continue;
         } else {
+            boolean ok = true;
+            for (String t : tabTerms) if (!e.haystack().contains(t)) { ok = false; break; }
+            if (!ok) continue;
             if (!ALL.equals(filter) && !filter.equals(allTab ? e.cat : e.filterValue)) continue;
             if (!ALL_TAGS.equals(tag) && !Tags.containsCI(e.tags, tag)) continue;
             if (spells) {
