@@ -817,7 +817,7 @@ public class App {
 
         Runnable rebuildCharacterList = () -> {
             listWrap.removeAll();
-            List<Object> characters = CharacterStorage.loadSavedCharacters();
+            List<Object> characters = CharacterStorage.loadWithIds(); // also applies one-time rule updates (2024 species speeds / HP)
 
             if (characters.isEmpty()) {
                 JLabel emptyLabel = new JLabel("No characters yet.", JLabel.CENTER);
@@ -1284,8 +1284,16 @@ public class App {
             if (!size.isEmpty()) rows.add(row("Size", size));
             if (!type.isEmpty()) rows.add(row("Creature type", type));
             rows.add(row("Speed", speed != null ? speed + " ft." : "—"));
+            int dv = SpeciesTraits.darkvision(rec);
+            rows.add(row("Darkvision", dv > 0 ? dv + " ft." : "—"));
+            String defenses = DamageRules.summary(SpeciesTraits.damageMods(rec));
+            if (!defenses.isEmpty()) rows.add(row("Damage", defenses));
+            List<String> traitNames = new ArrayList<>();
+            for (SpeciesTraits.Trait t : SpeciesTraits.traits(rec)) traitNames.add(t.name);
+            if (!traitNames.isEmpty()) rows.add(row("Traits", String.join(", ", traitNames)));
             showInfoOverlay(idGrid, species.isEmpty() ? "Species" : species + lineageSuffix, "Species",
-                    GameData.SPECIES_INFO.getOrDefault(species, ""), rows);
+                    GameData.SPECIES_INFO.getOrDefault(species, "")
+                            + (traitNames.isEmpty() ? "" : "\n\nEach trait is listed under Features & Traits; click one for its full rules."), rows);
         }));
         if (level < FeatData.MAX_LEVEL && onLevelUp != null) {
             idGrid.add(levelUpButton(level, onLevelUp));
@@ -1467,6 +1475,7 @@ public class App {
             rows.add(row(bodyLabel, bodyValue));
             if (shield > 0) rows.add(row(shieldName + " (held)", "+" + shield));
             else if (unheldShield) rows.add(row("Shield (not held)", "+0: put it in a hand under Hands & Attacks"));
+            if (SpeciesTraits.acBonus(rec) > 0) rows.add(row("Integrated Protection (Warforged)", "+" + SpeciesTraits.acBonus(rec)));
             rows.add(row("Armor Class", String.valueOf(ac)));
             showInfoOverlay(combatRow, "Armor Class", "Defense",
                     "How hard you are to hit. An attack hits if its roll equals or beats your AC. Comes from your best armor in Equipment (or 10 + DEX unarmored), plus a shield.", rows);
@@ -1507,6 +1516,8 @@ public class App {
             for (int i = 0; i < rolls.size(); i++) {
                 rows.add(row("Level " + (i + 2) + " (rolled " + rolls.get(i) + " + CON)", "+" + CharacterStorage.hpGainForRoll(rolls.get(i), conMod)));
             }
+            int speciesHp = SpeciesTraits.hpBonus(rec);
+            if (speciesHp > 0) rows.add(row("Dwarven Toughness (+1 per level)", "+" + speciesHp));
             rows.add(row("Hit Point Maximum", hp != null ? String.valueOf(hp) : "—"));
             showInfoOverlay(combatRow, "Hit Points", "CON modifier " + signed(conMod),
                     "How much damage you can take. At 0 HP you fall Unconscious and start making Death Saves. Your maximum grows by a hit die roll + CON modifier each level.", rows);
@@ -1926,7 +1937,14 @@ public class App {
         ITEM_PRESETS.put("Backpack", "Holds up to 30 lb. of gear. Placeholder description.");
         ITEM_PRESETS.put("Bedroll", "For sleeping in the wild. Placeholder description.");
         ITEM_PRESETS.put("Rations", "One day of travel food. Placeholder description.");
-        ITEM_PRESETS.put("Torch", "Bright light in a 20 ft. radius for 1 hour. Placeholder description.");
+        ITEM_PRESETS.put("Torch", "A Torch burns for 1 hour, casting Bright Light in a 20-foot radius and Dim Light for an additional 20 feet. "
+                + "When you take the Attack action, you can attack with the Torch, using it as a Simple Melee weapon; on a hit, the target takes 1 Fire damage. "
+                + "In Combat, hold it in a hand (Use Item → Hands) and it lights the area around you.");
+        ITEM_PRESETS.put("Lamp", "A Lamp burns Oil as fuel, casting Bright Light in a 15-foot radius and Dim Light for an additional 30 feet. "
+                + "In Combat, hold it in a hand and it lights the area around you.");
+        ITEM_PRESETS.put("Hooded Lantern", "A Hooded Lantern burns Oil as fuel, casting Bright Light in a 30-foot radius and Dim Light for an additional 30 feet. "
+                + "As a Bonus Action, you can lower the hood, reducing the light to Dim Light in a 5-foot radius. In Combat, hold it in a hand and it lights the area around you.");
+        ITEM_PRESETS.put("Candle", "For 1 hour, a lit Candle sheds Bright Light in a 5-foot radius and Dim Light for an additional 5 feet.");
         ITEM_PRESETS.put("Rope (50 ft.)", "Hempen rope. Placeholder description.");
         ITEM_PRESETS.put("Waterskin", "Holds 4 pints of liquid. Placeholder description.");
     }
@@ -1946,6 +1964,32 @@ public class App {
         int n = itemCount(equipment.get(index)) + delta;
         if (n <= 0) equipment.remove(index);
         else equipment.set(index, itemString(base, n));
+    }
+
+    // Combines repeated entries ("Dagger (2)" twice -> "Dagger (4)", "Dagger" + "Daggers (2)" -> "Dagger (3)"),
+    // keeping the first entry's position and spelling. Returns a new list.
+    static List<String> mergeItems(List<?> equipment) {
+        List<String> out = new ArrayList<>();
+        List<Integer> counts = new ArrayList<>();
+        if (equipment == null) return out;
+        for (Object o : equipment) {
+            if (o == null) continue;
+            String item = String.valueOf(o).trim();
+            if (item.isEmpty()) continue;
+            String base = GameData.stripEquipmentCount(item);
+            int found = -1;
+            for (int i = 0; i < out.size() && found < 0; i++) {
+                String existing = out.get(i);
+                if (existing.equalsIgnoreCase(base) || existing.equalsIgnoreCase(base + "s") || base.equalsIgnoreCase(existing + "s")) found = i;
+            }
+            if (found >= 0) counts.set(found, counts.get(found) + itemCount(item));
+            else {
+                out.add(base);
+                counts.add(itemCount(item));
+            }
+        }
+        for (int i = 0; i < out.size(); i++) out.set(i, itemString(out.get(i), counts.get(i)));
+        return out;
     }
 
     static void addItem(List<String> equipment, String base) {
@@ -2687,6 +2731,12 @@ public class App {
         if (!size.isEmpty()) lines.add(new String[]{"Size", size});
         if (!type.isEmpty()) lines.add(new String[]{"Creature Type", type});
         if (climb != null && climb > 0) lines.add(new String[]{"Climb Speed", climb + " ft."});
+        boolean homebrewSpecies = CustomAssets.speciesAsset(species) != null; // homebrew lines come from sheetProficiencies
+        int darkvision = SpeciesTraits.darkvision(rec);
+        if (darkvision > 0 && !homebrewSpecies) lines.add(new String[]{"Darkvision", darkvision + " ft."});
+        Map<String, Integer> speciesMods = SpeciesTraits.damageMods(rec);
+        String defenses = DamageRules.summary(speciesMods);
+        if (!defenses.isEmpty()) lines.add(new String[]{"Damage", defenses});
         List<DecisionItem> decisions = GameData.CLASS_DECISIONS.get(characterClass);
         if (decisions != null) {
             Map<String, List<String>> choices = CharacterStorage.recChoicesMap(rec);
@@ -2705,6 +2755,9 @@ public class App {
         lineInfo.put("Size", "Your size category, set by your species. Small and Medium creatures both occupy a 5-ft. space; size matters for grappling, squeezing and some spells and effects.");
         lineInfo.put("Creature Type", "Your creature type matters for spells and effects that target specific types (for example, spells that only affect Humanoids).");
         lineInfo.put("Climb Speed", "You can climb at this speed without spending extra movement.");
+        lineInfo.put("Darkvision", "Granted by your " + species + " species. " + SpeciesTraits.DARKVISION_INFO);
+        lineInfo.put("Damage", "From your " + species + " species.\n\n" + DamageRules.INFO
+                + "\n\nIn Combat these are applied automatically to damage your token takes.");
 
         JPanel list = new JPanel(new GridLayout(0, 1, 0, 2));
         list.setOpaque(false);
@@ -2761,6 +2814,9 @@ public class App {
             if (!type.isEmpty()) sub.add(type);
             String info = GameData.SPECIES_INFO.get(species);
             cards.add(featureCard(species + lineageSuffix, String.join(" · ", sub), info == null ? "" : info));
+            for (SpeciesTraits.Trait t : SpeciesTraits.traits(rec)) {
+                cards.add(featureCard(t.name, species + lineageSuffix + " trait" + (t.level > 1 ? " · level " + t.level : ""), t.description));
+            }
         }
 
         // Homebrew: species traits, background origin feat, class + subclass features (Asset Library)
@@ -2827,6 +2883,16 @@ public class App {
         card.add(lbl, BorderLayout.CENTER);
         return clickable(card, () -> showInfoOverlay(card, title, subtitle,
                 description.isEmpty() ? "No further description." : description, null));
+    }
+
+    // Species descriptions for the wizard's info panel, with each species' traits, darkvision and resistances appended
+    private static Map<String, String> speciesInfoWithTraits() {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<String, String> en : GameData.SPECIES_INFO.entrySet()) {
+            String traits = SpeciesTraits.summary(en.getKey(), "");
+            out.put(en.getKey(), en.getValue() + (traits.isEmpty() ? "" : "\n\n" + traits));
+        }
+        return out;
     }
 
     // "Fighting Style?" -> "Fighting Style", "Skills? (2)" -> "Skills"
@@ -4060,6 +4126,8 @@ public class App {
                 Integer climb = GameData.computeClimbSpeed(draft.species);
                 String moveText = "Speed: " + speed + " ft  |  Size: " + size + "  |  Type: " + type;
                 if (climb != null) moveText += "  |  Climb: " + climb + " ft";
+                int dv = SpeciesTraits.darkvision(draft.species, draft.lineage);
+                if (dv > 0) moveText += "  |  Darkvision: " + dv + " ft";
                 movementValueLabel.setText(moveText);
             }
             classValueLabel.setText("Class: " + (draft.characterClass.isEmpty() ? "\u2014" : draft.characterClass));
@@ -4067,8 +4135,9 @@ public class App {
             Integer conScore = draft.stats.get("CON");
             int hd = GameData.hitDieMax(draft.characterClass);
             if (hd > 0 && conScore != null) {
-                int hp = hd + GameData.abilityModifier(conScore);
-                hpValueLabel.setText("HP: " + hp + "  (d" + hd + " + CON mod)");
+                boolean tough = "Dwarf".equals(draft.species) && CustomAssets.speciesAsset("Dwarf") == null;
+                int hp = Math.max(1, hd + GameData.abilityModifier(conScore)) + (tough ? 1 : 0);
+                hpValueLabel.setText("HP: " + hp + "  (d" + hd + " + CON mod" + (tough ? " + 1 Dwarven Toughness" : "") + ")");
             } else {
                 hpValueLabel.setText("HP: \u2014");
             }
@@ -4193,7 +4262,7 @@ public class App {
         speciesPanel.add(speciesInfoWrap, BorderLayout.EAST);
 
         CheckListResult speciesCheckList = buildCheckListPanel(
-                new ArrayList<>(GameData.SPECIES_INFO.keySet()), 1, GameData.SPECIES_INFO,
+                new ArrayList<>(GameData.SPECIES_INFO.keySet()), 1, speciesInfoWithTraits(),
                 speciesInfoTitle, speciesInfoText, true, 8, null);
         JPanel speciesListWrap = new JPanel(new BorderLayout());
         speciesListWrap.setBackground(BG_DARK);
@@ -5590,6 +5659,9 @@ public class App {
             draft.equipment.clear();
             draft.equipment.addAll(bgEquipItems);
             draft.equipment.addAll(classEquipItems);
+            List<String> mergedEquip = mergeItems(draft.equipment);
+            draft.equipment.clear();
+            draft.equipment.addAll(mergedEquip);
             draft.gold = bgGoldHolder[0] + classGoldHolder[0];
             touchedEquipment[0] = true;
             segEquipmentOk[0] = true;
@@ -5619,6 +5691,9 @@ public class App {
             draft.equipment.clear();
             draft.equipment.addAll(bgEquipItems);
             draft.equipment.addAll(classEquipItems);
+            List<String> mergedEquip = mergeItems(draft.equipment);
+            draft.equipment.clear();
+            draft.equipment.addAll(mergedEquip);
             draft.gold = bgGoldHolder[0] + classGoldHolder[0];
             touchedEquipment[0] = true;
             segEquipmentOk[0] = true;
@@ -6032,7 +6107,7 @@ public class App {
             // Pick up homebrew species / classes / backgrounds added or changed in the Asset Library,
             // minus anything whose tags are turned off in Tags & Filters
             Tags.setOwned(null);
-            speciesCheckList.setOptions.accept(Tags.visible(CustomAssets.SPECIES, GameData.SPECIES_INFO.keySet()), GameData.SPECIES_INFO);
+            speciesCheckList.setOptions.accept(Tags.visible(CustomAssets.SPECIES, GameData.SPECIES_INFO.keySet()), speciesInfoWithTraits());
             rebuildClassInfoMap.run();
             classCheckList.setOptions.accept(Tags.visible(CustomAssets.CLASSES, GameData.CLASS_INFO.keySet()), classInfoMap);
             backgroundCheckList.setOptions.accept(Tags.visible(CustomAssets.BACKGROUNDS, GameData.BACKGROUND_INFO.keySet()), GameData.BACKGROUND_INFO);
@@ -6261,7 +6336,7 @@ public class App {
             owned.addAll(draft.spellsKnown);
             owned.addAll(draft.equipment);
             Tags.setOwned(owned);
-            speciesCheckList.setOptions.accept(Tags.visible(CustomAssets.SPECIES, GameData.SPECIES_INFO.keySet()), GameData.SPECIES_INFO);
+            speciesCheckList.setOptions.accept(Tags.visible(CustomAssets.SPECIES, GameData.SPECIES_INFO.keySet()), speciesInfoWithTraits());
             classCheckList.setOptions.accept(Tags.visible(CustomAssets.CLASSES, GameData.CLASS_INFO.keySet()), classInfoMap);
             backgroundCheckList.setOptions.accept(Tags.visible(CustomAssets.BACKGROUNDS, GameData.BACKGROUND_INFO.keySet()), GameData.BACKGROUND_INFO);
 

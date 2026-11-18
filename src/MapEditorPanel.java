@@ -15,6 +15,11 @@ import java.util.List;
 //   vEdges : height rows of width+1 digits — the LEFT edge of cell (x, y) is vEdges[y][x]
 //            edge digits: 0 none, 1 wall, 2 closed door, 3 open door, 4 window / half cover
 //   pins   : [{x, y, title, notes, npcIds: [...]}]
+//   Light layer (see Lighting.java):
+//   ambient: the whole map's default light, 0 Bright, 1 Dim, 2 Dark (absent = Bright)
+//   light  : one string per row, one char per cell: '.' map default, 'B' Bright, 'D' Dim, 'X' Dark
+//   torches: mounted torches [{x, y, ac, hp, maxHp, lit}] (Bright 20 ft. + Dim 20 ft. while lit and hp > 0).
+//            They don't block movement; Combat can attack them (immune to Poison and Psychic) and saves their hp here.
 //
 // Controls: left-drag with a tool to paint; right/middle-drag (or drag with Select) to pan; wheel to zoom;
 // Ctrl+Z to undo. With Select (and in view mode), clicking a door opens/closes it and clicking a pin opens it.
@@ -54,12 +59,33 @@ static class Pin {
     List<String> npcIds = new ArrayList<>();
 }
 
+static class Torch {
+    int x, y, ac = 15, hp = 5, maxHp = 5;
+    boolean lit = true;
+
+    Map<String, Object> toJson() {
+        Map<String, Object> o = new LinkedHashMap<>();
+        o.put("x", x);
+        o.put("y", y);
+        o.put("ac", ac);
+        o.put("hp", hp);
+        o.put("maxHp", maxHp);
+        o.put("lit", lit);
+        return o;
+    }
+}
+
+static final char[] LIGHT_CODES = {'.', 'B', 'D', 'X'}; // index = light level + 1
+
 static class MapModel {
     int width, height;
     int[][] floor;   // [y][x] index into FLOOR_CODES
     int[][] hEdges;  // [height+1][width]
     int[][] vEdges;  // [height][width+1]
     List<Pin> pins = new ArrayList<>();
+    int ambient = Lighting.BRIGHT; // whole-map default light
+    int[][] light;                 // [y][x] Lighting level, or Lighting.DEFAULT (-1) for the map default
+    List<Torch> torches = new ArrayList<>();
 
     static MapModel blank(int w, int h) {
         MapModel m = new MapModel();
@@ -69,7 +95,20 @@ static class MapModel {
         for (int[] row : m.floor) Arrays.fill(row, 1); // stone
         m.hEdges = new int[m.height + 1][m.width];
         m.vEdges = new int[m.height][m.width + 1];
+        m.light = new int[m.height][m.width];
+        for (int[] row : m.light) Arrays.fill(row, Lighting.DEFAULT);
         return m;
+    }
+
+    Torch torchAt(int x, int y) {
+        for (Torch t : torches) if (t.x == x && t.y == y) return t;
+        return null;
+    }
+
+    boolean hasLighting() {
+        if (ambient != Lighting.BRIGHT || !torches.isEmpty()) return true;
+        for (int[] row : light) for (int v : row) if (v > Lighting.BRIGHT) return true;
+        return false;
     }
 
     Map<String, Object> toJson() {
@@ -97,6 +136,17 @@ static class MapModel {
             p.add(pm);
         }
         o.put("pins", p);
+        o.put("ambient", ambient);
+        List<Object> l = new ArrayList<>();
+        for (int[] row : light) {
+            StringBuilder sb = new StringBuilder();
+            for (int v : row) sb.append(LIGHT_CODES[Math.max(0, Math.min(LIGHT_CODES.length - 1, v + 1))]);
+            l.add(sb.toString());
+        }
+        o.put("light", l);
+        List<Object> tl = new ArrayList<>();
+        for (Torch t : torches) tl.add(t.toJson());
+        o.put("torches", tl);
         return o;
     }
 
@@ -142,6 +192,34 @@ static class MapModel {
                 m.pins.add(pin);
             }
         }
+        m.ambient = Math.max(Lighting.BRIGHT, Math.min(Lighting.DARK, CustomAssets.intVal(o, "ambient", Lighting.BRIGHT)));
+        Object l = o.get("light");
+        if (l instanceof List) {
+            List<?> rows = (List<?>) l;
+            for (int y = 0; y < m.height && y < rows.size(); y++) {
+                String row = String.valueOf(rows.get(y));
+                for (int x = 0; x < m.width && x < row.length(); x++) {
+                    int idx = new String(LIGHT_CODES).indexOf(row.charAt(x));
+                    m.light[y][x] = idx <= 0 ? Lighting.DEFAULT : idx - 1;
+                }
+            }
+        }
+        Object tl = o.get("torches");
+        if (tl instanceof List) {
+            for (Object to : (List<?>) tl) {
+                if (!(to instanceof Map)) continue;
+                Map<?, ?> tm = (Map<?, ?>) to;
+                Torch t = new Torch();
+                t.x = CustomAssets.intVal(tm, "x", 0);
+                t.y = CustomAssets.intVal(tm, "y", 0);
+                if (t.x < 0 || t.y < 0 || t.x >= m.width || t.y >= m.height || m.torchAt(t.x, t.y) != null) continue;
+                t.ac = Math.max(0, CustomAssets.intVal(tm, "ac", 15));
+                t.maxHp = Math.max(1, CustomAssets.intVal(tm, "maxHp", 5));
+                t.hp = Math.max(0, Math.min(t.maxHp, CustomAssets.intVal(tm, "hp", t.maxHp)));
+                t.lit = !(tm.get("lit") instanceof Boolean) || (Boolean) tm.get("lit");
+                m.torches.add(t);
+            }
+        }
         return m;
     }
 
@@ -170,6 +248,11 @@ static class MapModel {
             for (int x = 0; x <= Math.min(w, width); x++) n.vEdges[y][x] = vEdges[y][x];
         }
         for (Pin p : pins) if (p.x < w && p.y < h) n.pins.add(p);
+        n.ambient = ambient;
+        for (int y = 0; y < Math.min(h, height); y++) {
+            for (int x = 0; x < Math.min(w, width); x++) n.light[y][x] = light[y][x];
+        }
+        for (Torch t : torches) if (t.x < w && t.y < h) n.torches.add(t);
         return n;
     }
 
@@ -222,6 +305,19 @@ private static final String[][] TOOLS = {
         {T_ERASE, "Click or drag along edges to remove walls, doors and windows."},
         {T_FLOOR, "Click or drag over squares to paint the selected floor type."},
         {T_PIN, "Click a square to place a location or encounter pin (or edit the one there)."}};
+static final String T_LIGHT = "Light", T_TORCH = "Mounted Torch";
+private static final String[][] LIGHT_TOOLS = {
+        {SELECT, "Select / pan: click torches, doors and pins for details, drag to pan."},
+        {T_LIGHT, "Click or drag over squares to paint the selected light level. \"Map default\" follows the Whole map setting."},
+        {T_TORCH, "Click a square to place a mounted torch (Bright 20 ft. + Dim 20 ft.), or edit the one there."}};
+private static final String[] LIGHT_BRUSHES = {"Map default", "Bright", "Dim", "Dark"}; // index = level + 1
+private boolean lightLayer;
+private int lightBrush = Lighting.DARK;
+private boolean syncingCombos;
+private final JComboBox<String> lightCombo = new JComboBox<>(LIGHT_BRUSHES);
+private final JComboBox<String> ambientCombo = new JComboBox<>(Lighting.SHORT);
+private final JToggleButton mapLayerButton = new JToggleButton("Map Layer");
+private final JToggleButton lightLayerButton = new JToggleButton("☀ Light Layer");
 private String tool = SELECT;
 private int floorBrush = 1;
 private final Map<String, JToggleButton> toolButtons = new LinkedHashMap<>();
@@ -292,7 +388,10 @@ MapEditorPanel(CardLayout outerLayout, JPanel outerCards) {
     // ---- tool row ----
     toolRow.setBackground(App.BG_PANEL);
     ButtonGroup group = new ButtonGroup();
-    for (String[] t : TOOLS) {
+    List<String[]> allTools = new ArrayList<>(Arrays.asList(TOOLS));
+    allTools.add(LIGHT_TOOLS[1]);
+    allTools.add(LIGHT_TOOLS[2]);
+    for (String[] t : allTools) {
         JToggleButton b = new JToggleButton(t[0]);
         b.setToolTipText(t[1]);
         b.setFocusPainted(false);
@@ -317,6 +416,34 @@ MapEditorPanel(CardLayout outerLayout, JPanel outerCards) {
             if (i >= 0) l.setIcon(new SwatchIcon(FLOOR_COLORS[i]));
             return l;
         }
+    });
+
+    // ---- light layer controls ----
+    for (JToggleButton b : new JToggleButton[]{mapLayerButton, lightLayerButton}) {
+        b.setFocusPainted(false);
+        b.setFont(new Font("SansSerif", Font.BOLD, 13));
+        b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+    }
+    mapLayerButton.setToolTipText("Edit walls, doors, floors and pins");
+    lightLayerButton.setToolTipText("Edit light separately: the whole map's default light, painted Bright / Dim / Dark areas and mounted torches");
+    mapLayerButton.addActionListener(e -> setLightLayer(false));
+    lightLayerButton.addActionListener(e -> setLightLayer(true));
+    App.styleCombo(lightCombo);
+    lightCombo.setSelectedIndex(lightBrush + 1);
+    lightCombo.setToolTipText("Light level to paint");
+    lightCombo.addActionListener(e -> {
+        if (syncingCombos) return;
+        lightBrush = lightCombo.getSelectedIndex() - 1;
+        setTool(T_LIGHT);
+    });
+    App.styleCombo(ambientCombo);
+    ambientCombo.setToolTipText("The whole map's default light. Painted squares and torches override it.");
+    ambientCombo.addActionListener(e -> {
+        if (syncingCombos || ambientCombo.getSelectedIndex() == model.ambient) return;
+        pushUndo();
+        model.ambient = ambientCombo.getSelectedIndex();
+        persist();
+        canvas.repaint();
     });
 
     for (JSpinner sp : new JSpinner[]{widthSpin, heightSpin}) {
@@ -385,7 +512,22 @@ private void setEditMode(boolean edit) {
     modeButton.setToolTipText(edit ? "Switch to the read-only table view" : "Edit walls, floors and pins");
     undoButton.setVisible(edit);
     toolRow.removeAll();
-    if (edit) {
+    toolRow.add(mapLayerButton);
+    toolRow.add(lightLayerButton);
+    toolRow.add(Box.createRigidArea(new Dimension(12, 0)));
+    styleLayerButtons();
+    syncingCombos = true;
+    ambientCombo.setSelectedIndex(Math.max(0, Math.min(2, model.ambient)));
+    syncingCombos = false;
+    if (edit && lightLayer) {
+        for (String[] t : LIGHT_TOOLS) {
+            toolRow.add(toolButtons.get(t[0]));
+            if (T_LIGHT.equals(t[0])) toolRow.add(lightCombo);
+        }
+        toolRow.add(Box.createRigidArea(new Dimension(18, 0)));
+        toolRow.add(mutedLabel("Whole map:"));
+        toolRow.add(ambientCombo);
+    } else if (edit) {
         for (String[] t : TOOLS) {
             toolRow.add(toolButtons.get(t[0]));
             if (T_FLOOR.equals(t[0])) toolRow.add(floorCombo);
@@ -401,12 +543,33 @@ private void setEditMode(boolean edit) {
         resize.addActionListener(e -> applyResize(resize));
         toolRow.add(resize);
     } else {
-        toolRow.add(mutedLabel("Table view: click doors to open or close them, and pins for their details. Drag to pan."));
+        toolRow.add(mutedLabel(lightLayer ? "Light view: shaded squares are Dim or Dark. Switch to Edit Map to change the light."
+                : "Table view: click doors to open or close them, and pins for their details. Drag to pan."));
     }
-    setTool(edit ? tool : SELECT);
+    boolean toolInLayer = false;
+    for (String[] t : lightLayer ? LIGHT_TOOLS : TOOLS) if (t[0].equals(tool)) toolInLayer = true;
+    setTool(edit && toolInLayer ? tool : SELECT);
     toolRow.revalidate();
     toolRow.repaint();
     canvas.repaint();
+}
+
+// Map layer (walls, doors, floors, pins) or Light layer (default light, painted light, mounted torches)
+private void setLightLayer(boolean on) {
+    lightLayer = on;
+    setEditMode(editMode);
+}
+
+private void styleLayerButtons() {
+    for (JToggleButton b : new JToggleButton[]{mapLayerButton, lightLayerButton}) {
+        boolean on = (b == lightLayerButton) == lightLayer;
+        b.setSelected(on);
+        b.setContentAreaFilled(false);
+        b.setOpaque(true);
+        b.setBackground(on ? new Color(0x4A, 0x3F, 0x22) : App.SHEET_BG);
+        b.setForeground(on ? App.GOLD : App.TEXT_MUTED);
+        b.setBorder(BorderFactory.createCompoundBorder(new LineBorder(on ? App.GOLD : App.SHEET_BORDER, 1, true), new EmptyBorder(5, 11, 5, 11)));
+    }
 }
 
 private void setTool(String t) {
@@ -421,7 +584,7 @@ private void setTool(String t) {
         b.setOpaque(true);
         b.setBorder(BorderFactory.createCompoundBorder(new LineBorder(on ? App.GOLD : App.SHEET_BORDER, 1, true), new EmptyBorder(5, 11, 5, 11)));
     }
-    for (String[] row : TOOLS) if (row[0].equals(t)) statusLabel.setText(row[1]);
+    for (String[] row : lightLayer ? LIGHT_TOOLS : TOOLS) if (row[0].equals(t)) statusLabel.setText(row[1]);
     canvas.setCursor(Cursor.getPredefinedCursor(SELECT.equals(t) ? Cursor.DEFAULT_CURSOR : Cursor.CROSSHAIR_CURSOR));
     canvas.repaint();
 }
@@ -456,6 +619,9 @@ private void undo() {
     model = MapModel.fromJson(new MiniJsonParser(undoStack.pop()).parse());
     widthSpin.setValue(model.width);
     heightSpin.setValue(model.height);
+    syncingCombos = true;
+    ambientCombo.setSelectedIndex(Math.max(0, Math.min(2, model.ambient)));
+    syncingCombos = false;
     persist();
     canvas.repaint();
 }
@@ -490,6 +656,8 @@ private void showMapInfo() {
     rows.add(App.row("Doors", String.valueOf(doors)));
     rows.add(App.row("Windows", String.valueOf(windows)));
     rows.add(App.row("Pins", String.valueOf(model.pins.size())));
+    rows.add(App.row("Default light", Lighting.NAMES[Math.max(0, Math.min(2, model.ambient))]));
+    rows.add(App.row("Mounted torches", String.valueOf(model.torches.size())));
     String notes = CustomAssets.str(asset, "notes");
     App.showInfoOverlay(canvas, CustomAssets.str(asset, "name"), "Map", notes.isEmpty() ? "No notes." : notes, rows);
 }
@@ -641,6 +809,112 @@ private void showPinEditor(Pin pin, boolean isNew) {
     body.add(buttons);
 
     close[0] = App.showSheetOverlay(canvas, isNew ? "New Pin (" + (pin.x + 1) + ", " + (pin.y + 1) + ")" : "Edit Pin", body, title);
+}
+
+// Mounted torch details (view mode); in edit mode the editor opens instead
+private void showTorchDetail(Torch t) {
+    App.showInfoOverlay(canvas, "Mounted Torch", "Square " + (t.x + 1) + ", " + (t.y + 1) + " • " + Lighting.torchStatus(t),
+            Lighting.MOUNTED_TORCH_INFO, Arrays.asList(App.row("Armor Class", String.valueOf(t.ac)),
+                    App.row("Hit Points", t.hp + " / " + t.maxHp), App.row("Status", Lighting.torchStatus(t)),
+                    App.row("Immune to", "Poison, Psychic damage")));
+}
+
+// Place a new mounted torch or edit one: AC, Hit Points and whether it starts lit
+private void showTorchEditor(Torch t, boolean isNew) {
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    JLabel info = new JLabel("<html><div style='width:380px'>" + App.escapeHtml(Lighting.MOUNTED_TORCH_INFO) + "</div></html>");
+    info.setForeground(App.TEXT_MUTED);
+    info.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    body.add(info);
+    body.add(Box.createRigidArea(new Dimension(0, 12)));
+
+    JSpinner ac = editorSpinner(t.ac, 0, 30);
+    JSpinner maxHp = editorSpinner(t.maxHp, 1, 999);
+    JSpinner hp = editorSpinner(t.hp, 0, 999);
+    JCheckBox lit = new JCheckBox("Lit (sheds light)", t.lit);
+    lit.setOpaque(false);
+    lit.setForeground(App.TEXT_LIGHT);
+    lit.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    lit.setFocusPainted(false);
+    JPanel grid = new JPanel(new GridLayout(0, 2, 10, 6));
+    grid.setOpaque(false);
+    grid.add(fieldLabel("Armor Class"));
+    grid.add(ac);
+    grid.add(fieldLabel("Hit Point maximum"));
+    grid.add(maxHp);
+    grid.add(fieldLabel("Current Hit Points"));
+    grid.add(hp);
+    grid.add(fieldLabel("Immune to"));
+    JLabel imm = new JLabel("Poison, Psychic");
+    imm.setForeground(App.TEXT_LIGHT);
+    grid.add(imm);
+    grid.add(lit);
+    body.add(grid);
+    for (Component c : body.getComponents()) if (c instanceof JComponent) ((JComponent) c).setAlignmentX(Component.LEFT_ALIGNMENT);
+    JLabel err = new JLabel(" ");
+    err.setForeground(App.ACCENT_HOVER);
+    err.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    err.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(err);
+
+    JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+    buttons.setOpaque(false);
+    buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
+    Runnable[] close = new Runnable[1];
+    if (!isNew) {
+        JButton del = App.overlayButton("Remove Torch", false);
+        del.setForeground(App.ACCENT_HOVER);
+        del.addActionListener(e -> {
+            pushUndo();
+            model.torches.remove(t);
+            persist();
+            canvas.repaint();
+            close[0].run();
+        });
+        buttons.add(del);
+    }
+    JButton cancel = App.overlayButton("Cancel", false);
+    cancel.addActionListener(e -> close[0].run());
+    JButton save = App.overlayButton(isNew ? "Place Torch" : "Save Torch", true);
+    save.addActionListener(e -> {
+        for (JSpinner sp : new JSpinner[]{ac, maxHp, hp}) {
+            try { sp.commitEdit(); } catch (java.text.ParseException ex) {
+                err.setText("Enter whole numbers for AC and Hit Points.");
+                return;
+            }
+        }
+        int newMax = (Integer) maxHp.getValue();
+        pushUndo();
+        t.ac = (Integer) ac.getValue();
+        // raising the maximum on a fresh torch keeps it at full health
+        t.hp = isNew || (Integer) hp.getValue() == t.maxHp && newMax > t.maxHp ? newMax : Math.min(newMax, (Integer) hp.getValue());
+        t.maxHp = newMax;
+        t.lit = lit.isSelected();
+        if (isNew && !model.torches.contains(t)) model.torches.add(t);
+        persist();
+        canvas.repaint();
+        close[0].run();
+    });
+    buttons.add(cancel);
+    buttons.add(save);
+    body.add(Box.createRigidArea(new Dimension(0, 12)));
+    body.add(buttons);
+    close[0] = App.showSheetOverlay(canvas, isNew ? "New Mounted Torch (" + (t.x + 1) + ", " + (t.y + 1) + ")" : "Edit Mounted Torch", body, null);
+}
+
+private static JSpinner editorSpinner(int value, int min, int max) {
+    JSpinner sp = new JSpinner(new SpinnerNumberModel(Math.max(min, Math.min(max, value)), min, max, 1));
+    sp.setPreferredSize(new Dimension(80, 28));
+    JComponent ed = sp.getEditor();
+    if (ed instanceof JSpinner.DefaultEditor) {
+        JFormattedTextField tf = ((JSpinner.DefaultEditor) ed).getTextField();
+        tf.setBackground(App.BG_FIELD);
+        tf.setForeground(App.TEXT_LIGHT);
+        tf.setCaretColor(App.TEXT_LIGHT);
+    }
+    return sp;
 }
 
 private static JLabel fieldLabel(String text) {
@@ -834,6 +1108,25 @@ private class Canvas extends JComponent {
             stroking = true;
             strokeValue = floorBrush;
             applyFloor(cell);
+        } else if (T_LIGHT.equals(tool)) {
+            int[] cell = cellAt(x, y);
+            if (cell == null) return;
+            pushUndo();
+            stroking = true;
+            strokeValue = lightBrush;
+            applyLight(cell);
+        } else if (T_TORCH.equals(tool)) {
+            int[] cell = cellAt(x, y);
+            if (cell == null) return;
+            Torch existing = model.torchAt(cell[0], cell[1]);
+            if (existing != null) {
+                showTorchEditor(existing, false);
+            } else {
+                Torch t = new Torch();
+                t.x = cell[0];
+                t.y = cell[1];
+                showTorchEditor(t, true);
+            }
         } else if (T_PIN.equals(tool)) {
             int[] cell = cellAt(x, y);
             if (cell == null) return;
@@ -874,6 +1167,9 @@ private class Canvas extends JComponent {
                 } else if (T_FLOOR.equals(tool)) {
                     int[] cell = cellAt(x, y);
                     if (cell != null) applyFloor(cell);
+                } else if (T_LIGHT.equals(tool)) {
+                    int[] cell = cellAt(x, y);
+                    if (cell != null) applyLight(cell);
                 }
             }
             lastPoint = p;
@@ -902,6 +1198,12 @@ private class Canvas extends JComponent {
                 showPinDetail(p);
                 return;
             }
+            Torch t = model.torchAt(cell[0], cell[1]);
+            if (t != null && torchHit(t, x, y)) {
+                if (editMode) showTorchEditor(t, false);
+                else showTorchDetail(t);
+                return;
+            }
         }
         int[] edge = pickEdge(x, y);
         if (edge != null) {
@@ -921,6 +1223,14 @@ private class Canvas extends JComponent {
                 return;
             }
         }
+        if (cell != null && lightLayer) {
+            int lv = Lighting.compute(model, Lighting.torchSources(model))[cell[1]][cell[0]];
+            int painted = model.light[cell[1]][cell[0]];
+            App.showInfoOverlay(this, Lighting.NAMES[lv], "Square " + (cell[0] + 1) + ", " + (cell[1] + 1) + " • light",
+                    Lighting.INFO[lv], Arrays.asList(App.row("Square setting", painted < 0 ? "Map default (" + Lighting.SHORT[model.ambient] + ")" : Lighting.SHORT[painted]),
+                            App.row("With torches", Lighting.NAMES[lv])));
+            return;
+        }
         if (cell != null) {
             int fl = model.floor[cell[1]][cell[0]];
             App.showInfoOverlay(this, FLOOR_NAMES[fl], "Square " + (cell[0] + 1) + ", " + (cell[1] + 1) + " • 5 ft.",
@@ -931,6 +1241,19 @@ private class Canvas extends JComponent {
     private boolean pinHit(Pin p, double x, double y) {
         double r = Math.max(0.3, 9 / scale);
         return Math.hypot(x - (p.x + 0.5), y - (p.y + 0.5)) <= r + 0.15;
+    }
+
+    private boolean torchHit(Torch t, double x, double y) {
+        double r = Math.max(0.3, 7 / scale);
+        return Math.hypot(x - (t.x + 0.5), y - (t.y + 0.5)) <= r + 0.12;
+    }
+
+    private void applyLight(int[] cell) {
+        if (model.light[cell[1]][cell[0]] != strokeValue) {
+            model.light[cell[1]][cell[0]] = strokeValue;
+            strokeChanged = true;
+            repaint();
+        }
     }
 
     private void applyEdge(int[] edge) {
@@ -956,12 +1279,20 @@ private class Canvas extends JComponent {
         hoverCellY = cell == null ? -1 : cell[1];
         if (cell != null) {
             Pin pin = model.pinAt(cell[0], cell[1]);
+            Torch torch = model.torchAt(cell[0], cell[1]);
+            String lightText = "";
+            if (lightLayer) {
+                int painted = model.light[cell[1]][cell[0]];
+                lightText = "  •  Light: " + (painted < 0 ? "map default (" + Lighting.SHORT[model.ambient] + ")" : Lighting.SHORT[painted]);
+            }
             statusLabel.setText("Square " + (cell[0] + 1) + ", " + (cell[1] + 1) + "  •  " + cell[0] * 5 + " ft. × " + cell[1] * 5 + " ft."
-                    + "  •  " + FLOOR_NAMES[model.floor[cell[1]][cell[0]]] + (pin != null ? "  •  Pin: " + pin.title : ""));
+                    + "  •  " + FLOOR_NAMES[model.floor[cell[1]][cell[0]]] + lightText + (pin != null ? "  •  Pin: " + pin.title : "")
+                    + (torch != null ? "  •  Mounted torch (AC " + torch.ac + ", " + torch.hp + "/" + torch.maxHp + " HP, " + Lighting.torchStatus(torch).toLowerCase() + ")" : ""));
         }
         boolean overClickable = false;
         if (SELECT.equals(tool) || !editMode) {
             if (cell != null && model.pinAt(cell[0], cell[1]) != null && pinHit(model.pinAt(cell[0], cell[1]), x, y)) overClickable = true;
+            if (cell != null && model.torchAt(cell[0], cell[1]) != null && torchHit(model.torchAt(cell[0], cell[1]), x, y)) overClickable = true;
             int[] e = pickEdge(x, y);
             if (e != null && model.getEdge(e) != NONE) overClickable = true;
             if (!panning) setCursor(Cursor.getPredefinedCursor(overClickable ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
@@ -976,9 +1307,13 @@ private class Canvas extends JComponent {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         MapPainter p = new MapPainter(model, scale, offX, offY);
         p.paintBase(g, getWidth(), getHeight());
+        if (lightLayer) {
+            Lighting.paintOverlay(g, Lighting.compute(model, Lighting.torchSources(model)), model, scale, offX, offY, getWidth(), getHeight());
+            Lighting.paintOverrides(g, model, scale, offX, offY);
+        }
 
-        // hover cell (floor / pin tools)
-        if (editMode && hoverCellX >= 0 && (T_FLOOR.equals(tool) || T_PIN.equals(tool))) {
+        // hover cell (floor / pin / light / torch tools)
+        if (editMode && hoverCellX >= 0 && (T_FLOOR.equals(tool) || T_PIN.equals(tool) || T_LIGHT.equals(tool) || T_TORCH.equals(tool))) {
             g.setColor(new Color(212, 175, 55, 160));
             g.setStroke(new BasicStroke(2f));
             g.draw(new Rectangle2D.Double(offX + hoverCellX * scale + 1, offY + hoverCellY * scale + 1, scale - 2, scale - 2));
@@ -995,8 +1330,10 @@ private class Canvas extends JComponent {
             g.draw(new Line2D.Double(offX + ax * scale, offY + ay * scale, offX + bx * scale, offY + by * scale));
         }
 
+        for (Torch t : model.torches) Lighting.paintTorch(g, t, scale, offX, offY, t.x == hoverCellX && t.y == hoverCellY);
         p.paintPins(g);
         p.paintLegend(g, getHeight());
+        if (lightLayer) Lighting.paintLegend(g, getWidth(), getHeight(), model.ambient);
         g.dispose();
     }
 }

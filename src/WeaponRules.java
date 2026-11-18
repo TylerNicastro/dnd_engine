@@ -175,10 +175,47 @@ static boolean isShield(String item) {
     return a != null && a.isShield;
 }
 
+// How many of an item the equipment holds. Weapons match by their rules entry too ("Daggers (2)" counts for "Dagger",
+// "Crossbow, Light" for "Light Crossbow"), so a grip saved under one spelling isn't dropped for another.
 static int countOf(List<String> equipment, String base) {
     int n = 0;
-    for (String e : equipment) if (GameData.stripEquipmentCount(e).equalsIgnoreCase(base)) n += App.itemCount(e);
+    WeaponEntry w = WeaponData.find(base);
+    for (String e : equipment) {
+        String b = GameData.stripEquipmentCount(e);
+        if (b.equalsIgnoreCase(base) || w != null && WeaponData.find(b) == w) n += App.itemCount(e);
+    }
     return n;
+}
+
+// Puts an item in a hand: which = 1 (main hand), 2 (off hand) or 3 (both hands: a Versatile / Two-Handed weapon
+// wielded in two hands, or one of a pair in each hand). An empty item stows what that hand holds.
+static void equip(Hands h, String item, int which, List<String> equipment) {
+    WeaponEntry w = WeaponData.find(item);
+    boolean pair = !item.isEmpty() && countOf(equipment, item) >= 2;
+    if (which == 3) {
+        h.main = item;
+        if (w != null && (w.twoHanded() || w.versatile()) || !pair) {
+            h.off = "";
+            h.twoHanded = w != null && (w.twoHanded() || w.versatile());
+        } else {
+            h.off = item;
+            h.twoHanded = false;
+        }
+    } else if (which == 1) {
+        h.main = item;
+        if (w != null && w.twoHanded()) {
+            h.off = "";
+            h.twoHanded = true;
+        } else {
+            h.twoHanded = false;
+            if (!item.isEmpty() && item.equalsIgnoreCase(h.off) && !pair) h.off = "";
+        }
+    } else {
+        h.off = item;
+        h.twoHanded = false; // the off hand is busy (or freed) again
+        WeaponEntry mw = WeaponData.find(h.main);
+        if (!item.isEmpty() && (mw != null && mw.twoHanded() || item.equalsIgnoreCase(h.main) && !pair)) h.main = "";
+    }
 }
 
 // What the character holds. A saved grip is checked against the equipment (items no longer owned are dropped);
@@ -240,7 +277,7 @@ static int armorClass(Map<?, ?> rec) {
     equipment.removeIf(e -> isShield(e) && !GameData.stripEquipmentCount(e).equalsIgnoreCase(h.off)
             && !GameData.stripEquipmentCount(e).equalsIgnoreCase(h.main));
     int dexMod = GameData.abilityModifier(CharacterStorage.recStatsMap(rec).getOrDefault("DEX", 10));
-    return GameData.computeAC(equipment, dexMod);
+    return GameData.computeAC(equipment, dexMod) + SpeciesTraits.acBonus(rec); // + Warforged Integrated Protection
 }
 
 // ===============================================================

@@ -12,7 +12,11 @@ static List<Object> loadSavedCharacters() {
         Object parsed = new MiniJsonParser(content).parse();
         if (parsed instanceof Map) {
             Object arr = ((Map<?, ?>) parsed).get("characters");
-            if (arr instanceof List) return new ArrayList<>((List<?>) arr);
+            if (arr instanceof List) {
+                List<Object> all = new ArrayList<>((List<?>) arr);
+                for (Object o : all) mergeEquipment(o);
+                return all;
+            }
         }
     } catch (Exception ex) {
         // characters.json missing or unreadable; treat as no saved characters
@@ -20,7 +24,17 @@ static List<Object> loadSavedCharacters() {
     return new ArrayList<>();
 }
 
+// One entry per item: repeated entries (e.g. "Dagger (2)" from both the class and the background) are combined
+@SuppressWarnings("unchecked")
+private static void mergeEquipment(Object rec) {
+    if (!(rec instanceof Map) || !(((Map<?, ?>) rec).get("equipment") instanceof List)) return;
+    List<?> eq = (List<?>) ((Map<?, ?>) rec).get("equipment");
+    List<String> merged = App.mergeItems(eq);
+    if (!merged.equals(eq)) ((Map<String, Object>) rec).put("equipment", new ArrayList<Object>(merged));
+}
+
 static void saveAllCharacters(List<Object> characters) {
+    for (Object o : characters) mergeEquipment(o);
     Map<String, Object> root = new LinkedHashMap<>();
     root.put("characters", characters);
     try {
@@ -50,7 +64,8 @@ static Map<String, Object> buildCharacterRecord(CharacterDraft draft) {
 
     int hd = GameData.hitDieMax(draft.characterClass);
     Integer con = draft.stats.get("CON");
-    m.put("hp", (hd > 0 && con != null) ? (Integer) (hd + GameData.abilityModifier(con)) : null);
+    int toughness = "Dwarf".equals(draft.species) && CustomAssets.speciesAsset("Dwarf") == null ? 1 : 0; // Dwarven Toughness
+    m.put("hp", (hd > 0 && con != null) ? (Integer) (Math.max(1, hd + GameData.abilityModifier(con)) + toughness) : null);
 
     boolean hasSpecies = !draft.species.isEmpty();
     m.put("speed", hasSpecies ? GameData.computeSpeed(draft.species, draft.lineage) : null);
@@ -62,7 +77,7 @@ static Map<String, Object> buildCharacterRecord(CharacterDraft draft) {
     m.put("cantripsKnown", new ArrayList<Object>(draft.cantripsKnown));
     m.put("spellsKnown", new ArrayList<Object>(draft.spellsKnown));
     m.put("gold", draft.gold);
-    m.put("equipment", new ArrayList<Object>(draft.equipment));
+    m.put("equipment", new ArrayList<Object>(App.mergeItems(draft.equipment)));
 
     Map<String, Object> choicesMap = new LinkedHashMap<>();
     for (Map.Entry<String, List<String>> en : draft.classChoices.entrySet()) {
@@ -101,9 +116,28 @@ static List<Object> loadWithIds() {
             rec.put("id", CustomAssets.newId());
             changed = true;
         }
+        if (migrateSpeciesRules(rec)) changed = true;
     }
     if (changed) saveAllCharacters(all);
     return all;
+}
+
+// One-time update of characters saved before the 2024 species rules: Dwarves, Halflings and Gnomes move at 30 ft.
+// (not 25), and Dwarves add Dwarven Toughness to their HP. Marked with speciesRules = 2024 so it runs once.
+private static boolean migrateSpeciesRules(Map<String, Object> rec) {
+    if (recInt(rec, "speciesRules") != null) return false;
+    rec.put("speciesRules", 2024);
+    String species = recStr(rec, "species");
+    if (CustomAssets.speciesAsset(species) != null) return true;
+    if (("Dwarf".equals(species) || "Halfling".equals(species) || "Gnome".equals(species)) && Integer.valueOf(25).equals(recInt(rec, "speed"))) {
+        rec.put("speed", 30);
+    }
+    Integer con = recStatsMap(rec).get("CON");
+    if ("Dwarf".equals(species) && con != null) {
+        Integer hp = computeMaxHp(recStr(rec, "characterClass"), recHpRolls(rec), con);
+        if (hp != null) rec.put("hp", hp + SpeciesTraits.hpBonus(rec));
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------
@@ -203,7 +237,10 @@ static void refreshDerived(Map<String, Object> rec) {
     if (total > 0) rec.put("level", total);
     rec.put("hitDice", FeatData.hitDiceString(classLevels));
     Integer con = recStatsMap(rec).get("CON");
-    if (con != null) rec.put("hp", computeMaxHp(recStr(rec, "characterClass"), recHpRolls(rec), con));
+    if (con != null) {
+        Integer hp = computeMaxHp(recStr(rec, "characterClass"), recHpRolls(rec), con);
+        rec.put("hp", hp == null ? null : hp + SpeciesTraits.hpBonus(rec)); // + species HP (Dwarven Toughness)
+    }
 }
 
 // When a leveled character is re-saved through the edit wizard (which only knows about

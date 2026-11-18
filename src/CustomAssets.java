@@ -236,6 +236,7 @@ static {
             num("ac", "Armor Class", 0, 40, 12),
             text("hp", "Hit Points").hint("e.g. 45 (6d10 + 12)"),
             text("speed", "Speed").hint("e.g. 30 ft., climb 20 ft.").def("30 ft."),
+            num("darkvision", "Darkvision (ft.)", 0, 300, 0).help("0 = none. In Combat, it lets the NPC see in Dim Light as if Bright and in Darkness as if Dim within this range."),
             new Field("abilities", "Ability scores", ABILITIES),
             text("saves", "Saving throws").hint("e.g. STR +5, CON +4"),
             text("skills", "Skills").hint("e.g. Perception +4, Stealth +6"),
@@ -304,7 +305,8 @@ static {
             num("darkvision", "Darkvision (ft.)", 0, 300, 0).help("0 = none."),
             new Field("languages", "Languages", MULTI).opts(() -> new ArrayList<>(GameData.LANGUAGE_INFO.keySet())).link(LINK_LANGUAGE),
             list("extraLanguages", "Other languages").help("Homebrew languages, one per line."),
-            entries("traits", "Species traits").section("Traits")));
+            entries("traits", "Species traits").traitTypes().section("Traits")
+                    .help("Set a trait's type to Damage Vulnerability, Resistance or Immunity and pick the damage type: characters of this species get it on the sheet and in Combat.")));
 
     SCHEMAS.put(CLASSES, Arrays.asList(
             text("name", "Name").hint("e.g. Runesmith"),
@@ -1298,6 +1300,7 @@ static String builtinSummary(String cat, String name) {
             p.add(GameData.computeSize(name));
             p.add(GameData.computeSpeed(name, "") + " ft.");
             if (GameData.SPECIES_LINEAGES.containsKey(name)) p.add(GameData.SPECIES_LINEAGES.get(name).length + " lineages");
+            if (SpeciesTraits.darkvision(name, "") > 0) p.add("Darkvision " + SpeciesTraits.darkvision(name, "") + " ft.");
             break;
         case BACKGROUNDS: {
             Object skills = snapshotOf(GameData.BACKGROUND_SKILL_PROFICIENCIES).get(name);
@@ -1364,6 +1367,11 @@ static String builtinDescription(String cat, String name) {
             sb.append("\n\nSize: ").append(GameData.computeSize(name)).append("\nSpeed: ").append(GameData.computeSpeed(name, "")).append(" ft.");
             String[] lin = GameData.SPECIES_LINEAGES.get(name);
             if (lin != null) sb.append("\nLineages: ").append(String.join(", ", lin));
+            int dv = SpeciesTraits.darkvision(name, "");
+            if (dv > 0) sb.append("\nDarkvision: ").append(dv).append(" ft.");
+            for (SpeciesTraits.Trait t : SpeciesTraits.allTraits(name, "")) {
+                sb.append("\n\n").append(t.name).append(t.level > 1 ? " (level " + t.level + ")" : "").append(". ").append(t.description);
+            }
             return sb.toString();
         }
         case BACKGROUNDS: {

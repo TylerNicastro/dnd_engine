@@ -325,6 +325,8 @@ class LevelUpPanel {
             conLbl.setText("CON modifier: " + App.signed(conMod) + (con != baseCon ? "   (after this feat's CON increase)" : ""));
 
             Integer oldHp = CharacterStorage.computeMaxHp(primary, oldRolls, baseCon);
+            int speciesHp = SpeciesTraits.hpBonus(rec) > 0 ? 1 : 0; // Dwarven Toughness: +1 per level
+            if (oldHp != null) oldHp += speciesHp * oldLevel;
             Integer roll = currentRoll.get();
             if (roll == null) {
                 hpLbl.setText(die > 0 ? "Roll your hit die, or enter your own roll." : "Enter the HP die result.");
@@ -334,6 +336,7 @@ class LevelUpPanel {
                 List<Integer> newRolls = new ArrayList<>(oldRolls);
                 newRolls.add(roll);
                 Integer newHp = CharacterStorage.computeMaxHp(primary, newRolls, con);
+                if (newHp != null) newHp += speciesHp * (oldLevel + 1);
                 int gain = CharacterStorage.hpGainForRoll(roll, conMod);
                 String maxText = (oldHp != null && newHp != null) ? "     •     Max HP " + oldHp + " → " + newHp : "";
                 hpLbl.setText("HP gained: " + roll + " " + (conMod >= 0 ? "+ " : "− ") + Math.abs(conMod) + " = " + gain + maxText);

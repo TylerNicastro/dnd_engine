@@ -274,7 +274,6 @@ static int computeSpeed(String species, String lineage) {
     if (homebrew != null) return CustomAssets.intVal(homebrew, "speed", 30);
     if ("Goliath".equals(species)) return 35;
     if ("Elf".equals(species) && "Wood Elf".equals(lineage)) return 35;
-    if ("Dwarf".equals(species) || "Halfling".equals(species) || "Gnome".equals(species)) return 25;
     return 30;
 }
 

@@ -16,16 +16,25 @@ import java.util.List;
 // Everything is saved in the Maps asset (custom_assets.json) next to its "grid", so it survives leaving the screen:
 //   tokens    : [{uid, kind ("PC" | "NPC"), refId, label, x, y, hp, team (-1 none, 0-9), init,
 //                 ammo {Arrow: 19, ...}, items {"Potion of Healing": 2, ...}, conditions [...], damageMods {Fire: mask, ...},
-//                 dodging, reactionsPerRound, reactionsUsed}]
+//                 dodging, reactionsPerRound, reactionsUsed, hands {main, off, twoHanded} (characters), torch (NPC carries one)}]
 //               (x, y) is the token's top-left square. Size, max HP, speed, AC, initiative bonus, attacks and the
 //               token's look are read from the character (by its "id", see CharacterStorage.loadWithIds) or the NPC
 //               asset every time, so edits made elsewhere show up. Tokens whose character / NPC was deleted are dropped.
 //               Combat-only state never touches the character sheet: ammo is copied from the character's Equipment
 //               when the token is placed and when combat starts, then counted here; damageMods are per-token
-//               adjustments (DamageRules masks, 0 = normal) on top of an NPC's typed traits.
+//               adjustments (DamageRules masks, 0 = normal) on top of an NPC's typed traits. `hands` is the
+//               character's grip in this encounter: copied from the sheet when placed, changed with Use Item, and
+//               used (through combatRec) for its attacks and AC; the sheet's own grip is never changed.
 //   teamNames : TEAMS strings ("" shows as "Team N")
 //   combat    : {round, active (uid), moveLeft, order: [uid, ...], attacksLeft, actionUsed, attackAction,
 //                bonusAttackUsed (= Bonus Action used), disengaged} while combat is running (absent otherwise)
+//
+// Light (Lighting.java): the map's grid holds its default light, painted Bright / Dim / Dark squares and mounted torches.
+// Creatures holding a Torch / Lamp / Hooded Lantern / Candle (characters: in a hand; NPCs: the token's `torch` flag) light
+// the squares around them. Attacking a creature you can't see (it's in Darkness beyond your Darkvision) has Disadvantage;
+// a target that can't see its attacker is attacked with Advantage; opportunity attacks need a mover you can see.
+// Mounted torches can be attacked like creatures (a stand-in Tok of kind OBJ); their HP is written back to the grid.
+// Characters' damage modifiers start from their species' resistances (SpeciesTraits.damageMods).
 //
 // Turn economy: one action (Attack, Dash, Disengage or Dodge), one Bonus Action (the Light-weapon extra attack, or a
 // Rogue's Cunning Action Dash / Disengage) and one Reaction per round (opportunity attacks). Leaving an enemy's
@@ -45,7 +54,7 @@ static final String[] TEAM_COLOR_NAMES = {"Blue", "Red", "Green", "Yellow", "Pur
 private static final Color NO_TEAM = new Color(0x9A, 0x96, 0x8C);
 private static final Color REACH_FILL = new Color(80, 170, 255, 60), REACH_EDGE = new Color(120, 190, 255, 150);
 private static final String TAB_TURN = "Current Turn", TAB_ORDER = "Initiative Order", TAB_TEAMS = "Teams", TAB_SETTINGS = "Combat Settings";
-private static final String PC = "PC", NPC = "NPC";
+private static final String PC = "PC", NPC = "NPC", OBJ = "OBJ"; // OBJ: a mounted torch being attacked (never saved)
 
 // ===============================================================
 // Size helpers (also used by the sheet and the NPC detail)
@@ -98,10 +107,14 @@ static class Tok {
     List<String> conditions = new ArrayList<>(); // combat-only conditions (characters start from their sheet)
     Map<String, Integer> items = new LinkedHashMap<>(); // combat-only usable items (characters start from Equipment)
     boolean itemsLoaded;        // items / conditions were copied from the source once
+    Map<String, Object> hands;  // combat-only grip {main, off, twoHanded} (characters; copied from the sheet when placed)
     // animation only (not saved)
     double drawX = Double.NaN, drawY = Double.NaN; // drawn position while sliding (in squares)
     double shakeDx;             // sideways shake offset in pixels
     boolean alert;              // red ring: waiting on its opportunity attack choice
+    // lighting
+    boolean carriesTorch;       // NPCs: carrying a lit torch this encounter (characters hold lights in their hands instead)
+    MapEditorPanel.Torch fixture; // OBJ targets only: the mounted torch this stands for
 
     boolean hasReaction() {
         return reactionsUsed < reactionsPerRound && !CombatConditions.incapacitated(conditions) && !down();
@@ -183,7 +196,11 @@ private int[] reachPrev;             // movement search: previous anchor key on 
 private boolean animating;           // a token is sliding (or paused for an opportunity attack): board input waits
 
 // view toggles (Combat Settings)
-private boolean showHp = true, showNames = true, showRange = true, showCoords = false, skipDefeated = true;
+private boolean showHp = true, showNames = true, showRange = true, showCoords = false, skipDefeated = true, showLight = true;
+
+// lighting cache (see Lighting.java): recomputed when a light source moves, a door or torch changes, or the map reloads
+private int[][] lightCache;
+private String lightKey = "";
 
 private final javax.swing.Timer saveTimer = new javax.swing.Timer(500, e -> persistNow());
 private final Random rng = new Random();
@@ -466,6 +483,11 @@ private void loadState() {
             t.conditions = CustomAssets.list(m, "conditions");
             t.items = intMap(m.get("items"));
             t.itemsLoaded = m.get("items") instanceof Map;
+            if (m.get("hands") instanceof Map) {
+                t.hands = new LinkedHashMap<>();
+                for (Map.Entry<?, ?> en : ((Map<?, ?>) m.get("hands")).entrySet()) t.hands.put(String.valueOf(en.getKey()), en.getValue());
+            }
+            t.carriesTorch = CustomAssets.bool(m, "torch");
             tokens.add(t);
         }
     }
@@ -549,7 +571,10 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
         t.speed = sp != null ? Math.max(0, sp) : 30;
         int dexMod = GameData.abilityModifier(CharacterStorage.recStatsMap(rec).getOrDefault("DEX", 10));
         t.initBonus = dexMod;
-        t.ac = WeaponRules.armorClass(rec);
+        // what it holds in this encounter: starts as the sheet's grip, then changes with Use Item (never written back)
+        if (t.hands == null) t.hands = WeaponRules.handsJson(WeaponRules.hands(rec));
+        t.hands = WeaponRules.handsJson(WeaponRules.hands(combatRec(t))); // drops items the character no longer owns
+        t.ac = WeaponRules.armorClass(combatRec(t));
         t.style = Tokens.read(rec.get("token"), Tokens.PC_COLOR);
         String cls = CharacterStorage.recStr(rec, "characterClass");
         t.subtitle = "Character · Level " + CharacterStorage.recLevel(rec) + (cls.isEmpty() ? "" : " " + cls);
@@ -570,7 +595,7 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
         if (t.label.isEmpty()) t.label = t.sourceName;
     }
     if (PC.equals(t.kind)) {
-        t.attacks = WeaponRules.characterAttacks(t.source);
+        t.attacks = WeaponRules.characterAttacks(combatRec(t));
         t.attacksPerAction = WeaponRules.attacksPerAction(t.source);
     } else {
         @SuppressWarnings("unchecked")
@@ -578,7 +603,8 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
         t.attacks = WeaponRules.npcAttacks(npc);
         t.attacksPerAction = WeaponRules.npcAttacksPerAction(npc);
     }
-    t.sourceMods = NPC.equals(t.kind) ? DamageRules.fromTraits(t.source) : new LinkedHashMap<>();
+    // damage modifiers: an NPC's typed traits, or a character's species resistances (e.g. a Dwarf resists Poison)
+    t.sourceMods = NPC.equals(t.kind) ? DamageRules.fromTraits(t.source) : SpeciesTraits.damageMods(t.source);
     // ammunition this token's attacks need but isn't tracking yet (combat-only copy; the sheet is never changed)
     for (WeaponRules.Attack a : t.attacks) if (!a.ammo.isEmpty() && !t.ammo.containsKey(a.ammo)) t.ammo.put(a.ammo, startingAmmo(t, a.ammo));
     if (!t.itemsLoaded) {
@@ -592,6 +618,36 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
     t.size = Math.min(sizeSquares(t.sizeName), Math.max(1, Math.min(model.width, model.height)));
     if (t.hp < 0 || t.hp > t.maxHp) t.hp = t.maxHp;
     return true;
+}
+
+// The character record as combat sees it: the sheet, but holding this token's combat grip
+private static Map<?, ?> combatRec(Tok t) {
+    if (t.source == null || t.hands == null) return t.source;
+    Map<Object, Object> copy = new LinkedHashMap<>(t.source);
+    copy.put("hands", t.hands);
+    return copy;
+}
+
+// Changes what a character token holds (combat only) and rebuilds its attacks and AC
+private void equipHand(Tok t, String item, int which) {
+    if (t.source == null) return;
+    WeaponRules.Hands h = WeaponRules.hands(combatRec(t));
+    WeaponRules.equip(h, item, which, CharacterStorage.recList(t.source, "equipment"));
+    t.hands = WeaponRules.handsJson(h);
+    t.hands = WeaponRules.handsJson(WeaponRules.hands(combatRec(t)));
+    t.ac = WeaponRules.armorClass(combatRec(t));
+    t.attacks = WeaponRules.characterAttacks(combatRec(t));
+    for (WeaponRules.Attack a : t.attacks) if (!a.ammo.isEmpty() && !t.ammo.containsKey(a.ammo)) t.ammo.put(a.ammo, startingAmmo(t, a.ammo));
+    persistSoon();
+    refreshAll();
+}
+
+// "Hand 1: Longsword · Hand 2: Shield" (or "Both hands: Greatsword")
+private static String handsText(Tok t) {
+    WeaponRules.Hands h = WeaponRules.hands(combatRec(t));
+    String main = h.main.isEmpty() ? "empty" : h.main, off = h.off.isEmpty() ? "empty" : h.off;
+    if (h.twoHanded && !h.main.isEmpty()) return "Both hands: " + main;
+    return "Hand 1: " + main + "  ·  Hand 2: " + off;
 }
 
 private void persistSoon() {
@@ -621,6 +677,8 @@ private void persistNow() {
         m.put("reactionsUsed", t.reactionsUsed);
         m.put("conditions", new ArrayList<Object>(t.conditions));
         m.put("items", new LinkedHashMap<String, Object>(t.items));
+        if (t.hands != null) m.put("hands", new LinkedHashMap<String, Object>(t.hands));
+        if (t.carriesTorch) m.put("torch", true);
         tl.add(m);
     }
     asset.put("tokens", tl);
@@ -1286,6 +1344,8 @@ private void animateStep(Tok mover, List<int[]> path, int i, int cost, Set<Tok> 
         for (Tok e : order) {
             if (e == mover || asked.contains(e) || !e.hasReaction() || !hasMelee(e)) continue;
             if (mover.team >= 0 && e.team == mover.team) continue;
+            // opportunity attacks need a creature you can see (Darkness or being Blinded hides it)
+            if (!canSee(e, mover) || e.conditions.stream().anyMatch("Blinded"::equalsIgnoreCase)) continue;
             int r = e.meleeReach();
             if (distanceAt(e, from[0], from[1], mover.size) <= r && distanceAt(e, to[0], to[1], mover.size) > r) {
                 asked.add(e);
@@ -1525,46 +1585,215 @@ static int distanceFt(Tok a, Tok b) {
     return Math.max(gapCells(a.x, a.size, b.x, b.size), gapCells(a.y, a.size, b.y, b.size)) * 5;
 }
 
-private int edgeValue(int cx, int cy, int dx, int dy) {
-    if (cx < 0 || cy < 0 || cx >= model.width || cy >= model.height) return MapEditorPanel.WALL;
-    if (dx == 1) return model.vEdges[cy][cx + 1];
-    if (dx == -1) return model.vEdges[cy][cx];
-    if (dy == 1) return model.hEdges[cy + 1][cx];
-    return model.hEdges[cy][cx];
-}
-
-private static boolean blocksSight(int v) {
-    return v == MapEditorPanel.WALL || v == MapEditorPanel.DOOR_CLOSED;
-}
-
 // {blocked (1/0), cover (1 = half cover from a window / low wall)} along the line between the creatures' centers
 private int[] lineOfSight(Tok a, Tok b) {
-    double x0 = a.x + a.size / 2.0, y0 = a.y + a.size / 2.0, x1 = b.x + b.size / 2.0, y1 = b.y + b.size / 2.0;
-    double len = Math.hypot(x1 - x0, y1 - y0);
-    int steps = Math.max(1, (int) Math.ceil(len / 0.05));
-    int px = (int) Math.floor(x0), py = (int) Math.floor(y0);
-    boolean cover = false;
-    for (int i = 1; i <= steps; i++) {
-        double t = i / (double) steps;
-        int nx = (int) Math.floor(x0 + (x1 - x0) * t), ny = (int) Math.floor(y0 + (y1 - y0) * t);
-        if (nx == px && ny == py) continue;
-        int dx = Integer.signum(nx - px), dy = Integer.signum(ny - py);
-        if (dx != 0 && dy != 0) {
-            // passing a corner: blocked only if both ways around it are blocked
-            int a1 = edgeValue(px, py, dx, 0), a2 = edgeValue(px + dx, py, 0, dy);
-            int b1 = edgeValue(px, py, 0, dy), b2 = edgeValue(px, py + dy, dx, 0);
-            boolean pathA = blocksSight(a1) || blocksSight(a2), pathB = blocksSight(b1) || blocksSight(b2);
-            if (pathA && pathB) return new int[]{1, 0};
-            if (a1 == MapEditorPanel.WINDOW || a2 == MapEditorPanel.WINDOW || b1 == MapEditorPanel.WINDOW || b2 == MapEditorPanel.WINDOW) cover = true;
-        } else {
-            int v = edgeValue(px, py, dx, dy);
-            if (blocksSight(v)) return new int[]{1, 0};
-            if (v == MapEditorPanel.WINDOW) cover = true;
-        }
-        px = nx;
-        py = ny;
+    return Lighting.sight(model, a.x + a.size / 2.0, a.y + a.size / 2.0, b.x + b.size / 2.0, b.y + b.size / 2.0);
+}
+
+// ===============================================================
+// Light & vision (Lighting.java)
+// ===============================================================
+// The light a token carries: the brightest light item a character holds, or an NPC's torch; null for none
+private static int[] carriedLight(Tok t) {
+    if (OBJ.equals(t.kind)) return null;
+    if (NPC.equals(t.kind)) return t.carriesTorch ? Lighting.TORCH_LIGHT : null;
+    if (t.source == null) return null;
+    WeaponRules.Hands h = WeaponRules.hands(combatRec(t));
+    int[] best = null;
+    for (String item : new String[]{h.main, h.off}) {
+        int[] l = Lighting.heldLight(item);
+        if (l != null && (best == null || l[0] + l[1] > best[0] + best[1])) best = l;
     }
-    return new int[]{0, cover ? 1 : 0};
+    return best;
+}
+
+private static String carriedLightName(Tok t) {
+    if (NPC.equals(t.kind)) return t.carriesTorch ? "Torch" : "";
+    if (t.source == null) return "";
+    WeaponRules.Hands h = WeaponRules.hands(combatRec(t));
+    if (Lighting.heldLight(h.main) != null) return h.main;
+    if (Lighting.heldLight(h.off) != null) return h.off;
+    return "";
+}
+
+// Light level of every square right now: map light + mounted torches + carried lights
+private int[][] lightLevels() {
+    List<Lighting.Source> sources = Lighting.torchSources(model);
+    for (Tok t : tokens) {
+        int[] l = carriedLight(t);
+        if (l != null) sources.add(new Lighting.Source(t.x, t.y, t.size, l[0], l[1]));
+    }
+    StringBuilder key = new StringBuilder().append(System.identityHashCode(model)).append('|').append(model.ambient);
+    for (Lighting.Source s : sources) key.append('|').append(s.key());
+    for (int[] row : model.hEdges) key.append(Arrays.hashCode(row));
+    for (int[] row : model.vEdges) key.append(Arrays.hashCode(row));
+    for (int[] row : model.light) key.append(Arrays.hashCode(row));
+    String k = key.toString();
+    if (lightCache == null || !k.equals(lightKey) || lightCache.length != model.height) {
+        lightCache = Lighting.compute(model, sources);
+        lightKey = k;
+    }
+    return lightCache;
+}
+
+static int darkvisionOf(Tok t) {
+    if (t.source == null || OBJ.equals(t.kind)) return 0;
+    return PC.equals(t.kind) ? SpeciesTraits.darkvision(t.source) : CustomAssets.intVal(t.source, "darkvision", 0);
+}
+
+// Best light level `viewer` perceives anywhere in `target`'s footprint (Darkvision applied), ignoring walls
+private int perceivedLevel(Tok viewer, Tok target) {
+    int[][] lv = lightLevels();
+    int dv = darkvisionOf(viewer), best = Lighting.DARK;
+    for (int y = target.y; y < target.y + target.size && y < model.height; y++) {
+        for (int x = target.x; x < target.x + target.size && x < model.width; x++) {
+            int d = Lighting.gapFt(viewer.x, viewer.y, viewer.size, x, y);
+            best = Math.min(best, Lighting.perceived(lv[y][x], d, dv));
+        }
+    }
+    return best;
+}
+
+// Light level of the brightest square a token occupies (as the map is lit, not as anyone sees it)
+private int levelAt(Tok t) {
+    int[][] lv = lightLevels();
+    int best = Lighting.DARK;
+    for (int y = t.y; y < t.y + t.size && y < model.height; y++) {
+        for (int x = t.x; x < t.x + t.size && x < model.width; x++) best = Math.min(best, lv[y][x]);
+    }
+    return best;
+}
+
+// Can `viewer` see `target`? Needs line of sight, and the target mustn't be in Darkness (to the viewer's eyes).
+// Blinded / Invisible are handled by CombatConditions.
+private boolean canSee(Tok viewer, Tok target) {
+    if (OBJ.equals(viewer.kind)) return false;
+    if (lineOfSight(viewer, target)[0] == 1) return false;
+    return perceivedLevel(viewer, target) < Lighting.DARK;
+}
+
+// ===============================================================
+// Mounted torches (map objects that can be attacked)
+// ===============================================================
+private static final Map<String, Integer> TORCH_IMMUNITIES = new LinkedHashMap<>();
+static {
+    TORCH_IMMUNITIES.put("Poison", DamageRules.IMMUNE);
+    TORCH_IMMUNITIES.put("Psychic", DamageRules.IMMUNE);
+}
+
+// A stand-in target for attacking a mounted torch (AC, HP and immunities from the map; never saved as a token)
+private static Tok torchTarget(MapEditorPanel.Torch tr) {
+    Tok t = new Tok();
+    t.kind = OBJ;
+    t.uid = "torch:" + tr.x + "," + tr.y;
+    t.label = "Mounted Torch";
+    t.sourceName = "Mounted Torch";
+    t.x = tr.x;
+    t.y = tr.y;
+    t.size = 1;
+    t.ac = tr.ac;
+    t.hp = tr.hp;
+    t.maxHp = tr.maxHp;
+    t.reactionsPerRound = 0;
+    t.sourceMods = new LinkedHashMap<>(TORCH_IMMUNITIES);
+    t.fixture = tr;
+    return t;
+}
+
+// Intact torches as attack targets
+private List<Tok> torchTargets() {
+    List<Tok> out = new ArrayList<>();
+    for (MapEditorPanel.Torch tr : model.torches) if (tr.hp > 0) out.add(torchTarget(tr));
+    return out;
+}
+
+// After damage to a torch stand-in: write its HP back to the map (at 0 it's destroyed and stops shedding light)
+private void syncFixture(Tok t) {
+    if (t.fixture == null) return;
+    t.fixture.hp = Math.max(0, t.hp);
+    if (asset != null) asset.put("grid", model.toJson());
+    lightCache = null;
+    board.repaint();
+}
+
+private void saveTorch(MapEditorPanel.Torch tr) {
+    if (asset != null) asset.put("grid", model.toJson());
+    lightCache = null;
+    persistNow();
+    refreshAll();
+}
+
+// Torch details: AC / HP / status, light or put it out, repair, and set its HP
+private void showTorchDetail(Component anchor, MapEditorPanel.Torch tr) {
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    Runnable[] close = new Runnable[1];
+    JLabel info = new JLabel("<html><div style='width:400px'>" + App.escapeHtml(Lighting.MOUNTED_TORCH_INFO)
+            + (inCombat ? "<br><br>To attack it, choose an attack on the Current Turn tab and click the torch." : "") + "</div></html>");
+    info.setForeground(App.TEXT_LIGHT);
+    info.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    info.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(info);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+    JPanel tiles = new JPanel(new GridLayout(1, 3, 6, 0));
+    tiles.setOpaque(false);
+    tiles.setAlignmentX(Component.LEFT_ALIGNMENT);
+    tiles.setMaximumSize(new Dimension(420, 52));
+    tiles.add(statTile(String.valueOf(tr.ac), "AC", () -> App.showInfoOverlay(tiles, "Armor Class", "Mounted Torch",
+            "An attack hits the torch if its roll equals or beats this. Set in the map editor's Light layer.", null)));
+    tiles.add(statTile(tr.hp + " / " + tr.maxHp, "HIT POINTS", () -> App.showInfoOverlay(tiles, "Hit Points", "Mounted Torch",
+            "Damage from attacks lowers this. At 0 the torch is destroyed and its light goes out. It is immune to Poison and Psychic damage.", null)));
+    tiles.add(statTile(Lighting.torchStatus(tr), "STATUS", () -> App.showInfoOverlay(tiles, Lighting.torchStatus(tr), "Mounted Torch",
+            tr.hp <= 0 ? "Destroyed: it sheds no light. Repair it below to restore it." : tr.lit
+                    ? "Lit: Bright Light in a 20-foot radius and Dim Light for an additional 20 feet." : "Unlit: it sheds no light until lit again.", null)));
+    body.add(tiles);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+    JLabel imm = muted("Immune to Poison and Psychic damage.");
+    App.clickable(imm, () -> App.showInfoOverlay(imm, "Damage Immunity", "Mounted Torch", DamageRules.INFO, null));
+    body.add(imm);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+
+    JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+    buttons.setOpaque(false);
+    buttons.setAlignmentX(Component.LEFT_ALIGNMENT);
+    if (tr.hp > 0) {
+        JButton toggle = Tokens.smallButton(tr.lit ? "Put Out" : "Light It", tr.lit ? "Extinguish the torch" : "Light the torch");
+        toggle.addActionListener(e -> {
+            tr.lit = !tr.lit;
+            close[0].run();
+            saveTorch(tr);
+            setStatus("The mounted torch is " + (tr.lit ? "lit." : "put out."));
+        });
+        buttons.add(toggle);
+    }
+    if (tr.hp < tr.maxHp) {
+        JButton repair = Tokens.smallButton("Repair", "Restore it to full Hit Points" + (tr.hp <= 0 ? " (relit)" : ""));
+        repair.addActionListener(e -> {
+            if (tr.hp <= 0) tr.lit = true;
+            tr.hp = tr.maxHp;
+            close[0].run();
+            saveTorch(tr);
+            setStatus("The mounted torch is repaired.");
+        });
+        buttons.add(repair);
+    }
+    JSpinner hpSpin = new JSpinner(new SpinnerNumberModel(Math.max(0, tr.hp), 0, tr.maxHp, 1));
+    hpSpin.setPreferredSize(new Dimension(64, 28));
+    styleSpinner(hpSpin);
+    JButton setHp = Tokens.smallButton("Set HP", "Set its current Hit Points");
+    setHp.addActionListener(e -> {
+        commit(hpSpin);
+        tr.hp = (Integer) hpSpin.getValue();
+        close[0].run();
+        saveTorch(tr);
+        setStatus(tr.hp <= 0 ? "The mounted torch is destroyed." : "Mounted torch: " + tr.hp + " / " + tr.maxHp + " HP.");
+    });
+    buttons.add(muted2("HP:"));
+    buttons.add(hpSpin);
+    buttons.add(setHp);
+    body.add(buttons);
+    close[0] = App.showSheetOverlay(anchor, "Mounted Torch (" + colName(tr.x) + (tr.y + 1) + ")", body, null);
 }
 
 static final class TargetCheck {
@@ -1617,6 +1846,19 @@ TargetCheck checkTarget(Tok att, Tok target, WeaponRules.Attack atk) {
     if (atk.heavyPenalty) {
         tc.disadvantage = true;
         tc.notes.add("Heavy weapon without 13 " + (atk.melee ? "Strength" : "Dexterity") + ": Disadvantage.");
+    }
+    // light: attacking what you can't see has Disadvantage; a target that can't see you is attacked with Advantage
+    int targetLight = levelAt(target);
+    if (perceivedLevel(att, target) >= Lighting.DARK) {
+        tc.disadvantage = true;
+        tc.notes.add(target.label + " is in Darkness and you can't see it: Disadvantage"
+                + (darkvisionOf(att) > 0 ? " (beyond your " + darkvisionOf(att) + " ft. Darkvision)." : "."));
+    } else if (targetLight == Lighting.DARK) {
+        tc.notes.add("Darkvision: you see " + target.label + " in the Darkness as if it were Dim Light.");
+    }
+    if (!OBJ.equals(target.kind) && !canSee(target, att)) {
+        tc.advantage = true;
+        tc.notes.add(target.label + " can't see you in the Darkness: Advantage.");
     }
     int[] condFx = CombatConditions.attackEffects(att.conditions, target.conditions, tc.distance, tc.notes);
     if (condFx[0] == 1) tc.advantage = true;
@@ -1720,9 +1962,16 @@ private void showAttackPicker(Component anchor, Tok t) {
         list.add(row);
         list.add(Box.createRigidArea(new Dimension(0, 5)));
     }
-    if (PC.equals(t.kind)) {
-        JLabel hint = muted("Attacks come from what " + t.label + " holds (Hands & Attacks on the character sheet).");
-        list.add(hint);
+    if (PC.equals(t.kind) && t.source != null) {
+        list.add(muted(handsText(t) + ". Attacks come from what " + t.label + " holds."));
+        list.add(Box.createRigidArea(new Dimension(0, 4)));
+        JButton swap = Tokens.smallButton("Draw / swap weapons", "Change what each hand holds for this encounter (Use Item)");
+        swap.setAlignmentX(Component.LEFT_ALIGNMENT);
+        swap.addActionListener(e -> {
+            close[0].run();
+            showUseItem(anchor, t);
+        });
+        list.add(swap);
     }
     JScrollPane sp = new JScrollPane(list);
     App.applyDarkScrollBar(sp);
@@ -1931,7 +2180,9 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         applied[0] = true;
         setStatus(att.label + " hits " + target.label + " for " + taken + " " + atk.damageType.toLowerCase() + " damage"
                 + (why.isEmpty() ? "" : " [" + why + "]")
-                + (target.down() ? ". " + target.label + " is down!" : " (" + target.hp + " / " + target.maxHp + " HP)."));
+                + (target.down() ? (OBJ.equals(target.kind) ? ". The torch is destroyed and its light goes out!" : ". " + target.label + " is down!")
+                        : " (" + target.hp + " / " + target.maxHp + " HP)."));
+        syncFixture(target);
         persistSoon();
         refreshAll();
         render[0].run();
@@ -1942,6 +2193,7 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         target.hp = Math.max(0, target.hp - g);
         applied[0] = true;
         setStatus("Graze: " + target.label + " takes " + g + " " + atk.damageType.toLowerCase() + " damage on the miss.");
+        syncFixture(target);
         persistSoon();
         refreshAll();
         render[0].run();
@@ -2363,6 +2615,10 @@ private void showUseItem(Component anchor, Tok t) {
     intro.setAlignmentX(Component.LEFT_ALIGNMENT);
     list.add(intro);
     list.add(Box.createRigidArea(new Dimension(0, 8)));
+    if (PC.equals(t.kind) && t.source != null) {
+        addHandsSection(list, anchor, t, close);
+        list.add(sectionCaption("OTHER ITEMS"));
+    }
     if (t.items.isEmpty()) list.add(muted("No usable items. Add one below (e.g. a Potion of Healing the DM hands out)."));
     for (Map.Entry<String, Integer> en : new ArrayList<>(t.items.entrySet())) {
         String item = en.getKey();
@@ -2455,6 +2711,118 @@ private void showUseItem(Component anchor, Tok t) {
     sp.setPreferredSize(new Dimension(560, Math.min(460, list.getPreferredSize().height + 12)));
     sp.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
     close[0] = App.showSheetOverlay(anchor, "Use Item: " + t.label, sp, null);
+}
+
+// Use Item's HANDS part: what each hand holds now (with Stow), then every weapon and shield from Equipment with
+// buttons to put it in Hand 1, Hand 2 or both hands. Combat only: the sheet's grip is left alone.
+private void addHandsSection(JPanel list, Component anchor, Tok t, Runnable[] close) {
+    List<String> equipment = CharacterStorage.recList(t.source, "equipment");
+    WeaponRules.Hands h = WeaponRules.hands(combatRec(t));
+    Runnable reopen = () -> {
+        close[0].run();
+        showUseItem(anchor, t);
+    };
+    list.add(sectionCaption("HANDS"));
+    String[][] held = h.twoHanded && !h.main.isEmpty() ? new String[][]{{"Both hands", h.main, "1"}}
+            : new String[][]{{"Hand 1", h.main, "1"}, {"Hand 2", h.off, "2"}};
+    for (String[] hd : held) {
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row.setMaximumSize(new Dimension(520, 34));
+        JLabel l = new JLabel("<html><span style='color:#aaa5a0'>" + hd[0] + ":</span> <b>" + App.escapeHtml(hd[1].isEmpty() ? "empty" : hd[1]) + "</b></html>");
+        l.setForeground(App.TEXT_LIGHT);
+        l.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        String item = hd[1];
+        App.clickable(l, () -> App.showInfoOverlay(l, item.isEmpty() ? "Empty Hand" : item, hd[0],
+                item.isEmpty() ? "Nothing held. A free hand can hold a spellcasting focus or component, grapple, or draw an item."
+                        : handItemInfo(item), null));
+        row.add(l, BorderLayout.CENTER);
+        if (!item.isEmpty()) {
+            JButton stow = Tokens.smallButton("Stow", "Put it away (this encounter only)");
+            int which = Integer.parseInt(hd[2]);
+            stow.addActionListener(e -> {
+                if (which == 1 && h.twoHanded) equipHand(t, "", 3);
+                else equipHand(t, "", which);
+                reopen.run();
+            });
+            JPanel b = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 2));
+            b.setOpaque(false);
+            b.add(stow);
+            row.add(b, BorderLayout.EAST);
+        }
+        list.add(row);
+    }
+    // weapons and shields the character owns
+    List<String> holdable = new ArrayList<>();
+    for (String e : equipment) {
+        String base = GameData.stripEquipmentCount(e);
+        boolean light = Lighting.heldLight(base) != null; // Torch, Lamp, Hooded Lantern, Candle
+        if ((WeaponData.find(base) != null || WeaponRules.isShield(base) || light) && holdable.stream().noneMatch(base::equalsIgnoreCase)) holdable.add(base);
+    }
+    list.add(Box.createRigidArea(new Dimension(0, 6)));
+    if (holdable.isEmpty()) {
+        list.add(muted("No weapons, shields or light sources in " + t.label + "'s Equipment. Add them on the character sheet."));
+    }
+    for (String item : holdable) {
+        WeaponEntry w = WeaponData.find(item);
+        int owned = WeaponRules.countOf(equipment, item);
+        boolean pair = owned >= 2;
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row.setMaximumSize(new Dimension(520, 52));
+        int[] lightOf = Lighting.heldLight(item);
+        String sub = w != null ? w.damage + (w.versatile() ? " (" + w.damageText(true) + " two-handed)" : "") + (w.twoHanded() ? " · Two-Handed" : "") + (w.light() ? " · Light" : "")
+                : lightOf != null ? "Light source: " + Lighting.heldLightText(lightOf)
+                : "+" + GameData.shieldBonus(GameData.ARMOR_AC.get(item)) + " AC while held";
+        JLabel l = new JLabel("<html><b>" + App.escapeHtml(item) + "</b>" + (owned > 1 ? " ×" + owned : "") + "<br><span style='color:#aaa5a0'>"
+                + App.escapeHtml(sub) + "</span></html>");
+        l.setForeground(App.TEXT_LIGHT);
+        l.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        App.clickable(l, () -> App.showInfoOverlay(l, item, w != null ? w.category + " Weapon" : lightOf != null ? "Light source" : "Shield", handItemInfo(item), null));
+        row.add(l, BorderLayout.CENTER);
+        JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 6));
+        btns.setOpaque(false);
+        boolean inMain = item.equalsIgnoreCase(h.main), inOff = item.equalsIgnoreCase(h.off);
+        boolean twoOnly = w != null && w.twoHanded();
+        if (!twoOnly) {
+            JButton h1 = Tokens.smallButton("Hand 1", "Hold it in your main hand");
+            h1.setEnabled(!(inMain && !h.twoHanded));
+            h1.addActionListener(e -> { equipHand(t, item, 1); reopen.run(); });
+            JButton h2 = Tokens.smallButton("Hand 2", "Hold it in your off hand");
+            h2.setEnabled(!inOff);
+            h2.addActionListener(e -> { equipHand(t, item, 2); reopen.run(); });
+            btns.add(h1);
+            btns.add(h2);
+        }
+        boolean twoGrip = w != null && (w.twoHanded() || w.versatile());
+        if (twoGrip || pair && w != null) {
+            JButton both = Tokens.smallButton("Both", twoGrip ? (twoOnly ? "Two-Handed: it takes both hands" : "Wield it with both hands (Versatile damage)")
+                    : "One in each hand");
+            both.setEnabled(twoGrip ? !(inMain && h.twoHanded) : !(inMain && inOff));
+            both.addActionListener(e -> { equipHand(t, item, 3); reopen.run(); });
+            btns.add(both);
+        }
+        row.add(btns, BorderLayout.EAST);
+        list.add(row);
+        list.add(Box.createRigidArea(new Dimension(0, 2)));
+    }
+    JLabel note = new JLabel("<html><div style='width:400px'>Drawing or stowing a weapon is part of an attack or your free object "
+            + "interaction, so it doesn't use an action here. Only this encounter changes; the sheet keeps its own grip.</div></html>");
+    note.setForeground(App.TEXT_MUTED);
+    note.setFont(new Font("SansSerif", Font.PLAIN, 11));
+    note.setAlignmentX(Component.LEFT_ALIGNMENT);
+    list.add(Box.createRigidArea(new Dimension(0, 4)));
+    list.add(note);
+    list.add(Box.createRigidArea(new Dimension(0, 12)));
+}
+
+private static String handItemInfo(String item) {
+    WeaponEntry w = WeaponData.find(item);
+    if (w != null) return w.infoText();
+    String d = App.itemDescription(item);
+    return d == null || d.isEmpty() ? "No description." : d;
 }
 
 private void useGenericItem(Tok t, String item) {
@@ -2696,12 +3064,50 @@ private void showTokenDetail(Component anchor, Tok t) {
     modLbl.setForeground(modSummary.isEmpty() ? App.TEXT_MUTED : App.TEXT_LIGHT);
     modLbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
     App.clickable(modLbl, () -> App.showInfoOverlay(modLbl, "Damage Modifiers", t.label,
-            DamageRules.INFO + (NPC.equals(t.kind) ? "\n\nNPC traits with a Damage Vulnerability / Resistance / Immunity type set these; edit them in Assets → NPCs." : ""), null));
+            DamageRules.INFO + (NPC.equals(t.kind) ? "\n\nNPC traits with a Damage Vulnerability / Resistance / Immunity type set these; edit them in Assets → NPCs."
+                    : "\n\nA character starts with its species' resistances (for example, a Dwarf resists Poison damage)."), null));
     modRow.add(modLbl, BorderLayout.CENTER);
     Runnable[] reopen = new Runnable[1];
     JButton modEdit = Tokens.smallButton("Adjust", "Change this token's resistances, vulnerabilities and immunities for this encounter");
     modRow.add(modEdit, BorderLayout.EAST);
     body.add(modRow);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+
+    // light & vision
+    body.add(sectionCaption("LIGHT & VISION"));
+    int here = levelAt(t), dv = darkvisionOf(t);
+    String lightName = carriedLightName(t);
+    String visionText = "Standing in " + Lighting.NAMES[here] + "  ·  " + (dv > 0 ? "Darkvision " + dv + " ft." : "No Darkvision")
+            + (lightName.isEmpty() ? "" : "  ·  Carrying: " + lightName);
+    JLabel visionLbl = new JLabel("<html><div style='width:420px'>" + App.escapeHtml(visionText) + "</div></html>");
+    visionLbl.setForeground(App.TEXT_LIGHT);
+    visionLbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    visionLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
+    List<String[]> visionRows = new ArrayList<>();
+    visionRows.add(App.row("Light here", Lighting.NAMES[here]));
+    visionRows.add(App.row("Darkvision", dv > 0 ? dv + " ft. (" + (PC.equals(t.kind) ? "species" : "NPC stat block") + ")" : "none"));
+    int[] carried = carriedLight(t);
+    if (carried != null) visionRows.add(App.row("Light carried", lightName + ": " + Lighting.heldLightText(carried)));
+    App.clickable(visionLbl, () -> App.showInfoOverlay(visionLbl, "Light & Vision", t.label, Lighting.INFO[here]
+            + (dv > 0 ? "\n\n" + SpeciesTraits.DARKVISION_INFO : "")
+            + (PC.equals(t.kind) ? "\n\nTo carry a light, put a Torch, Lamp, Hooded Lantern or Candle in a hand with Use Item → Hands."
+                    : "\n\nSet an NPC's Darkvision in its stat block (Assets → NPCs)."), visionRows));
+    body.add(visionLbl);
+    if (NPC.equals(t.kind)) {
+        JCheckBox torchBox = new JCheckBox("Carrying a lit torch (" + Lighting.heldLightText(Lighting.TORCH_LIGHT) + ")", t.carriesTorch);
+        torchBox.setOpaque(false);
+        torchBox.setForeground(App.TEXT_LIGHT);
+        torchBox.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        torchBox.setFocusPainted(false);
+        torchBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+        torchBox.addActionListener(e -> {
+            t.carriesTorch = torchBox.isSelected();
+            persistSoon();
+            board.repaint();
+            refreshSide();
+        });
+        body.add(torchBox);
+    }
     body.add(Box.createRigidArea(new Dimension(0, 10)));
 
     // ammunition (combat-only count)
@@ -3060,6 +3466,10 @@ private void showMapInfo() {
     rows.add(App.row("Area", model.width * 5 + " ft. × " + model.height * 5 + " ft."));
     rows.add(App.row("Doors", String.valueOf(doors)));
     rows.add(App.row("Pins", String.valueOf(model.pins.size())));
+    rows.add(App.row("Default light", Lighting.NAMES[Math.max(0, Math.min(2, model.ambient))]));
+    int intact = 0;
+    for (MapEditorPanel.Torch tr : model.torches) if (tr.hp > 0) intact++;
+    rows.add(App.row("Mounted torches", model.torches.isEmpty() ? "none" : intact + " of " + model.torches.size() + " intact"));
     rows.add(App.row("Tokens", String.valueOf(tokens.size())));
     rows.add(App.row("Combat", inCombat ? "Round " + round : "Not started"));
     String notes = CustomAssets.str(asset, "notes");
@@ -3177,7 +3587,20 @@ private void buildTurnTab() {
                     + "You can pass through allies' spaces but not enemies', and can't end your move in another creature's space.",
             Arrays.asList(App.row("Speed", t.speed + " ft."), App.row("Left", moveLeft + " ft."), App.row("Size", t.sizeName + " · " + footprintText(t.sizeName)))));
     addSide(mv);
-    gap(14);
+    gap(10);
+
+    if (PC.equals(t.kind) && t.source != null) {
+        addSide(sectionCaption("HANDS"));
+        JLabel hl = new JLabel("<html><div style='width:280px'>" + App.escapeHtml(handsText(t)) + "</div></html>");
+        hl.setForeground(App.TEXT_LIGHT);
+        hl.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        hl.setToolTipText("What " + t.label + " is holding. Click to draw, swap or stow a weapon or shield.");
+        App.clickable(hl, () -> showUseItem(hl, t));
+        addSide(hl);
+        gap(14);
+    } else {
+        gap(4);
+    }
 
     // ---- turn economy: filled circle = still available, empty circle = used ----
     boolean incap = t.down() || CombatConditions.incapacitated(t.conditions);
@@ -3545,6 +3968,45 @@ private void buildSettingsTab() {
     addSide(toggle("Show names", showNames, v -> showNames = v, "Draw each token's name above it."));
     addSide(toggle("Show movement range", showRange, v -> showRange = v, "Highlight reachable squares while moving."));
     addSide(toggle("Show grid coordinates", showCoords, v -> showCoords = v, "Letters along the top and numbers down the side (A1 is the top-left square)."));
+    addSide(toggle("Show lighting", showLight, v -> showLight = v, "Shade Dim and Dark squares. Light still affects attacks when hidden."));
+    gap(10);
+    addSide(sectionCaption("LIGHT"));
+    gap(4);
+    JPanel ambientRow = new JPanel(new BorderLayout(8, 0));
+    ambientRow.setOpaque(false);
+    ambientRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+    ambientRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 32));
+    JLabel ambientLbl = new JLabel("Whole map:");
+    ambientLbl.setForeground(App.TEXT_LIGHT);
+    ambientLbl.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    JComboBox<String> ambient = new JComboBox<>(Lighting.SHORT);
+    App.styleCombo(ambient);
+    ambient.setSelectedIndex(Math.max(0, Math.min(2, model.ambient)));
+    ambient.setToolTipText("The map's default light. Squares painted in the map editor's Light layer and torches override it.");
+    ambient.addActionListener(e -> {
+        if (ambient.getSelectedIndex() == model.ambient) return;
+        model.ambient = ambient.getSelectedIndex();
+        if (asset != null) asset.put("grid", model.toJson());
+        lightCache = null;
+        persistNow();
+        setStatus("The whole map is now " + Lighting.NAMES[model.ambient] + " by default.");
+        board.repaint();
+    });
+    ambientRow.add(ambientLbl, BorderLayout.WEST);
+    ambientRow.add(ambient, BorderLayout.CENTER);
+    addSide(ambientRow);
+    gap(4);
+    JLabel lightRules = muted("Dim Light: Disadvantage on sight-based Perception. Darkness: creatures can't see "
+            + "into it (attacks at Disadvantage, attacks against them at Advantage). Darkvision lifts it one step. Click for details.");
+    App.clickable(lightRules, () -> App.showInfoOverlay(lightRules, "Light & Vision", "2024 rules",
+            Lighting.INFO[0] + "\n\n" + Lighting.INFO[1] + "\n\n" + Lighting.INFO[2]
+                    + "\n\nLight sources: mounted torches (placed in the map editor's Light layer) and creatures holding a Torch, Lamp, "
+                    + "Hooded Lantern or Candle (Use Item → Hands; NPCs: Carry a torch in the token details). Walls and closed doors block light.",
+            Arrays.asList(App.row("Torch", Lighting.heldLightText(Lighting.HELD_LIGHTS.get("Torch"))),
+                    App.row("Lamp", Lighting.heldLightText(Lighting.HELD_LIGHTS.get("Lamp"))),
+                    App.row("Hooded Lantern", Lighting.heldLightText(Lighting.HELD_LIGHTS.get("Hooded Lantern"))),
+                    App.row("Candle", Lighting.heldLightText(Lighting.HELD_LIGHTS.get("Candle"))))));
+    addSide(lightRules);
     gap(10);
     addSide(sectionCaption("TURNS"));
     gap(4);
@@ -4021,6 +4483,10 @@ private class Board extends JComponent {
         }
         if (targeting != null) {
             Tok target = inMap(cx, cy) ? tokenAt(cx, cy) : null;
+            if (target == null && inMap(cx, cy)) {
+                MapEditorPanel.Torch tr = model.torchAt(cx, cy);
+                if (tr != null && tr.hp > 0) target = torchTarget(tr);
+            }
             if (target == null || target == active) {
                 setStatus("Click a creature to attack with " + targeting.name + ". Right-click or Esc to cancel.");
                 return;
@@ -4039,6 +4505,11 @@ private class Board extends JComponent {
         Tok t = tokenAt(cx, cy);
         if (t != null) {
             showTokenDetail(this, t);
+            return;
+        }
+        MapEditorPanel.Torch torch = torchAt(x, y);
+        if (torch != null && !moveMode) {
+            showTorchDetail(this, torch);
             return;
         }
         int[] door = doorAt(x, y);
@@ -4066,9 +4537,20 @@ private class Board extends JComponent {
         }
         if (inMap(cx, cy)) {
             int fl = model.floor[cy][cx];
-            App.showInfoOverlay(this, MapEditorPanel.FLOOR_NAMES[fl], "Square " + colName(cx) + (cy + 1) + " • 5 ft.",
-                    MapEditorPanel.FLOOR_INFO[fl], null);
+            int lv = lightLevels()[cy][cx];
+            App.showInfoOverlay(this, MapEditorPanel.FLOOR_NAMES[fl], "Square " + colName(cx) + (cy + 1) + " • 5 ft. • " + Lighting.NAMES[lv],
+                    MapEditorPanel.FLOOR_INFO[fl] + "\n\n" + Lighting.INFO[lv], null);
         }
+    }
+
+    // A mounted torch under the pointer (x, y in squares), or null
+    private MapEditorPanel.Torch torchAt(double x, double y) {
+        int cx = (int) Math.floor(x), cy = (int) Math.floor(y);
+        if (!inMap(cx, cy)) return null;
+        MapEditorPanel.Torch t = model.torchAt(cx, cy);
+        if (t == null) return null;
+        double r = Math.max(0.3, 7 / scale);
+        return Math.hypot(x - (t.x + 0.5), y - (t.y + 0.5)) <= r + 0.12 ? t : null;
     }
 
     private void onMove(Point p) {
@@ -4083,11 +4565,15 @@ private class Board extends JComponent {
             setCursor(Cursor.getPredefinedCursor(Cursor.CROSSHAIR_CURSOR));
         } else {
             boolean clickable = inMap(cx, cy) && (tokenAt(cx, cy) != null || (moveMode && reachCells.length > 0 && reachCells[cy][cx]));
-            if (doorAt(x, y) != null || pinAt(x, y) != null) clickable = true;
+            if (doorAt(x, y) != null || pinAt(x, y) != null || torchAt(x, y) != null) clickable = true;
             if (!panning) setCursor(Cursor.getPredefinedCursor(clickable ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
         }
         if (targeting != null && hoverX >= 0) {
             Tok t = tokenAt(hoverX, hoverY);
+            if (t == null) {
+                MapEditorPanel.Torch tr = model.torchAt(hoverX, hoverY);
+                if (tr != null && tr.hp > 0) t = torchTarget(tr);
+            }
             if (t != null && t != active) {
                 TargetCheck tc = checkTarget(active, t, targeting);
                 setStatus(t.label + ": " + tc.distance + " ft. away. " + (tc.ok ? (tc.disadvantage ? "In long range (Disadvantage). " : "In range. ")
@@ -4113,6 +4599,7 @@ private class Board extends JComponent {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         MapEditorPanel.MapPainter p = new MapEditorPanel.MapPainter(model, scale, offX, offY);
         p.paintBase(g, getWidth(), getHeight());
+        if (showLight) Lighting.paintOverlay(g, lightLevels(), model, scale, offX, offY, getWidth(), getHeight());
 
         // reachable squares
         if (moveMode && showRange && reachCells.length == model.height) {
@@ -4130,6 +4617,7 @@ private class Board extends JComponent {
         }
 
         p.paintEdges(g);
+        for (MapEditorPanel.Torch tr : model.torches) Lighting.paintTorch(g, tr, scale, offX, offY, tr.x == hoverX && tr.y == hoverY);
         p.paintPins(g);
         if (showCoords) paintCoords(g);
 
@@ -4175,6 +4663,7 @@ private class Board extends JComponent {
         }
 
         p.paintLegend(g, getHeight());
+        if (showLight && model.hasLighting()) Lighting.paintLegend(g, getWidth(), getHeight(), model.ambient);
         g.dispose();
     }
 
@@ -4184,7 +4673,13 @@ private class Board extends JComponent {
         Graphics2D g = (Graphics2D) g0.create();
         double ax = offX + (active.x + active.size / 2.0) * scale, ay = offY + (active.y + active.size / 2.0) * scale;
         Tok hovered = hoverX >= 0 ? tokenAt(hoverX, hoverY) : null;
-        for (Tok t : tokens) {
+        List<Tok> targets = new ArrayList<>(tokens);
+        for (Tok tt : torchTargets()) {
+            if (tokenAt(tt.x, tt.y) != null) continue; // a creature standing there is the target instead
+            targets.add(tt);
+            if (hovered == null && tt.x == hoverX && tt.y == hoverY) hovered = tt;
+        }
+        for (Tok t : targets) {
             if (t == active) continue;
             TargetCheck tc = checkTarget(active, t, targeting);
             Color c = !tc.ok ? new Color(230, 80, 80, 200) : tc.disadvantage ? new Color(240, 180, 60, 230) : new Color(110, 220, 130, 230);
