@@ -84,7 +84,26 @@ static Map<String, Object> buildCharacterRecord(CharacterDraft draft) {
     m.put("hitDice", FeatData.hitDiceString(recClassLevels(m)));
     m.put("hpRolls", new ArrayList<Object>());
     m.put("feats", new ArrayList<Object>());
+    m.put("token", Tokens.read(draft.token, Tokens.PC_COLOR));
     return m;
+}
+
+// Gives every saved character a stable "id" (the Combat map refers to characters by it) and returns the list.
+// Records saved before ids existed get one the first time this runs.
+static List<Object> loadWithIds() {
+    List<Object> all = loadSavedCharacters();
+    boolean changed = false;
+    for (Object o : all) {
+        if (!(o instanceof Map)) continue;
+        @SuppressWarnings("unchecked")
+        Map<String, Object> rec = (Map<String, Object>) o;
+        if (recStr(rec, "id").isEmpty()) {
+            rec.put("id", CustomAssets.newId());
+            changed = true;
+        }
+    }
+    if (changed) saveAllCharacters(all);
+    return all;
 }
 
 // ---------------------------------------------------------------
@@ -215,6 +234,9 @@ static void carryOverProgression(Map<?, ?> oldRec, Map<String, Object> newRec) {
     if (oldRec.get("conditions") != null) newRec.put("conditions", oldRec.get("conditions"));
     if (oldRec.get("spellSlotsUsed") != null) newRec.put("spellSlotsUsed", oldRec.get("spellSlotsUsed"));
     if (oldRec.get("pactSlotsUsed") != null) newRec.put("pactSlotsUsed", oldRec.get("pactSlotsUsed"));
+    // Stable id used by Combat map tokens; the map token look if the wizard didn't set one
+    if (!recStr(oldRec, "id").isEmpty()) newRec.put("id", recStr(oldRec, "id"));
+    if (newRec.get("token") == null && oldRec.get("token") != null) newRec.put("token", oldRec.get("token"));
     // Homebrew subclass picks made on level up ({className: subclassName})
     if (oldRec.get("subclasses") instanceof Map) {
         Map<String, Object> subs = new LinkedHashMap<>();
@@ -475,5 +497,6 @@ class CharacterDraft {
     Map<String, Integer> asiIncreases = new LinkedHashMap<>(); // stat -> amount applied
     String backgroundPackage = "";     // "A" or "B"
     String classPackage = "";          // "A" or "B"
+    Map<String, Object> token = Tokens.defaults(Tokens.PC_COLOR); // map token look {shape, color, image}
 }
 

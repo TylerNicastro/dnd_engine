@@ -128,7 +128,8 @@ static String featDescription(String name) {
 // Field schema
 // ===============================================================
 static final String TEXT = "TEXT", AREA = "AREA", INT = "INT", BOOL = "BOOL", CHOICE = "CHOICE",
-        MULTI = "MULTI", LIST = "LIST", ABILITIES = "ABILITIES", ENTRIES = "ENTRIES", TAGS = "TAGS";
+        MULTI = "MULTI", LIST = "LIST", ABILITIES = "ABILITIES", ENTRIES = "ENTRIES", TAGS = "TAGS",
+        TOKEN = "TOKEN"; // {shape, color, image}: a map token (see Tokens)
 // Link kinds: what clicking a value in the detail overlay opens
 static final String LINK_SKILL = "skill", LINK_CONDITION = "condition", LINK_CLASS = "class",
         LINK_LANGUAGE = "language", LINK_STAT = "stat", LINK_FEAT = "feat", LINK_TAG = "tag";
@@ -236,6 +237,8 @@ static {
             text("skills", "Skills").hint("e.g. Perception +4, Stealth +6"),
             entries("traits", "Traits").section("Traits & actions"),
             entries("actions", "Actions"),
+            new Field("token", "Map token", TOKEN).section("Token")
+                    .help("How this NPC looks on the Combat map. Its footprint follows its size (Large 2 × 2, Huge 3 × 3, Gargantuan 4 × 4)."),
             area("bio", "Bio / notes").section("Notes")));
 
     SCHEMAS.put(MAPS, Arrays.asList(
@@ -461,6 +464,7 @@ static Map<String, Object> newAsset(String cat) {
     for (Field f : SCHEMAS.get(cat)) {
         if (f.def != null) a.put(f.key, f.def);
         else if (TAGS.equals(f.type)) a.put(f.key, new ArrayList<Object>(Collections.singletonList(Tags.HOMEBREW)));
+        else if (TOKEN.equals(f.type)) a.put(f.key, Tokens.defaults(Tokens.NPC_COLOR));
         else if (MULTI.equals(f.type) || LIST.equals(f.type) || ENTRIES.equals(f.type)) a.put(f.key, new ArrayList<>());
         else if (ABILITIES.equals(f.type)) {
             Map<String, Object> ab = new LinkedHashMap<>();

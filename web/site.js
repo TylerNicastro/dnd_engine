@@ -10,7 +10,7 @@
 
     { t: "About / Guide", u: "about.html", p: "Guide", d: "What D&D Engine is and how to use it.", k: "about guide help manual how to" },
     { t: "What is D&D Engine?", u: "about.html#what", p: "Guide", d: "A free, unofficial D&D 2024 (5.5e) character builder and homebrew toolkit.", k: "5.5e 2024 rules engine overview" },
-    { t: "Features", u: "about.html#features", p: "Guide", d: "Character wizard, sheets, level up, Asset Library, tags, maps.", k: "features wizard level up asset library maps combat" },
+    { t: "Features", u: "about.html#features", p: "Guide", d: "Character wizard, sheets, level up, Asset Library, tags, maps.", k: "features wizard level up asset library maps combat tokens initiative teams turn order movement" },
     { t: "How to use the app", u: "about.html#using", p: "Guide", d: "Create a character, level up, and browse the Asset Library.", k: "getting started tutorial create character level up" },
     { t: "Asset Library & homebrew", u: "about.html#homebrew", p: "Guide", d: "Browse every built-in asset and create your own homebrew.", k: "homebrew custom items spells classes species backgrounds feats npc pack" },
     { t: "Tags & content filters", u: "about.html#tags", p: "Guide", d: "Hide sourcebooks or homebrew from character creation and level up.", k: "tags filters sourcebook xanathar tasha official homebrew campaign ruleset" },

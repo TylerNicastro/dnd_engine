@@ -134,7 +134,14 @@ static final class Entry {
 
     String haystack() {
         if (haystack == null) {
-            String body = builtin() ? CustomAssets.builtinDescription(cat, name) : JsonUtil.toJson(asset);
+            String body;
+            if (builtin()) {
+                body = CustomAssets.builtinDescription(cat, name);
+            } else {
+                Map<String, Object> searchable = new LinkedHashMap<>(asset);
+                searchable.remove("token"); // a token picture's Base64 text would match random searches
+                body = JsonUtil.toJson(searchable);
+            }
             haystack = (name + "\n" + summary + "\n" + String.join(" ", tags) + "\n" + cat + "\n" + body).toLowerCase();
         }
         return haystack;
@@ -1441,6 +1448,27 @@ static void showDetail(Component anchor, String cat, Map<String, Object> a, Deta
             case CustomAssets.ABILITIES:
                 sections.add(abilitySection(a));
                 break;
+            case CustomAssets.TOKEN: {
+                Map<String, Object> tok = Tokens.read(a.get(f.key), Tokens.NPC_COLOR);
+                JPanel sec = section(f.label);
+                JPanel rowP = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+                rowP.setOpaque(false);
+                Tokens.Preview pv = new Tokens.Preview(tok, CustomAssets.str(a, "name"), 64, App.GOLD);
+                String size = CustomAssets.str(a, "size");
+                JLabel desc = new JLabel("<html>" + App.escapeHtml(CustomAssets.str(tok, "shape"))
+                        + (Tokens.hasImage(tok) ? " with a picture" : ", " + App.escapeHtml(Tokens.colorName(CustomAssets.str(tok, "color"))))
+                        + "<br><span style='color:#aaa5a0'>" + App.escapeHtml(size.isEmpty() ? "Medium" : size) + " · "
+                        + CombatPanel.footprintText(size) + " on the map</span></html>");
+                desc.setForeground(App.TEXT_LIGHT);
+                desc.setFont(new Font("SansSerif", Font.PLAIN, 13));
+                rowP.add(pv);
+                rowP.add(desc);
+                rowP.setAlignmentX(Component.LEFT_ALIGNMENT);
+                App.clickable(rowP, () -> App.showInfoOverlay(rowP, "Map Token", CustomAssets.str(a, "name"), Tokens.INFO, null));
+                sec.add(rowP);
+                sections.add(sec);
+                break;
+            }
             case CustomAssets.ENTRIES: {
                 List<Map<String, Object>> es = CustomAssets.entries(a, f.key);
                 if (es.isEmpty()) break;
@@ -1737,6 +1765,13 @@ private interface FieldUI {
     Object value();
 }
 
+private JTextField currentNameField; // the open editor's name field (set while building the form)
+
+@SuppressWarnings("unchecked")
+private static Map<String, Object> castMap(Object o) {
+    return (Map<String, Object>) o;
+}
+
 // Opens the create / edit form for `existing` (null = new asset in category `cat`)
 void openEditor(String cat, Map<String, Object> existing) {
     category = cat; // e.g. editing a search result from another tab
@@ -1780,6 +1815,7 @@ void openEditor(String cat, Map<String, Object> existing) {
         form.add(fieldBlock(f, ui.component()));
         if ("name".equals(f.key)) {
             JTextField nameField = (JTextField) ui.component();
+            currentNameField = nameField; // token previews show the name's initials
             Runnable check = () -> {
                 String o = CustomAssets.overridesBuiltIn(cat, nameField.getText());
                 overrideNote.setText(o == null ? " " : "Replaces the built-in \"" + o + "\" while this asset exists (deleting it restores the original).");
@@ -2051,6 +2087,19 @@ private FieldUI buildFieldUI(CustomAssets.Field f, Object current) {
             return entriesUI(f, CustomAssets.entries(holder, "v"));
         case CustomAssets.TAGS:
             return tagsUI(current);
+        case CustomAssets.TOKEN: {
+            JTextField nameField = currentNameField;
+            Tokens.Editor ed = Tokens.editor(current instanceof Map ? castMap(current) : null,
+                    () -> nameField != null ? nameField.getText() : "", Tokens.NPC_COLOR, null);
+            if (nameField != null) {
+                nameField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                    public void insertUpdate(javax.swing.event.DocumentEvent e) { ed.panel.repaint(); }
+                    public void removeUpdate(javax.swing.event.DocumentEvent e) { ed.panel.repaint(); }
+                    public void changedUpdate(javax.swing.event.DocumentEvent e) { ed.panel.repaint(); }
+                });
+            }
+            return ui(ed.panel, ed::value);
+        }
         default:
             JTextField tf = textField(CustomAssets.str(holder, "v"), "");
             return ui(tf, tf::getText);

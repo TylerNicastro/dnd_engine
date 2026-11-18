@@ -974,13 +974,56 @@ private class Canvas extends JComponent {
     protected void paintComponent(Graphics g0) {
         Graphics2D g = (Graphics2D) g0.create();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        MapPainter p = new MapPainter(model, scale, offX, offY);
+        p.paintBase(g, getWidth(), getHeight());
+
+        // hover cell (floor / pin tools)
+        if (editMode && hoverCellX >= 0 && (T_FLOOR.equals(tool) || T_PIN.equals(tool))) {
+            g.setColor(new Color(212, 175, 55, 160));
+            g.setStroke(new BasicStroke(2f));
+            g.draw(new Rectangle2D.Double(offX + hoverCellX * scale + 1, offY + hoverCellY * scale + 1, scale - 2, scale - 2));
+        }
+
+        p.paintEdges(g);
+
+        // hover edge
+        if (hoverEdge != null) {
+            double ax = hoverEdge[1], ay = hoverEdge[2];
+            double bx = hoverEdge[0] == 0 ? ax + 1 : ax, by = hoverEdge[0] == 0 ? ay : ay + 1;
+            g.setColor(new Color(212, 175, 55, 170));
+            g.setStroke(new BasicStroke((float) Math.max(4, scale * 0.18), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.draw(new Line2D.Double(offX + ax * scale, offY + ay * scale, offX + bx * scale, offY + by * scale));
+        }
+
+        p.paintPins(g);
+        p.paintLegend(g, getHeight());
+        g.dispose();
+    }
+}
+
+// ===============================================================
+// Map painter: floors, grid, walls / doors / windows, pins and the scale legend at a given zoom.
+// Shared by the editor canvas and the Combat board (CombatPanel) so both draw the same map.
+// ===============================================================
+static class MapPainter {
+    final MapModel model;
+    final double scale, offX, offY;
+
+    MapPainter(MapModel model, double scale, double offX, double offY) {
+        this.model = model;
+        this.scale = scale;
+        this.offX = offX;
+        this.offY = offY;
+    }
+
+    // Background, floors, grid lines and the map border for a w × h viewport
+    void paintBase(Graphics2D g, int w, int h) {
         g.setColor(App.SHEET_BG);
-        g.fillRect(0, 0, getWidth(), getHeight());
+        g.fillRect(0, 0, w, h);
 
-        int x0 = Math.max(0, (int) Math.floor(fx(0))), y0 = Math.max(0, (int) Math.floor(fy(0)));
-        int x1 = Math.min(model.width - 1, (int) Math.floor(fx(getWidth()))), y1 = Math.min(model.height - 1, (int) Math.floor(fy(getHeight())));
+        int x0 = Math.max(0, (int) Math.floor((0 - offX) / scale)), y0 = Math.max(0, (int) Math.floor((0 - offY) / scale));
+        int x1 = Math.min(model.width - 1, (int) Math.floor((w - offX) / scale)), y1 = Math.min(model.height - 1, (int) Math.floor((h - offY) / scale));
 
-        // floors
         for (int y = y0; y <= y1; y++) {
             for (int x = x0; x <= x1; x++) {
                 int f = model.floor[y][x];
@@ -991,7 +1034,7 @@ private class Canvas extends JComponent {
             }
         }
 
-        // grid
+        g.setStroke(new BasicStroke(1f));
         for (int x = Math.max(0, x0); x <= Math.min(model.width, x1 + 1); x++) {
             g.setColor(x % 5 == 0 ? GRID_MAJOR : GRID_COLOR);
             double px = offX + x * scale;
@@ -1005,15 +1048,9 @@ private class Canvas extends JComponent {
         g.setColor(App.SHEET_BORDER);
         g.setStroke(new BasicStroke(2f));
         g.draw(new Rectangle2D.Double(offX, offY, model.width * scale, model.height * scale));
+    }
 
-        // hover cell (floor / pin tools)
-        if (editMode && hoverCellX >= 0 && (T_FLOOR.equals(tool) || T_PIN.equals(tool))) {
-            g.setColor(new Color(212, 175, 55, 160));
-            g.setStroke(new BasicStroke(2f));
-            g.draw(new Rectangle2D.Double(offX + hoverCellX * scale + 1, offY + hoverCellY * scale + 1, scale - 2, scale - 2));
-        }
-
-        // edges
+    void paintEdges(Graphics2D g) {
         for (int y = 0; y <= model.height; y++) {
             for (int x = 0; x < model.width; x++) {
                 int v = model.hEdges[y][x];
@@ -1026,23 +1063,17 @@ private class Canvas extends JComponent {
                 if (v != NONE) paintEdge(g, v, x, y, x, y + 1);
             }
         }
+    }
 
-        // hover edge
-        if (hoverEdge != null) {
-            double ax = hoverEdge[1], ay = hoverEdge[2];
-            double bx = hoverEdge[0] == 0 ? ax + 1 : ax, by = hoverEdge[0] == 0 ? ay : ay + 1;
-            g.setColor(new Color(212, 175, 55, 170));
-            g.setStroke(new BasicStroke((float) Math.max(4, scale * 0.18), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            g.draw(new Line2D.Double(offX + ax * scale, offY + ay * scale, offX + bx * scale, offY + by * scale));
-        }
-
-        // pins
+    void paintPins(Graphics2D g) {
         for (int i = 0; i < model.pins.size(); i++) paintPin(g, model.pins.get(i), i + 1);
+    }
 
-        // scale legend
+    // Scale bar in the bottom-left corner of a viewport `h` pixels tall
+    void paintLegend(Graphics2D g, int h) {
         double barPx = scale * (scale < 20 ? 5 : 1);
         String barLbl = scale < 20 ? "25 ft." : "5 ft.";
-        int lx = 14, ly = getHeight() - 18;
+        int lx = 14, ly = h - 18;
         g.setColor(new Color(0, 0, 0, 120));
         g.fill(new RoundRectangle2D.Double(lx - 6, ly - 18, barPx + 60, 28, 8, 8));
         g.setColor(App.TEXT_LIGHT);
@@ -1052,7 +1083,6 @@ private class Canvas extends JComponent {
         g.draw(new Line2D.Double(lx + barPx, ly - 4, lx + barPx, ly + 2));
         g.setFont(new Font("SansSerif", Font.BOLD, 11));
         g.drawString(barLbl, (float) (lx + barPx + 8), ly + 4);
-        g.dispose();
     }
 
     private void paintTexture(Graphics2D g, int f, double px, double py, int cx, int cy) {

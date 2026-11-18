@@ -11,7 +11,7 @@ A fan-made character builder and campaign toolkit for Dungeons & Dragons 5th Edi
 - **Level up:** hit points, multiclassing, feats and epic boons, new spells and spell swaps.
 - **Asset Library:** browse all built-in content and create your own homebrew items, weapons, armor, spells, feats, species, backgrounds, classes, subclasses, conditions, NPCs and maps. Homebrew can be shared as JSON packs.
 - **Tags and content filters:** every asset has tags (source book, homebrew, spell school, level and class, plus your own). Turn a tag off to hide that content from character creation and level up, for example to run a core-rules-only campaign.
-- **Maps and combat:** grid maps with walls, doors and clickable encounter pins.
+- **Maps and combat:** grid maps with walls, doors and clickable encounter pins. Place character and NPC tokens (shape, color or a custom picture; Large and bigger creatures cover more squares), assign up to 10 teams, roll initiative and run turns with movement ranges that respect walls and doors.
 
 ## Running it
 

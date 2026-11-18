@@ -44,7 +44,7 @@ public class App {
             cards.add(buildMainMenu(cardLayout, cards), "MENU");
             MapEditorPanel mapEditor = new MapEditorPanel(cardLayout, cards);
             cards.add(mapEditor.panel, "MAP_EDITOR");
-            cards.add(buildCombatPanel(cardLayout, cards, mapEditor), "COMBAT");
+            cards.add(new CombatPanel(cardLayout, cards, mapEditor).panel, "COMBAT");
             AssetLibraryPanel assetLibrary = new AssetLibraryPanel(cardLayout, cards, mapEditor);
             cards.add(assetLibrary.panel, "ASSETS");
 
@@ -58,8 +58,12 @@ public class App {
             cards.add(detailResult.panel, "CHARACTER_DETAIL");
 
             cards.add(buildCharactersPanel(cardLayout, cards, wizardResult.resetForEdit, detailResult.show, levelUpPanel.show), "CHARACTERS");
-            cards.add(buildAddCharacterTypePanel(cardLayout, cards, wizardResult.reset), "ADD_CHAR_TYPE");
-            cards.add(buildNewNPCPanel(cardLayout, cards), "NEW_NPC");
+            // NPCs are Asset Library assets: the NPC button opens the library's NPC editor (stat block + map token)
+            cards.add(buildAddCharacterTypePanel(cardLayout, cards, wizardResult.reset, () -> {
+                cardLayout.show(cards, "ASSETS");
+                // after the library's own componentShown reset to its list
+                SwingUtilities.invokeLater(() -> SwingUtilities.invokeLater(() -> assetLibrary.openEditor(CustomAssets.NPCS, null)));
+            }), "ADD_CHAR_TYPE");
 
             frame.add(cards);
             cardLayout.show(cards, "MENU");
@@ -837,7 +841,9 @@ public class App {
                     row.setPreferredSize(new Dimension(470, 74));
                     row.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-                    CircleIcon circle = new CircleIcon(26);
+                    Tokens.Preview circle = new Tokens.Preview(Tokens.read(c.get("token"), Tokens.PC_COLOR),
+                            CharacterStorage.recStr(c, "name"), 44, null);
+                    circle.setToolTipText("Open character sheet");
                     circle.setCursor(new Cursor(Cursor.HAND_CURSOR));
                     circle.addMouseListener(new MouseAdapter() {
                         @Override
@@ -996,72 +1002,9 @@ public class App {
     }
 
     // ---------------------------------------------------------------
-    // COMBAT PANEL: pick one of the Asset Library's maps to open in the viewer
-    // ---------------------------------------------------------------
-    private static JPanel buildCombatPanel(CardLayout cardLayout, JPanel cards, MapEditorPanel mapEditor) {
-        JPanel panel = buildSectionShell("Combat", cardLayout, cards, "MENU");
-
-        JPanel content = new JPanel();
-        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
-        content.setBackground(BG_DARK);
-        content.setBorder(new EmptyBorder(40, 30, 30, 30));
-        JScrollPane scroll = new JScrollPane(content);
-        applyDarkScrollBar(scroll);
-        panel.add(scroll, BorderLayout.CENTER);
-
-        Runnable rebuild = () -> {
-            content.removeAll();
-            JLabel selectMapLabel = new JLabel("Select a map");
-            selectMapLabel.setForeground(TEXT_LIGHT);
-            selectMapLabel.setFont(new Font("SansSerif", Font.BOLD, 20));
-            selectMapLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
-            content.add(selectMapLabel);
-            content.add(Box.createRigidArea(new Dimension(0, 14)));
-
-            List<Map<String, Object>> maps = CustomAssets.all(CustomAssets.MAPS);
-            if (maps.isEmpty()) {
-                JLabel none = new JLabel("None available. Create maps in Assets → Maps.");
-                none.setForeground(TEXT_MUTED);
-                none.setFont(new Font("SansSerif", Font.PLAIN, 16));
-                none.setAlignmentX(Component.CENTER_ALIGNMENT);
-                content.add(none);
-            }
-            for (Map<String, Object> m : maps) {
-                String id = CustomAssets.str(m, "id");
-                JPanel row = new JPanel(new BorderLayout(10, 2));
-                row.setBackground(BG_PANEL);
-                row.setBorder(BorderFactory.createCompoundBorder(new LineBorder(BG_FIELD, 1, true), new EmptyBorder(10, 14, 10, 14)));
-                row.setMaximumSize(new Dimension(520, 64));
-                row.setAlignmentX(Component.CENTER_ALIGNMENT);
-                JLabel name = new JLabel(CustomAssets.str(m, "name"));
-                name.setForeground(GOLD);
-                name.setFont(new Font("Serif", Font.BOLD, 17));
-                JLabel sub = new JLabel(CustomAssets.summary(CustomAssets.MAPS, m));
-                sub.setForeground(TEXT_MUTED);
-                sub.setFont(new Font("SansSerif", Font.PLAIN, 12));
-                row.add(name, BorderLayout.NORTH);
-                row.add(sub, BorderLayout.CENTER);
-                clickableCard(row, () -> mapEditor.open(id, false, "COMBAT", () -> { }));
-                content.add(row);
-                content.add(Box.createRigidArea(new Dimension(0, 10)));
-            }
-            content.revalidate();
-            content.repaint();
-        };
-        panel.addComponentListener(new ComponentAdapter() {
-            @Override
-            public void componentShown(ComponentEvent e) {
-                rebuild.run();
-            }
-        });
-        rebuild.run();
-        return panel;
-    }
-
-    // ---------------------------------------------------------------
     // ADD CHARACTER: choose Playable Character or NPC
     // ---------------------------------------------------------------
-    private static JPanel buildAddCharacterTypePanel(CardLayout cardLayout, JPanel cards, Runnable resetWizard) {
+    private static JPanel buildAddCharacterTypePanel(CardLayout cardLayout, JPanel cards, Runnable resetWizard, Runnable newNpc) {
         JPanel panel = buildSectionShell("Add Character", cardLayout, cards, "CHARACTERS");
 
         JPanel content = new JPanel(new GridBagLayout());
@@ -1082,29 +1025,11 @@ public class App {
             resetWizard.run();
             cardLayout.show(cards, "NEW_PC_WIZARD");
         });
-        btnNPC.addActionListener(e -> cardLayout.show(cards, "NEW_NPC"));
+        btnNPC.addActionListener(e -> newNpc.run());
+        btnNPC.setToolTipText("Create an NPC (stat block, token and notes) in the Asset Library");
 
         gbc.gridx = 0; content.add(btnPlayable, gbc);
         gbc.gridx = 1; content.add(btnNPC, gbc);
-
-        panel.add(content, BorderLayout.CENTER);
-        return panel;
-    }
-
-    // ---------------------------------------------------------------
-    // NEW NPC (placeholder)
-    // ---------------------------------------------------------------
-    private static JPanel buildNewNPCPanel(CardLayout cardLayout, JPanel cards) {
-        JPanel panel = buildSectionShell("New NPC", cardLayout, cards, "ADD_CHAR_TYPE");
-
-        JPanel content = new JPanel(new BorderLayout());
-        content.setBackground(BG_DARK);
-        content.setBorder(new EmptyBorder(30, 30, 30, 30));
-
-        JLabel placeholder = new JLabel("NPC creation coming soon.", JLabel.CENTER);
-        placeholder.setForeground(TEXT_MUTED);
-        placeholder.setFont(new Font("SansSerif", Font.PLAIN, 18));
-        content.add(placeholder, BorderLayout.CENTER);
 
         panel.add(content, BorderLayout.CENTER);
         return panel;
@@ -1288,6 +1213,44 @@ public class App {
         nameLbl.setFont(new Font("Serif", Font.BOLD, 32));
         nameBox.add(nameLbl, BorderLayout.CENTER);
         nameBox.add(sheetCaption("CHARACTER NAME", SwingConstants.LEFT), BorderLayout.SOUTH);
+
+        // Map token: click to change its shape, color or picture
+        Map<String, Object> tokenLook = Tokens.read(rec.get("token"), Tokens.PC_COLOR);
+        Tokens.Preview tokenPreview = new Tokens.Preview(tokenLook, name, 56, GOLD);
+        tokenPreview.setToolTipText("Map token: click to change it");
+        clickable(tokenPreview, () -> {
+            JPanel body = new JPanel(new BorderLayout(0, 14));
+            body.setOpaque(false);
+            Tokens.Editor ed = Tokens.editor(tokenLook, () -> name, Tokens.PC_COLOR, null);
+            body.add(ed.panel, BorderLayout.CENTER);
+            JLabel where = new JLabel("<html><div style='width:440px'>Shown on the Combat map. Size " + escapeHtml(
+                    CharacterStorage.recStr(rec, "size").isEmpty() ? "Medium" : CharacterStorage.recStr(rec, "size"))
+                    + ": " + CombatPanel.footprintText(CharacterStorage.recStr(rec, "size")) + ".</div></html>");
+            where.setForeground(TEXT_MUTED);
+            where.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            body.add(where, BorderLayout.NORTH);
+            Runnable[] close = new Runnable[1];
+            JButton cancel = overlayButton("Cancel", false);
+            JButton save = overlayButton("Save Token", true);
+            cancel.addActionListener(e -> close[0].run());
+            save.addActionListener(e -> {
+                Map<String, Object> work = recCopy(rec);
+                work.put("token", ed.value());
+                close[0].run();
+                onSave.accept(work);
+            });
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+            buttons.setOpaque(false);
+            buttons.add(cancel);
+            buttons.add(save);
+            body.add(buttons, BorderLayout.SOUTH);
+            close[0] = showSheetOverlay(tokenPreview, "Map Token", body, null);
+        });
+        JPanel tokenWrap = new JPanel(new GridBagLayout());
+        tokenWrap.setOpaque(false);
+        tokenWrap.setBorder(new EmptyBorder(0, 0, 0, 12));
+        tokenWrap.add(tokenPreview);
+        nameBox.add(tokenWrap, BorderLayout.WEST);
 
         JPanel idGrid = new JPanel(new GridLayout(2, 2, 8, 8));
         idGrid.setOpaque(false);
@@ -4142,9 +4105,35 @@ public class App {
         JButton nameNextButton = new JButton("Next \u2192");
         styleAccentButton(nameNextButton);
 
+        // Map token look (shape / color / picture); rebuilt from draft.token on reset and edit
+        JPanel tokenHolder = new JPanel(new BorderLayout(0, 6));
+        tokenHolder.setOpaque(false);
+        Runnable rebuildTokenEditor = () -> {
+            tokenHolder.removeAll();
+            JLabel tokenLabel = new JLabel("Map Token:");
+            tokenLabel.setForeground(TEXT_LIGHT);
+            tokenLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
+            tokenHolder.add(tokenLabel, BorderLayout.NORTH);
+            Tokens.Editor[] ed = new Tokens.Editor[1];
+            ed[0] = Tokens.editor(draft.token, nameField::getText, Tokens.PC_COLOR, () -> {
+                if (ed[0] != null) draft.token = ed[0].value();
+            });
+            tokenHolder.add(ed[0].panel, BorderLayout.CENTER);
+            tokenHolder.revalidate();
+            tokenHolder.repaint();
+        };
+        rebuildTokenEditor.run();
+        nameField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { tokenHolder.repaint(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { tokenHolder.repaint(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { tokenHolder.repaint(); }
+        });
+
         nGbc.gridx = 0; nGbc.gridy = 0; nameContent.add(nameLabel, nGbc);
         nGbc.gridx = 0; nGbc.gridy = 1; nameContent.add(nameField, nGbc);
-        nGbc.gridx = 0; nGbc.gridy = 2; nGbc.insets = new Insets(25, 10, 10, 10);
+        nGbc.gridx = 0; nGbc.gridy = 2; nGbc.insets = new Insets(22, 10, 10, 10);
+        nameContent.add(tokenHolder, nGbc);
+        nGbc.gridx = 0; nGbc.gridy = 3; nGbc.insets = new Insets(25, 10, 10, 10);
         nameContent.add(nameNextButton, nGbc);
 
         namePanel.add(nameContent, BorderLayout.CENTER);
@@ -6086,6 +6075,8 @@ public class App {
             equipClassDetailContentWrap.repaint();
 
             nameField.setText("");
+            draft.token = Tokens.defaults(Tokens.PC_COLOR);
+            rebuildTokenEditor.run();
 
             speciesCheckList.reset.run();
             speciesInfoTitle.setText("Select a species");
@@ -6261,6 +6252,8 @@ public class App {
 
             // Prefill the persistent UI widgets that don't get rebuilt on every visit
             nameField.setText(draft.name);
+            draft.token = Tokens.read(rec.get("token"), Tokens.PC_COLOR);
+            rebuildTokenEditor.run();
 
             if (!draft.species.isEmpty()) {
                 speciesCheckList.setSelected.accept(Collections.singletonList(draft.species));

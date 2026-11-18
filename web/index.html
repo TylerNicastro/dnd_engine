@@ -227,6 +227,79 @@
     });
   }
 
+  // ---------------- Token images (see src/WebBridge.java and src/Tokens.java) ----------------
+  // Both natives resolve with a Base64 PNG, center-cropped and scaled to 128 × 128 here (so Java never has to
+  // decode a large photo), "" when cancelled / nothing to paste, or "\u0000" + a message to show in the app.
+  var TOKEN_SIZE = 128;
+  function tokenThumb(blob) {
+    return new Promise(function (resolve) {
+      var url = URL.createObjectURL(blob);
+      var img = new Image();
+      img.onload = function () {
+        var w = img.naturalWidth, h = img.naturalHeight, s = Math.min(w, h);
+        var c = document.createElement("canvas");
+        c.width = c.height = TOKEN_SIZE;
+        var ctx = c.getContext("2d");
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img, (w - s) / 2, (h - s) / 2, s, s, 0, 0, TOKEN_SIZE, TOKEN_SIZE);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL("image/png").replace(/^data:image\/png;base64,/, ""));
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        resolve("\u0000That file isn't an image the browser can read. Use a PNG or JPG.");
+      };
+      img.src = url;
+    });
+  }
+  function Java_WebBridge_pickImageFile(lib) {
+    return new Promise(function (resolve) {
+      var input = document.createElement("input");
+      input.type = "file";
+      input.accept = "image/png,image/jpeg,image/gif,image/webp";
+      input.style.display = "none";
+      document.body.appendChild(input);
+      var done = false;
+      function finish(v) {
+        if (done) return;
+        done = true;
+        window.removeEventListener("focus", onFocus);
+        input.remove();
+        resolve(v);
+      }
+      function onFocus() {
+        setTimeout(function () { if (!input.files || !input.files.length) finish(""); }, 800);
+      }
+      input.addEventListener("change", function () {
+        var f = input.files && input.files[0];
+        if (!f) { finish(""); return; }
+        if (f.size > 25 * 1024 * 1024) { finish("\u0000That image is too large (over 25 MB)."); return; }
+        tokenThumb(f).then(finish, function () { finish("\u0000Couldn't read that image."); });
+      });
+      input.addEventListener("cancel", function () { finish(""); });
+      window.addEventListener("focus", onFocus);
+      input.click();
+    });
+  }
+  async function Java_WebBridge_readClipboardImage(lib) {
+    if (!navigator.clipboard || !navigator.clipboard.read) {
+      return "\u0000This browser doesn't let web pages read images from the clipboard. Use Upload Image instead.";
+    }
+    try {
+      var items = await navigator.clipboard.read();
+      for (var i = 0; i < items.length; i++) {
+        for (var j = 0; j < items[i].types.length; j++) {
+          var type = items[i].types[j];
+          if (type.indexOf("image/") === 0) return await tokenThumb(await items[i].getType(type));
+        }
+      }
+      return "";
+    } catch (e) {
+      return "\u0000The browser blocked clipboard access. Allow it when asked, or use Upload Image instead.";
+    }
+  }
+
   // ---------------- CheerpJ app ----------------
   // CheerpJ's /app/ mount is the web server root, so on a GitHub Pages project site (/dnd_engine/)
   // the jar lives at /app/dnd_engine/dnd_engine.jar. Derive it from the page URL so any host path works.
@@ -241,7 +314,12 @@
     if (!runtimePromise) {
       runtimePromise = window.cheerpjInit({
         version: 11,
-        natives: { Java_WebBridge_downloadFile: Java_WebBridge_downloadFile, Java_WebBridge_pickTextFile: Java_WebBridge_pickTextFile }
+        natives: {
+          Java_WebBridge_downloadFile: Java_WebBridge_downloadFile,
+          Java_WebBridge_pickTextFile: Java_WebBridge_pickTextFile,
+          Java_WebBridge_pickImageFile: Java_WebBridge_pickImageFile,
+          Java_WebBridge_readClipboardImage: Java_WebBridge_readClipboardImage
+        }
       }).catch(function (err) { runtimePromise = null; throw err; });
     }
     return runtimePromise;
