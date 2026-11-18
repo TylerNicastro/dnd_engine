@@ -237,6 +237,9 @@ static void carryOverProgression(Map<?, ?> oldRec, Map<String, Object> newRec) {
     // Stable id used by Combat map tokens; the map token look if the wizard didn't set one
     if (!recStr(oldRec, "id").isEmpty()) newRec.put("id", recStr(oldRec, "id"));
     if (newRec.get("token") == null && oldRec.get("token") != null) newRec.put("token", oldRec.get("token"));
+    // Sheet-only weapon choices (WeaponRules): Weapon Mastery picks and what each hand holds
+    if (oldRec.get("weaponMasteries") != null) newRec.put("weaponMasteries", oldRec.get("weaponMasteries"));
+    if (oldRec.get("hands") != null) newRec.put("hands", oldRec.get("hands"));
     // Homebrew subclass picks made on level up ({className: subclassName})
     if (oldRec.get("subclasses") instanceof Map) {
         Map<String, Object> subs = new LinkedHashMap<>();

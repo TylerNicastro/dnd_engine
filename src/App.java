@@ -1191,7 +1191,7 @@ public class App {
         Integer speed = CharacterStorage.recInt(rec, "speed");
         Integer gold = CharacterStorage.recInt(rec, "gold");
         List<String> equipment = CharacterStorage.recList(rec, "equipment");
-        int ac = GameData.computeAC(equipment, dexMod);
+        int ac = WeaponRules.armorClass(rec); // a shield only counts while held (hand system)
 
         String lineageSuffix = lineage.isEmpty() ? "" : " (" + lineage + ")";
         String classText;
@@ -1439,10 +1439,16 @@ public class App {
             int bestBody = 10 + dexMod;
             int shield = 0;
             String shieldName = "Shield";
+            WeaponRules.Hands heldNow = WeaponRules.hands(rec);
+            boolean unheldShield = false;
             for (String item : equipment) {
                 String base = GameData.stripEquipmentCount(item);
                 GameData.ArmorInfo info = GameData.ARMOR_AC.get(base);
                 if (info == null) continue;
+                if (info.isShield && !base.equalsIgnoreCase(heldNow.off) && !base.equalsIgnoreCase(heldNow.main)) {
+                    unheldShield = true; // carried but not held: no AC (hand system)
+                    continue;
+                }
                 if (info.isShield) {
                     if (GameData.shieldBonus(info) > shield) {
                         shield = GameData.shieldBonus(info);
@@ -1459,7 +1465,8 @@ public class App {
                 }
             }
             rows.add(row(bodyLabel, bodyValue));
-            if (shield > 0) rows.add(row(shieldName, "+" + shield));
+            if (shield > 0) rows.add(row(shieldName + " (held)", "+" + shield));
+            else if (unheldShield) rows.add(row("Shield (not held)", "+0: put it in a hand under Hands & Attacks"));
             rows.add(row("Armor Class", String.valueOf(ac)));
             showInfoOverlay(combatRow, "Armor Class", "Defense",
                     "How hard you are to hit. An attack hits if its roll equals or beats your AC. Comes from your best armor in Equipment (or 10 + DEX unarmored), plus a shield.", rows);
@@ -1509,6 +1516,8 @@ public class App {
                 combatRow,
                 hpCard,
                 hdDsRow,
+                SheetWeapons.handsAttacksCard(rec, onSave),
+                SheetWeapons.masteryCard(rec, onSave),
                 equipmentCard(rec, equipment, onSave));
 
         // ================= COLUMN 3 =================
@@ -1588,7 +1597,7 @@ public class App {
         return p;
     }
 
-    private static JPanel sheetCard(String title, JComponent content) {
+    static JPanel sheetCard(String title, JComponent content) {
         JPanel card = new JPanel(new BorderLayout(0, 8));
         card.setBackground(SHEET_CARD);
         card.setBorder(BorderFactory.createCompoundBorder(
@@ -1951,17 +1960,14 @@ public class App {
     static String itemDescription(String base) {
         String homebrew = CustomAssets.itemDescription(base);
         if (homebrew != null) return homebrew;
+        WeaponEntry weapon = WeaponData.find(base);
+        if (weapon != null) return weapon.infoText();
+        AmmoItem ammo = WeaponData.findAmmo(base);
+        if (ammo != null) return ammo.description();
         List<String> candidates = new ArrayList<>();
         candidates.add(base);
         if (base.endsWith("s")) candidates.add(base.substring(0, base.length() - 1));
         for (String cand : candidates) {
-            for (WeaponEntry we : WeaponData.WEAPON_DB.weapons) {
-                if (we.name.equalsIgnoreCase(cand)) {
-                    return we.category + " weapon.\nDamage: " + we.damage
-                            + "\nProperties: " + (we.properties.isEmpty() ? "—" : String.join(", ", we.properties))
-                            + "\nMastery: " + we.mastery + "\nWeight: " + we.weight + "   Cost: " + we.cost;
-                }
-            }
             GameData.ArmorInfo armor = GameData.ARMOR_AC.get(cand);
             if (armor != null) {
                 if (armor.isShield) return "Shield. +" + GameData.shieldBonus(armor) + " to Armor Class while wielded.";
@@ -2077,7 +2083,7 @@ public class App {
     }
 
     // Card whose title row has a small action button on the right
-    private static JPanel sheetCardWithAction(String title, JComponent action, JComponent content) {
+    static JPanel sheetCardWithAction(String title, JComponent action, JComponent content) {
         JPanel card = sheetCard(null, content);
         JPanel head = new JPanel(new BorderLayout());
         head.setOpaque(false);
@@ -2090,7 +2096,7 @@ public class App {
         return card;
     }
 
-    private static JButton sheetIconButton(String text, String tooltip) {
+    static JButton sheetIconButton(String text, String tooltip) {
         JButton b = new JButton(text);
         b.setToolTipText(tooltip);
         b.setFont(new Font("SansSerif", Font.BOLD, 14));

@@ -110,7 +110,7 @@ static {
     }));
 
     BACKGROUND_EQUIPMENT.put("Guard", new EquipmentPackage(12, new String[]{
-            "Light crossbow", "Crossbow bolt (20)", "Spear", "Hooded lantern", "Manacles", "Quiver", "Traveler's clothes"
+            "Light Crossbow", "Bolt (20)", "Spear", "Hooded lantern", "Manacles", "Quiver", "Traveler's clothes"
     }));
 
     BACKGROUND_EQUIPMENT.put("Guide", new EquipmentPackage(13, new String[]{
@@ -156,7 +156,7 @@ static
 {
     CLASS_PACKAGE_B_GOLD.put("Artificer", 130);
     CLASS_EQUIPMENT.put("Artificer", new EquipmentPackage(6, new String[]{
-            "Scale mail armor", "Mace", "Handaxe", "Light crossbow", "Crossbow bolts (20)", "Crossbow bolt case",
+            "Scale mail armor", "Mace", "Handaxe", "Light Crossbow", "Bolt (20)", "Crossbow bolt case",
             "Thieves' tools", "Backpack", "Bedroll", "Mess kit", "Tinderbox", "Torch (10)", "Rations (10)", "Hempen rope (50)", "Waterskin"
     }));
 

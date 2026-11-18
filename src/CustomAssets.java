@@ -201,6 +201,8 @@ static {
             choice("mastery", "Weapon mastery", MASTERIES).help("The 2024 mastery property a trained wielder can use."),
             multi("properties", "Properties", WEAPON_PROPERTIES).section("Properties"),
             text("range", "Range").hint("e.g. 80/320").help("Used for Ammunition, Range and Thrown."),
+            choice("ammunition", "Ammunition used", "", "Arrow", "Bolt", "Firearm Bullet", "Needle", "Sling Bullet", "Energy Cell")
+                    .help("For Ammunition weapons: which item each attack uses up."),
             text("versatileDamage", "Versatile damage").hint("e.g. 1d10").help("Used when the weapon is Versatile."),
             choice("rarity", "Rarity", RARITIES).section("Details"),
             bool("attunement", "Requires attunement"),
@@ -992,13 +994,48 @@ static WeaponEntry toWeaponEntry(Map<String, Object> a) {
     we.name = str(a, "name");
     we.category = (str(a, "weaponCategory").isEmpty() ? "Simple" : str(a, "weaponCategory")) + " "
             + (str(a, "weaponType").isEmpty() ? "Melee" : str(a, "weaponType"));
-    we.cost = str(a, "value").isEmpty() ? "—" : str(a, "value");
-    we.damage = (str(a, "damageDice").trim() + " " + str(a, "damageType").toLowerCase()).trim();
-    we.weight = str(a, "weight").isEmpty() ? "—" : str(a, "weight");
+    we.simple = !"Martial".equals(str(a, "weaponCategory"));
+    we.melee = !"Ranged".equals(str(a, "weaponType"));
     String mastery = str(a, "mastery");
     we.mastery = mastery.isEmpty() || "None".equals(mastery) ? "—" : mastery;
+    // structured numbers from the editor's text fields ("1d8 + 1", "80/320", "1d10")
+    int[] dice = parseDice(str(a, "damageDice"));
+    we.diceCount = dice[0];
+    we.diceSides = dice[1];
+    we.damageBonus = dice[2];
+    we.damageType = str(a, "damageType");
+    int[] vers = parseDice(str(a, "versatileDamage"));
+    we.versCount = vers[0];
+    we.versSides = vers[1];
+    java.util.regex.Matcher rm = java.util.regex.Pattern.compile("(\\d+)\\s*/\\s*(\\d+)").matcher(str(a, "range"));
+    if (rm.find()) {
+        we.rangeNormal = Integer.parseInt(rm.group(1));
+        we.rangeLong = Integer.parseInt(rm.group(2));
+    }
+    we.rawProperties = new ArrayList<>(list(a, "properties"));
+    we.reach = we.melee ? (we.has("Reach") ? 10 : 5) : 0;
+    we.ammunition = str(a, "ammunition");
+    if (we.ammunition.isEmpty() && we.has("Ammunition")) we.ammunition = "Arrow";
+    we.weightLb = WeaponData.num(str(a, "weight").replaceAll("[^0-9.]", ""), 0);
+    we.refreshDisplay();
+    // keep the author's own text for cost / weight / damage (e.g. "2 lb.", "1d8 + 1")
+    we.cost = str(a, "value").isEmpty() ? "—" : str(a, "value");
+    we.weight = str(a, "weight").isEmpty() ? "—" : str(a, "weight");
+    we.damage = (str(a, "damageDice").trim() + " " + str(a, "damageType").toLowerCase()).trim();
     we.properties = weaponPropertyLabels(a);
     return we;
+}
+
+// "2d6 + 3" -> {2, 6, 3}; "5" -> {0, 0, 5}; anything else -> {0, 0, 0}
+static int[] parseDice(String s) {
+    String t = s == null ? "" : s.replace(" ", "");
+    java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(\\d*)d(\\d+)([+-]\\d+)?$").matcher(t);
+    if (m.find()) {
+        return new int[]{m.group(1).isEmpty() ? 1 : Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)),
+                m.group(3) == null ? 0 : Integer.parseInt(m.group(3))};
+    }
+    if (t.matches("^\\d+$")) return new int[]{0, 0, Integer.parseInt(t)};
+    return new int[]{0, 0, 0};
 }
 
 static List<String> weaponPropertyLabels(Map<String, Object> a) {
@@ -1344,10 +1381,7 @@ static String builtinDescription(String cat, String name) {
         }
         case WEAPONS: {
             WeaponEntry w = builtinWeapon(name);
-            if (w == null) return "";
-            return w.category + " weapon.\nDamage: " + w.damage
-                    + "\nProperties: " + (w.properties.isEmpty() ? "—" : String.join(", ", w.properties))
-                    + "\nMastery: " + w.mastery + "\nWeight: " + w.weight + "   Cost: " + w.cost;
+            return w == null ? "" : w.infoText();
         }
         case ITEMS:
             return App.ITEM_PRESETS.getOrDefault(name, "").replace(" Placeholder description.", "");
