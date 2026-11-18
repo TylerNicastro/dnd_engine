@@ -14,12 +14,22 @@ import java.util.List;
 //           Initiative Order, Teams, Combat Settings) runs the turns. End Combat returns to placement mode.
 //
 // Everything is saved in the Maps asset (custom_assets.json) next to its "grid", so it survives leaving the screen:
-//   tokens    : [{uid, kind ("PC" | "NPC"), refId, label, x, y, hp, team (-1 none, 0-9), init}]
-//               (x, y) is the token's top-left square. Size, max HP, speed, AC, initiative bonus and the token's
-//               look are read from the character (by its "id", see CharacterStorage.loadWithIds) or the NPC asset
-//               every time, so edits made elsewhere show up. Tokens whose character / NPC was deleted are dropped.
+//   tokens    : [{uid, kind ("PC" | "NPC"), refId, label, x, y, hp, team (-1 none, 0-9), init,
+//                 ammo {Arrow: 19, ...}, items {"Potion of Healing": 2, ...}, conditions [...], damageMods {Fire: mask, ...},
+//                 dodging, reactionsPerRound, reactionsUsed}]
+//               (x, y) is the token's top-left square. Size, max HP, speed, AC, initiative bonus, attacks and the
+//               token's look are read from the character (by its "id", see CharacterStorage.loadWithIds) or the NPC
+//               asset every time, so edits made elsewhere show up. Tokens whose character / NPC was deleted are dropped.
+//               Combat-only state never touches the character sheet: ammo is copied from the character's Equipment
+//               when the token is placed and when combat starts, then counted here; damageMods are per-token
+//               adjustments (DamageRules masks, 0 = normal) on top of an NPC's typed traits.
 //   teamNames : TEAMS strings ("" shows as "Team N")
-//   combat    : {round, active (uid), moveLeft, order: [uid, ...]} while combat is running (absent otherwise)
+//   combat    : {round, active (uid), moveLeft, order: [uid, ...], attacksLeft, actionUsed, attackAction,
+//                bonusAttackUsed (= Bonus Action used), disengaged} while combat is running (absent otherwise)
+//
+// Turn economy: one action (Attack, Dash, Disengage or Dodge), one Bonus Action (the Light-weapon extra attack, or a
+// Rogue's Cunning Action Dash / Disengage) and one Reaction per round (opportunity attacks). Leaving an enemy's
+// reach with a Move provokes an opportunity attack unless the mover Disengaged; dragging a token never does.
 //
 // Movement: 5 ft. per square (diagonals too), Water squares cost double, walls / closed doors / windows block,
 // open doors don't, and corners can't be cut. Clear (no floor) and Pit squares can't be entered. Creatures can
@@ -78,6 +88,35 @@ static class Tok {
     Map<?, ?> source; // the character record or NPC asset
     List<WeaponRules.Attack> attacks = new ArrayList<>(); // from held weapons (characters) or stat-block actions (NPCs)
     int attacksPerAction = 1;                              // Extra Attack / Multiattack
+    Map<String, Integer> sourceMods = new LinkedHashMap<>(); // damage modifiers from NPC traits (DamageRules masks)
+    // combat-only state (saved with the map)
+    Map<String, Integer> modOverrides = new LinkedHashMap<>(); // per-token damage modifier adjustments
+    Map<String, Integer> ammo = new LinkedHashMap<>();         // ammunition left, by item name
+    boolean dodging;      // took the Dodge action: attacks against it have Disadvantage until its next turn
+    int reactionsPerRound = 1; // Reactions it gets each round (1 for most creatures)
+    int reactionsUsed;          // used since its last turn started (opportunity attacks, Shield, ...)
+    List<String> conditions = new ArrayList<>(); // combat-only conditions (characters start from their sheet)
+    Map<String, Integer> items = new LinkedHashMap<>(); // combat-only usable items (characters start from Equipment)
+    boolean itemsLoaded;        // items / conditions were copied from the source once
+    // animation only (not saved)
+    double drawX = Double.NaN, drawY = Double.NaN; // drawn position while sliding (in squares)
+    double shakeDx;             // sideways shake offset in pixels
+    boolean alert;              // red ring: waiting on its opportunity attack choice
+
+    boolean hasReaction() {
+        return reactionsUsed < reactionsPerRound && !CombatConditions.incapacitated(conditions) && !down();
+    }
+
+    Map<String, Integer> damageMods() {
+        return DamageRules.effective(sourceMods, modOverrides);
+    }
+
+    // Longest melee reach among its attacks (opportunity attacks); 5 ft. by default
+    int meleeReach() {
+        int r = 0;
+        for (WeaponRules.Attack a : attacks) if (a.melee) r = Math.max(r, a.reach);
+        return r > 0 ? r : 5;
+    }
 
     boolean down() {
         return hp <= 0;
@@ -132,11 +171,16 @@ private Tok active;
 private int round = 1;
 private int moveLeft;
 private int attacksLeft;              // attacks left in this turn's Attack action
-private boolean bonusAttackUsed;      // the Light-property (off-hand) extra attack
+private boolean bonusAttackUsed;      // the Bonus Action is used (Light-weapon extra attack, or Cunning Action)
+private boolean actionUsed;           // the action is used (Attack, Dash, Disengage or Dodge)
+private boolean attackAction;         // the action used was Attack (more attacks may follow)
+private boolean disengaged;           // took Disengage: this turn's movement doesn't provoke opportunity attacks
 private WeaponRules.Attack targeting; // attack waiting for a target click, or null
 private boolean moveMode;
 private Map<Integer, Integer> reach = new HashMap<>(); // anchor key (y * width + x) -> movement cost in feet
 private boolean[][] reachCells = new boolean[0][0];
+private int[] reachPrev;             // movement search: previous anchor key on the best path (-1 = none)
+private boolean animating;           // a token is sliding (or paused for an opportunity attack): board input waits
 
 // view toggles (Combat Settings)
 private boolean showHp = true, showNames = true, showRange = true, showCoords = false, skipDefeated = true;
@@ -414,6 +458,14 @@ private void loadState() {
             t.hp = CustomAssets.intVal(m, "hp", -1);
             t.team = Math.max(-1, Math.min(TEAMS - 1, CustomAssets.intVal(m, "team", -1)));
             t.init = CustomAssets.intVal(m, "init", 0);
+            t.ammo = intMap(m.get("ammo"));
+            t.modOverrides = intMap(m.get("damageMods"));
+            t.dodging = CustomAssets.bool(m, "dodging");
+            t.reactionsPerRound = Math.max(0, CustomAssets.intVal(m, "reactionsPerRound", 1));
+            t.reactionsUsed = CustomAssets.intVal(m, "reactionsUsed", CustomAssets.bool(m, "reactionUsed") ? 1 : 0);
+            t.conditions = CustomAssets.list(m, "conditions");
+            t.items = intMap(m.get("items"));
+            t.itemsLoaded = m.get("items") instanceof Map;
             tokens.add(t);
         }
     }
@@ -433,6 +485,9 @@ private void loadState() {
         moveLeft = CustomAssets.intVal(cm, "moveLeft", 0);
         attacksLeft = CustomAssets.intVal(cm, "attacksLeft", 1);
         bonusAttackUsed = CustomAssets.bool(cm, "bonusAttackUsed");
+        actionUsed = CustomAssets.bool(cm, "actionUsed");
+        attackAction = CustomAssets.bool(cm, "attackAction");
+        disengaged = CustomAssets.bool(cm, "disengaged");
         for (String uid : CustomAssets.list(cm, "order")) {
             Tok t = byUid(uid);
             if (t != null && !order.contains(t)) order.add(t);
@@ -523,6 +578,17 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
         t.attacks = WeaponRules.npcAttacks(npc);
         t.attacksPerAction = WeaponRules.npcAttacksPerAction(npc);
     }
+    t.sourceMods = NPC.equals(t.kind) ? DamageRules.fromTraits(t.source) : new LinkedHashMap<>();
+    // ammunition this token's attacks need but isn't tracking yet (combat-only copy; the sheet is never changed)
+    for (WeaponRules.Attack a : t.attacks) if (!a.ammo.isEmpty() && !t.ammo.containsKey(a.ammo)) t.ammo.put(a.ammo, startingAmmo(t, a.ammo));
+    if (!t.itemsLoaded) {
+        // first time: copy usable items and current conditions from the character sheet (combat-only copies)
+        t.itemsLoaded = true;
+        if (PC.equals(t.kind)) {
+            t.items = CombatItems.fromEquipment(CharacterStorage.recList(t.source, "equipment"));
+            for (String c : App.recConditions(t.source)) if (!"Conscious".equals(c) && !t.conditions.contains(c)) t.conditions.add(c);
+        }
+    }
     t.size = Math.min(sizeSquares(t.sizeName), Math.max(1, Math.min(model.width, model.height)));
     if (t.hp < 0 || t.hp > t.maxHp) t.hp = t.maxHp;
     return true;
@@ -548,6 +614,13 @@ private void persistNow() {
         m.put("hp", t.hp);
         m.put("team", t.team);
         m.put("init", t.init);
+        m.put("ammo", new LinkedHashMap<String, Object>(t.ammo));
+        m.put("damageMods", new LinkedHashMap<String, Object>(t.modOverrides));
+        m.put("dodging", t.dodging);
+        m.put("reactionsPerRound", t.reactionsPerRound);
+        m.put("reactionsUsed", t.reactionsUsed);
+        m.put("conditions", new ArrayList<Object>(t.conditions));
+        m.put("items", new LinkedHashMap<String, Object>(t.items));
         tl.add(m);
     }
     asset.put("tokens", tl);
@@ -559,6 +632,9 @@ private void persistNow() {
         c.put("moveLeft", moveLeft);
         c.put("attacksLeft", attacksLeft);
         c.put("bonusAttackUsed", bonusAttackUsed);
+        c.put("actionUsed", actionUsed);
+        c.put("attackAction", attackAction);
+        c.put("disengaged", disengaged);
         List<Object> ids = new ArrayList<>();
         for (Tok t : order) ids.add(t.uid);
         c.put("order", ids);
@@ -968,6 +1044,12 @@ private void beginCombat() {
     inCombat = true;
     order.clear();
     order.addAll(tokens);
+    for (Tok t : tokens) {
+        resetAmmo(t); // fresh encounter: ammunition and usable items copied from Equipment again
+        if (PC.equals(t.kind) && t.source != null) t.items = CombatItems.fromEquipment(CharacterStorage.recList(t.source, "equipment"));
+        t.dodging = false;
+        t.reactionsUsed = 0;
+    }
     sortOrder();
     round = 1;
     active = null;
@@ -987,6 +1069,7 @@ private void beginCombat() {
 }
 
 private void endTurn() {
+    if (animating) return; // finish the slide (and any opportunity attacks) first
     if (!inCombat || order.isEmpty()) return;
     setMoveMode(false);
     int n = order.size();
@@ -1012,14 +1095,20 @@ private void endCombat() {
     order.clear();
     active = null;
     round = 1;
-    setStatus("Combat ended. Back to placement: drag tokens freely, or Start Combat again.");
+    for (Tok t : tokens) {
+        t.dodging = false;
+        t.reactionsUsed = 0;
+    }
+    setStatus("Combat ended. Back to placement: drag tokens freely, or Start Combat again. "
+            + "Ammunition used in the fight isn't removed from character sheets: about half of it can be recovered.");
     persistNow();
     refreshAll();
 }
 
 private void setMoveMode(boolean on) {
+    if (on && animating) return;
     if (on) targeting = null;
-    moveMode = on && inCombat && active != null && moveLeft > 0 && !active.down();
+    moveMode = on && inCombat && active != null && moveLeft > 0 && !active.down() && CombatConditions.speedZeroBy(active.conditions).isEmpty();
     if (moveMode) {
         computeReach();
         setStatus(reach.isEmpty() ? active.label + " can't reach any open square from here."
@@ -1087,15 +1176,18 @@ private void computeReach() {
     if (active == null) return;
     int w = model.width, h = model.height, size = active.size;
     int[] dist = new int[w * h];
+    int[] diag = new int[w * h]; // tie-breaker: fewer diagonal steps, so equal-cost paths look straight
+    reachPrev = new int[w * h];
     Arrays.fill(dist, Integer.MAX_VALUE);
+    Arrays.fill(reachPrev, -1);
     int start = active.y * w + active.x;
     if (start < 0 || start >= dist.length) return;
     dist[start] = 0;
-    PriorityQueue<int[]> pq = new PriorityQueue<>((a, b) -> a[0] - b[0]);
-    pq.add(new int[]{0, start});
+    PriorityQueue<int[]> pq = new PriorityQueue<>((a, b) -> a[0] != b[0] ? a[0] - b[0] : a[2] - b[2]);
+    pq.add(new int[]{0, start, 0});
     while (!pq.isEmpty()) {
         int[] cur = pq.poll();
-        if (cur[0] > dist[cur[1]]) continue;
+        if (cur[0] > dist[cur[1]] || (cur[0] == dist[cur[1]] && cur[2] > diag[cur[1]])) continue;
         int x = cur[1] % w, y = cur[1] / w;
         for (int dy = -1; dy <= 1; dy++) {
             for (int dx = -1; dx <= 1; dx++) {
@@ -1104,9 +1196,13 @@ private void computeReach() {
                 if (nx < 0 || ny < 0 || nx + size > w || ny + size > h) continue;
                 if (!canStep(active, x, y, dx, dy)) continue;
                 int nc = cur[0] + (difficultAt(nx, ny, size) ? 10 : 5);
-                if (nc > moveLeft || nc >= dist[ny * w + nx]) continue;
-                dist[ny * w + nx] = nc;
-                pq.add(new int[]{nc, ny * w + nx});
+                int nd = cur[2] + (dx != 0 && dy != 0 ? 1 : 0);
+                int nk = ny * w + nx;
+                if (nc > moveLeft || nc > dist[nk] || (nc == dist[nk] && nd >= diag[nk])) continue;
+                dist[nk] = nc;
+                diag[nk] = nd;
+                reachPrev[nk] = cur[1];
+                pq.add(new int[]{nc, nk, nd});
             }
         }
     }
@@ -1138,13 +1234,250 @@ private int[] reachAnchorFor(int cx, int cy, double fx, double fy) {
     return best;
 }
 
+// Moves the active creature to a reachable anchor, sliding square by square along the path the movement
+// search found. Before each step that leaves an enemy's reach (without Disengage), the slide pauses, that enemy's
+// token shakes, and it may make an opportunity attack; then the movement carries on (or stops if the mover drops).
 private void moveActiveTo(int ax, int ay, int cost) {
-    active.x = ax;
-    active.y = ay;
+    Tok mover = active;
+    List<int[]> path = reachPath(ax, ay);
     moveLeft = Math.max(0, moveLeft - cost);
-    setMoveMode(moveLeft > 0);
-    if (!moveMode) setStatus(active.label + " moved " + cost + " ft. No movement left this turn.");
-    else setStatus(active.label + " moved " + cost + " ft. " + moveLeft + " ft. left: click another square, or Esc to stop.");
+    // hide the range overlay while sliding
+    moveMode = false;
+    reach = new HashMap<>();
+    reachCells = new boolean[0][0];
+    animating = true;
+    setStatus(mover.label + " moves " + cost + " ft.");
+    refreshSide();
+    animateStep(mover, path, 0, cost, new HashSet<>());
+}
+
+// Anchors from the active creature's square to (ax, ay), following the movement search's predecessors
+private List<int[]> reachPath(int ax, int ay) {
+    List<int[]> path = new ArrayList<>();
+    int w = model.width;
+    int start = active.y * w + active.x, k = ay * w + ax;
+    int guard = w * model.height;
+    while (k >= 0 && k != start && guard-- > 0) {
+        path.add(0, new int[]{k % w, k / w});
+        k = reachPrev != null && k < reachPrev.length ? reachPrev[k] : -1;
+    }
+    path.add(0, new int[]{active.x, active.y});
+    if (path.size() == 1) path.add(new int[]{ax, ay}); // no recorded path: slide straight there
+    return path;
+}
+
+private static int distanceAt(Tok a, int bx, int by, int bsize) {
+    return Math.max(gapCells(a.x, a.size, bx, bsize), gapCells(a.y, a.size, by, bsize)) * 5;
+}
+
+private static boolean hasMelee(Tok t) {
+    for (WeaponRules.Attack a : t.attacks) if (a.melee) return true;
+    return false;
+}
+
+private void animateStep(Tok mover, List<int[]> path, int i, int cost, Set<Tok> asked) {
+    if (i >= path.size() - 1 || mover.down() || !tokens.contains(mover)) {
+        finishMove(mover, cost, i < path.size() - 1);
+        return;
+    }
+    int[] from = path.get(i), to = path.get(i + 1);
+    if (!disengaged) {
+        // enemies whose reach this step leaves get one chance each (in initiative order)
+        for (Tok e : order) {
+            if (e == mover || asked.contains(e) || !e.hasReaction() || !hasMelee(e)) continue;
+            if (mover.team >= 0 && e.team == mover.team) continue;
+            int r = e.meleeReach();
+            if (distanceAt(e, from[0], from[1], mover.size) <= r && distanceAt(e, to[0], to[1], mover.size) > r) {
+                asked.add(e);
+                Runnable resume = () -> {
+                    e.alert = false;
+                    board.repaint();
+                    animateStep(mover, path, i, cost, asked); // re-check this step for the next enemy, then slide on
+                };
+                setStatus(mover.label + " is leaving " + e.label + "'s reach: opportunity attack?");
+                afterDelay(220, () -> shake(e, () -> offerOpportunityAttack(mover, e, resume)));
+                return;
+            }
+        }
+    }
+    slide(mover, from, to, () -> {
+        mover.x = to[0];
+        mover.y = to[1];
+        animateStep(mover, path, i + 1, cost, asked);
+    });
+}
+
+private void finishMove(Tok mover, int cost, boolean interrupted) {
+    animating = false;
+    mover.drawX = Double.NaN;
+    mover.drawY = Double.NaN;
+    if (interrupted && mover.down()) setStatus(mover.label + " drops to 0 HP; the movement stops.");
+    else if (active == mover) {
+        setMoveMode(moveLeft > 0 && !mover.down());
+        if (!moveMode) setStatus(mover.label + " moved " + cost + " ft. No movement left this turn.");
+        else setStatus(mover.label + " moved " + cost + " ft. " + moveLeft + " ft. left: click another square, or Esc to stop.");
+    }
+    persistSoon();
+    refreshAll();
+}
+
+private static final int SLIDE_MS = 130, FRAME_MS = 15;
+
+// Slides a token's drawn position from one anchor to the next, then runs `then`
+private void slide(Tok t, int[] from, int[] to, Runnable then) {
+    long start = System.currentTimeMillis();
+    javax.swing.Timer timer = new javax.swing.Timer(FRAME_MS, null);
+    timer.addActionListener(e -> {
+        double p = Math.min(1, (System.currentTimeMillis() - start) / (double) SLIDE_MS);
+        double ease = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2; // ease in-out
+        t.drawX = from[0] + (to[0] - from[0]) * ease;
+        t.drawY = from[1] + (to[1] - from[1]) * ease;
+        board.repaint();
+        if (p >= 1) {
+            timer.stop();
+            then.run();
+        }
+    });
+    t.drawX = from[0];
+    t.drawY = from[1];
+    timer.start();
+}
+
+// Shakes a token side to side with a red alert ring (it stays ringed until its choice is made)
+private void shake(Tok t, Runnable then) {
+    long start = System.currentTimeMillis();
+    int duration = 520;
+    t.alert = true;
+    javax.swing.Timer timer = new javax.swing.Timer(FRAME_MS, null);
+    timer.addActionListener(e -> {
+        double p = Math.min(1, (System.currentTimeMillis() - start) / (double) duration);
+        t.shakeDx = Math.sin(p * Math.PI * 2 * 5) * Math.min(9, board.scale * 0.16) * (1 - p);
+        board.repaint();
+        if (p >= 1) {
+            timer.stop();
+            t.shakeDx = 0;
+            board.repaint();
+            then.run();
+        }
+    });
+    timer.start();
+}
+
+private static void afterDelay(int ms, Runnable r) {
+    javax.swing.Timer t = new javax.swing.Timer(ms, e -> r.run());
+    t.setRepeats(false);
+    t.start();
+}
+
+// One enemy's opportunity attack: pick a melee attack (then roll) or let the mover go. Whatever happens,
+// closing the prompt or the attack roll resumes the movement; there's no separate "done" step.
+private void offerOpportunityAttack(Tok mover, Tok e, Runnable resume) {
+    boolean[] handled = {false};
+    Runnable once = () -> {
+        if (handled[0]) return;
+        handled[0] = true;
+        resume.run();
+    };
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    JPanel head = new JPanel(new BorderLayout(10, 0));
+    head.setOpaque(false);
+    head.setAlignmentX(Component.LEFT_ALIGNMENT);
+    head.add(new Tokens.Preview(e.style, e.label, 48, teamColor(e.team)), BorderLayout.WEST);
+    JLabel intro = new JLabel("<html><div style='width:340px'><b>" + App.escapeHtml(mover.label) + "</b> is leaving <b>"
+            + App.escapeHtml(e.label) + "</b>'s reach (" + e.meleeReach() + " ft.). " + App.escapeHtml(e.label)
+            + " can use its <span style='color:#9b6bdf'>Reaction</span> to make one melee attack first.</div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    App.clickable(intro, () -> App.showInfoOverlay(intro, "Opportunity Attack", "Reaction",
+            "You can make an opportunity attack when a creature you can see leaves your reach using its action, Bonus Action, "
+                    + "Reaction or movement. You use your Reaction to make one melee attack with a weapon or an Unarmed Strike against the provoking creature, "
+                    + "just before it leaves your reach. Taking the Disengage action prevents this, and so does being moved without using movement "
+                    + "(teleporting, being pushed, or dragging a token here).", null));
+    head.add(intro, BorderLayout.CENTER);
+    body.add(head);
+    body.add(Box.createRigidArea(new Dimension(0, 12)));
+    JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+    btns.setOpaque(false);
+    btns.setAlignmentX(Component.LEFT_ALIGNMENT);
+    Runnable[] close = new Runnable[1];
+    for (WeaponRules.Attack a : e.attacks) {
+        if (!a.melee) continue;
+        JButton b = economyButton(a.name + "  " + WeaponRules.signed(a.toHit), REACTION_COLOR, "Reaction: " + a.damageText() + " · " + a.reachText());
+        b.addActionListener(ev -> {
+            handled[0] = true; // the attack roll's closing resumes the movement instead
+            close[0].run();
+            e.reactionsUsed++;
+            TargetCheck tc = new TargetCheck();
+            tc.distance = distanceFt(e, mover);
+            tc.notes.add("Opportunity attack (uses " + e.label + "'s Reaction).");
+            int[] fx = CombatConditions.attackEffects(e.conditions, mover.conditions, tc.distance, tc.notes);
+            if (fx[0] == 1) tc.advantage = true;
+            if (fx[1] == 1) tc.disadvantage = true;
+            if (fx[2] == 1) tc.autoCrit = true;
+            if (mover.dodging) {
+                tc.disadvantage = true;
+                tc.notes.add(mover.label + " is Dodging: Disadvantage.");
+            }
+            if (a.heavyPenalty) tc.disadvantage = true;
+            persistSoon();
+            showAttackRoll(board, e, mover, a, tc, true, resume);
+        });
+        btns.add(b);
+    }
+    JButton skip = Tokens.smallButton("Don't attack", "Keep the Reaction and let " + mover.label + " go");
+    skip.addActionListener(ev -> close[0].run());
+    btns.add(skip);
+    body.add(btns);
+    close[0] = App.showSheetOverlay(board, "Opportunity Attack", body, null, once);
+}
+
+// ---------------- Dash / Disengage / Dodge ----------------
+// Rogues (level 2+) can Dash or Disengage as a Bonus Action (Cunning Action)
+private static boolean cunningAction(Tok t) {
+    if (!PC.equals(t.kind) || t.source == null) return false;
+    Integer lv = CharacterStorage.recClassLevels(t.source).get("Rogue");
+    return lv != null && lv >= 2;
+}
+
+// Uses the action, or (Cunning Action) the Bonus Action. Returns what was used, or null if neither is free.
+private String spendForAction(Tok t, boolean bonusAllowed) {
+    if (!actionUsed) {
+        actionUsed = true;
+        attackAction = false;
+        return "action";
+    }
+    if (bonusAllowed && cunningAction(t) && !bonusAttackUsed) {
+        bonusAttackUsed = true;
+        return "Bonus Action (Cunning Action)";
+    }
+    return null;
+}
+
+private void doDash(Tok t) {
+    String used = spendForAction(t, true);
+    if (used == null) return;
+    moveLeft += t.speed;
+    setStatus(t.label + " Dashes (" + used + "): +" + t.speed + " ft., " + moveLeft + " ft. of movement left.");
+    if (moveMode) computeReach();
+    persistSoon();
+    refreshAll();
+}
+
+private void doDisengage(Tok t) {
+    String used = spendForAction(t, true);
+    if (used == null) return;
+    disengaged = true;
+    setStatus(t.label + " Disengages (" + used + "): moving this turn won't provoke opportunity attacks.");
+    persistSoon();
+    refreshAll();
+}
+
+private void doDodge(Tok t) {
+    if (spendForAction(t, false) == null) return;
+    t.dodging = true;
+    setStatus(t.label + " Dodges: attacks against it have Disadvantage until its next turn, and it has Advantage on DEX saves.");
     persistSoon();
     refreshAll();
 }
@@ -1152,10 +1485,18 @@ private void moveActiveTo(int ax, int ay, int cost) {
 // ===============================================================
 // Attacks: range, line of sight, rolls
 // ===============================================================
+// A new turn: action, Bonus Action, movement extras and the active creature's Reaction / Dodge reset
 private void startTurnActions() {
     attacksLeft = active != null ? Math.max(1, active.attacksPerAction) : 0;
     bonusAttackUsed = false;
+    actionUsed = false;
+    attackAction = false;
+    disengaged = false;
     targeting = null;
+    if (active != null) {
+        active.reactionsUsed = 0; // Reactions come back at the start of your turn
+        active.dodging = false;      // Dodge lasts until the start of your next turn
+    }
 }
 
 private static boolean hasOffHandAttack(Tok t) {
@@ -1163,9 +1504,14 @@ private static boolean hasOffHandAttack(Tok t) {
     return false;
 }
 
+// Main attacks: the first one takes the action (Attack); the rest of the Attack action's attacks follow
+private boolean canMainAttack() {
+    return attacksLeft > 0 && (attackAction || !actionUsed);
+}
+
 // The Light-property extra attack needs an attack made this turn (with the Attack action) first
 private boolean canBonusAttack(Tok t) {
-    return hasOffHandAttack(t) && !bonusAttackUsed && attacksLeft < Math.max(1, t.attacksPerAction);
+    return hasOffHandAttack(t) && !bonusAttackUsed && attackAction && attacksLeft < Math.max(1, t.attacksPerAction);
 }
 
 private static int gapCells(int a, int as, int b, int bs) {
@@ -1222,7 +1568,7 @@ private int[] lineOfSight(Tok a, Tok b) {
 }
 
 static final class TargetCheck {
-    boolean ok = true, disadvantage, advantage, ranged;
+    boolean ok = true, disadvantage, advantage, ranged, autoCrit;
     int distance, cover;
     String reason = "";
     List<String> notes = new ArrayList<>();
@@ -1272,49 +1618,65 @@ TargetCheck checkTarget(Tok att, Tok target, WeaponRules.Attack atk) {
         tc.disadvantage = true;
         tc.notes.add("Heavy weapon without 13 " + (atk.melee ? "Strength" : "Dexterity") + ": Disadvantage.");
     }
+    int[] condFx = CombatConditions.attackEffects(att.conditions, target.conditions, tc.distance, tc.notes);
+    if (condFx[0] == 1) tc.advantage = true;
+    if (condFx[1] == 1) tc.disadvantage = true;
+    if (condFx[2] == 1) tc.autoCrit = true;
+    if (target.dodging) {
+        tc.disadvantage = true;
+        tc.notes.add(target.label + " is Dodging: attacks against it have Disadvantage.");
+    }
+    int mask = target.damageMods().getOrDefault(DamageRules.normalizeType(atk.damageType), 0);
+    if (mask != 0) tc.notes.add(target.label + " is " + DamageRules.levelName(mask).toLowerCase() + " to " + atk.damageType.toLowerCase() + " damage.");
     if (target.down()) {
         tc.advantage = true;
         tc.notes.add(target.label + " is down (0 HP): attacks have Advantage" + (tc.distance <= 5 ? ", and a hit from within 5 ft. is a Critical Hit." : "."));
+        if (tc.distance <= 5) tc.autoCrit = true;
     }
     return tc;
 }
 
-// Ammunition of this name in a character's equipment
-private int ammoCount(Tok t, String ammo) {
-    if (!PC.equals(t.kind) || t.source == null || ammo.isEmpty()) return -1;
+static final int NPC_DEFAULT_AMMO = 20;
+
+// Ammunition a token starts with: what the character carries in Equipment, or NPC_DEFAULT_AMMO for NPCs
+// (NPC stat blocks don't list ammunition; adjust it in the token's details)
+private static int startingAmmo(Tok t, String ammo) {
+    if (!PC.equals(t.kind)) return NPC_DEFAULT_AMMO;
     int n = 0;
-    for (String e : CharacterStorage.recList(t.source, "equipment")) {
-        AmmoItem a = WeaponData.findAmmo(e);
-        if (a != null && a.name.equalsIgnoreCase(ammo)) n += App.itemCount(e);
+    if (t.source != null) {
+        for (String e : CharacterStorage.recList(t.source, "equipment")) {
+            AmmoItem a = WeaponData.findAmmo(e);
+            if (a != null && a.name.equalsIgnoreCase(ammo)) n += App.itemCount(e);
+        }
     }
     return n;
 }
 
-// Uses (-1) or gives back (+1) one piece of ammunition in characters.json
+// Re-copies every ammunition count from the source (used when combat starts)
+private void resetAmmo(Tok t) {
+    t.ammo.clear();
+    for (WeaponRules.Attack a : t.attacks) if (!a.ammo.isEmpty()) t.ammo.put(a.ammo, startingAmmo(t, a.ammo));
+}
+
+// Ammunition left for this token in the encounter (-1 = the attack doesn't use any)
+private int ammoCount(Tok t, String ammo) {
+    if (ammo == null || ammo.isEmpty()) return -1;
+    return t.ammo.getOrDefault(ammo, 0);
+}
+
+// Uses (-1) or gives back (+1) ammunition in the encounter's count (the character sheet isn't changed)
 private void changeAmmo(Tok t, String ammo, int delta) {
-    List<Object> all = CharacterStorage.loadWithIds();
-    for (Object o : all) {
-        if (!(o instanceof Map)) continue;
-        @SuppressWarnings("unchecked")
-        Map<String, Object> rec = (Map<String, Object>) o;
-        if (!t.refId.equals(CharacterStorage.recStr(rec, "id"))) continue;
-        List<String> eq = CharacterStorage.recList(rec, "equipment");
-        if (delta < 0) {
-            for (int i = 0; i < eq.size(); i++) {
-                AmmoItem a = WeaponData.findAmmo(eq.get(i));
-                if (a != null && a.name.equalsIgnoreCase(ammo)) {
-                    App.changeItemCount(eq, i, -1);
-                    break;
-                }
-            }
-        } else {
-            App.addItem(eq, ammo);
+    t.ammo.put(ammo, Math.max(0, t.ammo.getOrDefault(ammo, 0) + delta));
+}
+
+static Map<String, Integer> intMap(Object o) {
+    Map<String, Integer> out = new LinkedHashMap<>();
+    if (o instanceof Map) {
+        for (Map.Entry<?, ?> en : ((Map<?, ?>) o).entrySet()) {
+            if (en.getValue() instanceof Number) out.put(String.valueOf(en.getKey()), ((Number) en.getValue()).intValue());
         }
-        rec.put("equipment", new ArrayList<Object>(eq));
-        CharacterStorage.saveAllCharacters(all);
-        t.source = rec;
-        return;
     }
+    return out;
 }
 
 private void showAttackPicker(Component anchor, Tok t) {
@@ -1327,10 +1689,10 @@ private void showAttackPicker(Component anchor, Tok t) {
     list.setOpaque(false);
     Runnable[] close = new Runnable[1];
     for (WeaponRules.Attack a : t.attacks) {
-        boolean usable = a.offHand ? canBonusAttack(t) : attacksLeft > 0;
+        boolean usable = a.offHand ? canBonusAttack(t) : canMainAttack();
         int ammo = a.ammo.isEmpty() ? -1 : ammoCount(t, a.ammo);
         boolean ammoOk = ammo != 0 || a.melee; // thrown / melee weapons with ammo text still work in melee
-        String why = !usable ? (a.offHand ? (bonusAttackUsed ? "Bonus attack already used this turn." : "Attack with a Light weapon first.") : "No attacks left this turn.")
+        String why = !usable ? (a.offHand ? (bonusAttackUsed ? "Bonus Action already used this turn." : "Attack with a Light weapon first.") : actionUsed && !attackAction ? "Your action is already used this turn." : "No attacks left this turn.")
                 : !ammoOk ? "No " + a.ammo.toLowerCase() + "s left in Equipment." : "";
         JButton b = App.overlayButton("", false);
         b.setHorizontalAlignment(SwingConstants.LEFT);
@@ -1372,6 +1734,7 @@ private void showAttackPicker(Component anchor, Tok t) {
 }
 
 private void startTargeting(WeaponRules.Attack a) {
+    if (animating) return;
     if (moveMode) setMoveMode(false);
     placing = null;
     targeting = a;
@@ -1385,13 +1748,27 @@ private void startTargeting(WeaponRules.Attack a) {
 
 // Roll to hit (Advantage / Disadvantage, reroll, or replace the d20 with your own roll), then roll damage
 // (doubled dice on a Critical Hit, reroll or replace the total) and apply it to the target
-private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.Attack atk, TargetCheck tc) {
+// `reaction`: an opportunity attack (the caller has spent the attacker's Reaction; no action or attack is used)
+private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.Attack atk, TargetCheck tc, boolean reaction) {
+    showAttackRoll(anchor, att, target, atk, tc, reaction, null);
+}
+
+// `afterClose` runs once the roll overlay closes (e.g. to resume a movement after an opportunity attack)
+private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.Attack atk, TargetCheck tc, boolean reaction, Runnable afterClose) {
     // the attack is made: spend it (Undo gives it back)
-    final boolean usedBonus = atk.offHand;
+    final boolean usedBonus = !reaction && atk.offHand;
+    final boolean startedAttackAction = !reaction && !usedBonus && !attackAction;
     if (usedBonus) bonusAttackUsed = true;
-    else attacksLeft = Math.max(0, attacksLeft - 1);
+    else if (!reaction) {
+        attacksLeft = Math.max(0, attacksLeft - 1);
+        if (startedAttackAction) {
+            actionUsed = true;   // taking the Attack action
+            attackAction = true;
+        }
+    }
     final boolean usedAmmo = tc.ranged && !atk.ammo.isEmpty() && ammoCount(att, atk.ammo) > 0;
     if (usedAmmo) changeAmmo(att, atk.ammo, -1);
+    Map<String, Integer> targetMods = target.damageMods();
     persistSoon();
     refreshSide();
 
@@ -1517,7 +1894,10 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     JButton graze = App.overlayButton("Apply Graze", false);
     graze.setToolTipText("Graze mastery: on a miss, deal damage equal to the ability modifier used for the attack");
     if ("Graze".equals(atk.mastery)) applyRow.add(graze);
-    body.add(applyRow);
+    JLabel autoNote = muted2("Damage is applied to " + target.label + " when you press Done (rolled for you if you haven't).");
+    autoNote.setAlignmentX(Component.LEFT_ALIGNMENT);
+    autoNote.setBorder(new EmptyBorder(4, 0, 0, 0));
+    body.add(autoNote); // apply / graze stay as hidden helpers that Done triggers
 
     JLabel masteryLbl = new JLabel();
     masteryLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -1527,7 +1907,8 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     body.add(masteryLbl);
 
     rollDmg.addActionListener(e -> {
-        boolean crit = natural[0] == 20;
+        boolean hitNow = natural[0] == 20 || (natural[0] != 1 && natural[0] + atk.toHit >= effectiveAC);
+        boolean crit = natural[0] == 20 || (tc.autoCrit && hitNow);
         int count = atk.diceCount * (crit ? 2 : 1);
         dmgDice[0] = WeaponRules.rollDice(rng, count, atk.diceSides, atk.greatWeaponFighting);
         int sum = 0;
@@ -1544,9 +1925,12 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     });
     apply.addActionListener(e -> {
         if (dmgTotal[0] < 0 || applied[0]) return;
-        target.hp = Math.max(0, target.hp - dmgTotal[0]);
+        int taken = DamageRules.apply(dmgTotal[0], atk.damageType, targetMods);
+        String why = DamageRules.explain(dmgTotal[0], atk.damageType, targetMods);
+        target.hp = Math.max(0, target.hp - taken);
         applied[0] = true;
-        setStatus(att.label + " hits " + target.label + " for " + dmgTotal[0] + " " + atk.damageType.toLowerCase() + " damage"
+        setStatus(att.label + " hits " + target.label + " for " + taken + " " + atk.damageType.toLowerCase() + " damage"
+                + (why.isEmpty() ? "" : " [" + why + "]")
                 + (target.down() ? ". " + target.label + " is down!" : " (" + target.hp + " / " + target.maxHp + " HP)."));
         persistSoon();
         refreshAll();
@@ -1554,7 +1938,7 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     });
     graze.addActionListener(e -> {
         if (applied[0]) return;
-        int g = Math.max(0, atk.abilityMod);
+        int g = DamageRules.apply(Math.max(0, atk.abilityMod), atk.damageType, targetMods);
         target.hp = Math.max(0, target.hp - g);
         applied[0] = true;
         setStatus("Graze: " + target.label + " takes " + g + " " + atk.damageType.toLowerCase() + " damage on the miss.");
@@ -1572,8 +1956,15 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     undo.setToolTipText("Take the attack back: no damage, and the attack" + (usedAmmo ? " and the " + atk.ammo.toLowerCase() : "") + " are refunded");
     undo.addActionListener(e -> {
         if (applied[0]) return;
-        if (usedBonus) bonusAttackUsed = false;
-        else attacksLeft++;
+        if (reaction) att.reactionsUsed = Math.max(0, att.reactionsUsed - 1);
+        else if (usedBonus) bonusAttackUsed = false;
+        else {
+            attacksLeft++;
+            if (startedAttackAction) {
+                actionUsed = false;
+                attackAction = false;
+            }
+        }
         if (usedAmmo) changeAmmo(att, atk.ammo, 1);
         close[0].run();
         setStatus("Attack undone.");
@@ -1582,8 +1973,17 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     });
     JButton done = App.overlayButton("Done", true);
     done.addActionListener(e -> {
+        // apply automatically: a hit deals its damage (rolled now if needed); a Graze miss deals the ability modifier
+        boolean hitNow = natural[0] == 20 || (natural[0] != 1 && natural[0] + atk.toHit >= effectiveAC);
+        if (!applied[0] && hitNow) {
+            if (dmgTotal[0] < 0) rollDmg.doClick();
+            apply.doClick();
+        } else if (!applied[0] && "Graze".equals(atk.mastery) && atk.abilityMod > 0) {
+            graze.doClick();
+        } else if (!applied[0]) {
+            setStatus(att.label + "'s attack on " + target.label + " misses.");
+        }
         close[0].run();
-        if (!applied[0]) setStatus(att.label + "'s attack on " + target.label + ": " + (natural[0] + atk.toHit >= effectiveAC && natural[0] != 1 || natural[0] == 20 ? "hit, no damage applied." : "miss."));
         refreshAll();
     });
     foot.add(undo, BorderLayout.WEST);
@@ -1596,9 +1996,10 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
             modeButtons[i].setBackground(on ? App.GOLD : App.SHEET_ROW_ALT);
             modeButtons[i].setForeground(on ? App.SHEET_BG : App.TEXT_LIGHT);
         }
-        boolean crit = natural[0] == 20, fumble = natural[0] == 1;
+        boolean fumble = natural[0] == 1;
         int total = natural[0] + atk.toHit;
-        boolean hit = crit || (!fumble && total >= effectiveAC);
+        boolean hit = natural[0] == 20 || (!fumble && total >= effectiveAC);
+        boolean crit = natural[0] == 20 || (tc.autoCrit && hit);
         StringBuilder dice = new StringBuilder();
         for (int v : d20[0]) {
             if (dice.length() > 0) dice.append(" ");
@@ -1616,6 +2017,10 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         apply.setEnabled(canDamage && dmgTotal[0] >= 0);
         graze.setEnabled(!hit && !applied[0] && atk.abilityMod > 0);
         graze.setText("Apply Graze (" + Math.max(0, atk.abilityMod) + ")");
+        if (applied[0]) done.setText("Done");
+        else if (hit) done.setText(dmgTotal[0] < 0 ? "Done: Roll & Apply Damage" : "Done: Apply " + DamageRules.apply(dmgTotal[0], atk.damageType, targetMods) + " Damage");
+        else if ("Graze".equals(atk.mastery) && atk.abilityMod > 0) done.setText("Done: Apply Graze (" + DamageRules.apply(atk.abilityMod, atk.damageType, targetMods) + ")");
+        else done.setText("Done");
         reroll.setEnabled(!applied[0]);
         useOwn.setEnabled(!applied[0]);
         undo.setEnabled(!applied[0]);
@@ -1629,13 +2034,15 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         } else if (dmgTotal[0] < 0) {
             dmgLbl.setText("Roll damage, or set your own total.");
         } else if (dmgReplaced[0]) {
-            dmgLbl.setText(dmgTotal[0] + " " + atk.damageType.toLowerCase() + " damage (your roll)");
+            dmgLbl.setText(dmgTotal[0] + " " + atk.damageType.toLowerCase() + " damage (your roll)" + modText(dmgTotal[0], atk.damageType, targetMods));
         } else {
             StringBuilder sb = new StringBuilder();
             for (int v : dmgDice[0]) sb.append(sb.length() == 0 ? "" : " + ").append(v);
             dmgLbl.setText((dmgDice[0].length > 0 ? "[" + sb + "]" : "") + (atk.damageBonus != 0 || dmgDice[0].length == 0 ? " " + (atk.damageBonus >= 0 && dmgDice[0].length > 0 ? "+ " : "") + atk.damageBonus : "")
-                    + " = " + dmgTotal[0] + " " + atk.damageType.toLowerCase() + " damage");
+                    + " = " + dmgTotal[0] + " " + atk.damageType.toLowerCase() + " damage" + modText(dmgTotal[0], atk.damageType, targetMods));
         }
+        int mask = targetMods.getOrDefault(DamageRules.normalizeType(atk.damageType), 0);
+        apply.setText(mask == 0 || dmgTotal[0] < 0 ? "Apply Damage" : "Apply " + DamageRules.apply(dmgTotal[0], atk.damageType, targetMods) + " Damage");
         if (!atk.mastery.isEmpty()) {
             boolean onMiss = "Graze".equals(atk.mastery);
             boolean relevant = onMiss ? !hit : hit || "Nick".equals(atk.mastery);
@@ -1649,7 +2056,14 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     };
     rollD20s(d20, natural, mode[0]);
     render[0].run();
-    close[0] = App.showSheetOverlay(anchor, "Attack Roll", body, null);
+    close[0] = App.showSheetOverlay(anchor, "Attack Roll", body, null, afterClose);
+}
+
+// " → target is resistant: takes 6" (empty when the target has no modifier for this type)
+private static String modText(int amount, String type, Map<String, Integer> mods) {
+    int mask = type == null || type.isEmpty() ? 0 : mods.getOrDefault(DamageRules.normalizeType(type), 0);
+    if (mask == 0) return "";
+    return "  →  " + DamageRules.levelName(mask).toLowerCase() + ": takes " + DamageRules.apply(amount, type, mods);
 }
 
 private void rollD20s(int[][] d20, int[] natural, int mode) {
@@ -1668,6 +2082,501 @@ private static JLabel muted2(String text) {
     l.setForeground(App.TEXT_MUTED);
     l.setFont(new Font("SansSerif", Font.PLAIN, 12));
     return l;
+}
+
+// ===============================================================
+// Turn economy display, reactions, conditions, items
+// ===============================================================
+static final Color ACTION_COLOR = new Color(0x3F, 0xA3, 0x4D);   // green: takes your action
+static final Color BONUS_COLOR = new Color(0xE0, 0x8A, 0x2E);    // orange: takes your Bonus Action
+static final Color REACTION_COLOR = new Color(0x9B, 0x6B, 0xDF); // purple: takes a Reaction
+static final Color MOVE_COLOR = new Color(0x4F, 0x9D, 0xE8);     // blue: movement (no action)
+
+// Circles for one resource: filled = still available, outline = used
+private static class Pips extends JComponent {
+    final String label, status;
+    final Color color;
+    final int total, available;
+
+    Pips(String label, Color color, int total, int available, String status) {
+        this.label = label;
+        this.color = color;
+        this.total = Math.max(0, total);
+        this.available = available;
+        this.status = status;
+        setPreferredSize(new Dimension(100, 48));
+        setOpaque(false);
+    }
+
+    @Override
+    protected void paintComponent(Graphics g0) {
+        Graphics2D g = (Graphics2D) g0.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        if (isOpaque()) {
+            g.setColor(getBackground());
+            g.fillRect(0, 0, getWidth(), getHeight());
+        }
+        g.setFont(new Font("SansSerif", Font.BOLD, 10));
+        FontMetrics fm = g.getFontMetrics();
+        g.setColor(color);
+        g.drawString(label, (getWidth() - fm.stringWidth(label)) / 2, 11);
+        int d = 14, gapPx = 5, n = Math.max(1, total);
+        int w = n * d + (n - 1) * gapPx, x0 = (getWidth() - w) / 2, y = 16;
+        for (int i = 0; i < n; i++) {
+            int x = x0 + i * (d + gapPx);
+            if (total == 0) {
+                g.setColor(App.TEXT_MUTED);
+                g.drawLine(x + 2, y + d / 2, x + d - 2, y + d / 2);
+                continue;
+            }
+            if (i < available) {
+                g.setColor(color);
+                g.fillOval(x, y, d, d);
+            } else {
+                g.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 160));
+                g.setStroke(new BasicStroke(2f));
+                g.drawOval(x + 1, y + 1, d - 2, d - 2);
+            }
+        }
+        g.setFont(new Font("SansSerif", Font.PLAIN, 10));
+        fm = g.getFontMetrics();
+        g.setColor(App.TEXT_MUTED);
+        String s = status.length() > 20 ? status.substring(0, 19) + "…" : status;
+        g.drawString(s, (getWidth() - fm.stringWidth(s)) / 2, y + d + 13);
+        g.dispose();
+    }
+}
+
+private JComponent economyPips(String label, Color color, int total, int available, String status, Runnable onClick) {
+    Pips p = new Pips(label, color, total, available, status);
+    p.setToolTipText(label.charAt(0) + label.substring(1).toLowerCase() + ": " + available + " of " + total + " available (filled = available)");
+    App.clickable(p, onClick);
+    return p;
+}
+
+// A button whose colored stripe and text show what it costs (green action, orange Bonus Action, purple Reaction)
+static JButton economyButton(String text, Color color, String tip) {
+    JButton b = new JButton(text) {
+        @Override
+        public void setEnabled(boolean on) {
+            super.setEnabled(on);
+            setForeground(on ? color.brighter() : App.TEXT_MUTED);
+            setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createCompoundBorder(new LineBorder(on ? color : App.SHEET_BORDER, 1, true),
+                            BorderFactory.createMatteBorder(0, 5, 0, 0, on ? color : App.SHEET_BORDER)),
+                    new EmptyBorder(6, 8, 6, 8)));
+        }
+    };
+    b.setToolTipText(tip);
+    b.setFont(new Font("SansSerif", Font.BOLD, 13));
+    b.setBackground(App.SHEET_ROW_ALT);
+    b.setOpaque(true);
+    b.setFocusPainted(false);
+    b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+    b.setEnabled(true);
+    b.addMouseListener(new MouseAdapter() {
+        @Override
+        public void mouseEntered(MouseEvent e) { if (b.isEnabled()) b.setBackground(App.SHEET_HOVER); }
+        @Override
+        public void mouseExited(MouseEvent e) { b.setBackground(App.SHEET_ROW_ALT); }
+    });
+    return b;
+}
+
+private JComponent economyLegend(Tok t) {
+    JLabel l = new JLabel("<html><span style='color:#3fa34d'>●</span> Action &nbsp; <span style='color:#e08a2e'>●</span> Bonus Action &nbsp; "
+            + "<span style='color:#9b6bdf'>●</span> Reaction &nbsp; <span style='color:#4f9de8'>●</span> Movement</html>");
+    l.setForeground(App.TEXT_MUTED);
+    l.setFont(new Font("SansSerif", Font.PLAIN, 11));
+    App.clickable(l, () -> showEconomyInfo(t));
+    return l;
+}
+
+private void showEconomyInfo(Tok t) {
+    App.showInfoOverlay(sideContent, "Your Turn", t.label,
+            "On your turn you can move up to your Speed and take one action (green): Attack, Dash (extra movement equal to your Speed), "
+                    + "Disengage (your movement doesn't provoke opportunity attacks this turn), Dodge (until your next turn, attacks against you "
+                    + "have Disadvantage and you have Advantage on Dexterity saving throws) or Utilize an item.\n\n"
+                    + "Bonus Action (orange): only when something gives you one, like the Light-weapon extra attack, drinking a healing potion "
+                    + "or a Rogue's Cunning Action.\n\n"
+                    + "Reaction (purple): an instant response, like an opportunity attack, usable even on other creatures' turns. "
+                    + "It comes back at the start of your turn.\n\n"
+                    + "Filled circles are still available; empty circles are used.",
+            Arrays.asList(App.row("Action", actionUsed && t == active ? "used" : "available"),
+                    App.row("Bonus Action", bonusAttackUsed && t == active ? "used" : "available"),
+                    App.row("Reactions", Math.max(0, t.reactionsPerRound - t.reactionsUsed) + " of " + t.reactionsPerRound + " left")));
+}
+
+// Reactions can be spent any time (e.g. on someone else's turn): use / restore, and set how many per round
+private void showReactionEditor(Component anchor, Tok t) {
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    JLabel intro = new JLabel("<html><div style='width:360px'>A Reaction is an instant response to a trigger, such as an opportunity attack "
+            + "or a spell like <i>Shield</i>, and can happen on any creature's turn. " + App.escapeHtml(t.label)
+            + "'s Reactions come back at the start of its turn.</div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(intro);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+    JPanel holder = new JPanel(new BorderLayout());
+    holder.setOpaque(false);
+    holder.setAlignmentX(Component.LEFT_ALIGNMENT);
+    Runnable[] render = new Runnable[1];
+    render[0] = () -> {
+        holder.removeAll();
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        row.setOpaque(false);
+        Pips p = new Pips("REACTIONS", REACTION_COLOR, t.reactionsPerRound, Math.max(0, t.reactionsPerRound - t.reactionsUsed),
+                Math.max(0, t.reactionsPerRound - t.reactionsUsed) + " of " + t.reactionsPerRound + " left");
+        p.setPreferredSize(new Dimension(130, 48));
+        row.add(p);
+        JButton use = economyButton("Use one", REACTION_COLOR, "Mark a Reaction as used");
+        use.setEnabled(t.reactionsUsed < t.reactionsPerRound);
+        use.addActionListener(e -> {
+            t.reactionsUsed++;
+            persistSoon();
+            refreshAll();
+            render[0].run();
+        });
+        JButton restore = Tokens.smallButton("Restore", "Give a Reaction back");
+        restore.setEnabled(t.reactionsUsed > 0);
+        restore.addActionListener(e -> {
+            t.reactionsUsed = Math.max(0, t.reactionsUsed - 1);
+            persistSoon();
+            refreshAll();
+            render[0].run();
+        });
+        row.add(use);
+        row.add(restore);
+        holder.add(row, BorderLayout.NORTH);
+        JPanel per = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
+        per.setOpaque(false);
+        JLabel pl = new JLabel("Reactions per round");
+        pl.setForeground(App.TEXT_MUTED);
+        JSpinner sp = new JSpinner(new SpinnerNumberModel(t.reactionsPerRound, 0, 10, 1));
+        sp.setPreferredSize(new Dimension(56, 28));
+        styleSpinner(sp);
+        sp.setToolTipText("Most creatures have 1; some monsters and features give more");
+        sp.addChangeListener(e -> {
+            t.reactionsPerRound = (Integer) sp.getValue();
+            t.reactionsUsed = Math.min(t.reactionsUsed, t.reactionsPerRound);
+            persistSoon();
+            refreshAll();
+            SwingUtilities.invokeLater(render[0]);
+        });
+        per.add(pl);
+        per.add(sp);
+        holder.add(per, BorderLayout.SOUTH);
+        if (CombatConditions.incapacitated(t.conditions)) {
+            JLabel no = new JLabel(t.label + " is " + CombatConditions.incapacitatedBy(t.conditions) + " and can't take Reactions.");
+            no.setForeground(App.ACCENT_HOVER);
+            holder.add(no, BorderLayout.CENTER);
+        }
+        holder.revalidate();
+        holder.repaint();
+    };
+    render[0].run();
+    body.add(holder);
+    App.showSheetOverlay(anchor, "Reactions: " + t.label, body, null);
+}
+
+// Condition chips: click for the rules; with `editable`, ✕ removes and + adds (combat-only, never the sheet)
+private JPanel conditionChips(Tok t, boolean editable) {
+    JPanel p = new JPanel(new AssetLibraryPanel.WrapLayout(FlowLayout.LEFT, 4, 4));
+    p.setOpaque(false);
+    p.setAlignmentX(Component.LEFT_ALIGNMENT);
+    for (String c : new ArrayList<>(t.conditions)) {
+        JPanel chip = new JPanel(new BorderLayout(4, 0));
+        chip.setBackground(App.SHEET_ROW_ALT);
+        chip.setBorder(BorderFactory.createCompoundBorder(new LineBorder(new Color(0xE0, 0xA0, 0x30), 1, true), new EmptyBorder(1, 6, 1, 4)));
+        JLabel l = new JLabel(c);
+        l.setForeground(new Color(0xF0, 0xC0, 0x60));
+        l.setFont(new Font("SansSerif", Font.BOLD, 11));
+        chip.add(l, BorderLayout.CENTER);
+        if (editable) {
+            JButton x = new JButton("✕");
+            x.setFont(new Font("SansSerif", Font.BOLD, 10));
+            x.setForeground(App.TEXT_MUTED);
+            x.setContentAreaFilled(false);
+            x.setBorderPainted(false);
+            x.setFocusPainted(false);
+            x.setBorder(new EmptyBorder(0, 2, 0, 0));
+            x.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            x.setToolTipText("Remove " + c);
+            x.addActionListener(e -> {
+                t.conditions.remove(c);
+                persistSoon();
+                refreshAll();
+                p.remove(chip);
+                p.revalidate();
+                p.repaint();
+            });
+            chip.add(x, BorderLayout.EAST);
+        }
+        App.clickable(chip, () -> App.showInfoOverlay(chip, c, "Condition · " + t.label, CombatConditions.info(c)
+                + "\n\nTracked for this encounter only (the character sheet isn't changed).", null));
+        p.add(chip);
+    }
+    return p;
+}
+
+private void showConditionPicker(Component anchor, Tok t, Runnable after) {
+    JPanel grid = new JPanel(new GridLayout(0, 3, 6, 6));
+    grid.setOpaque(false);
+    Runnable[] close = new Runnable[1];
+    for (String c : CombatConditions.options()) {
+        if (t.conditions.contains(c)) continue;
+        JButton b = App.overlayButton(c, false);
+        b.setToolTipText(CombatConditions.info(c));
+        b.addActionListener(e -> {
+            t.conditions.add(c);
+            if (CombatConditions.incapacitated(t.conditions) && t == active && moveMode) setMoveMode(false);
+            close[0].run();
+            setStatus(t.label + " is now " + c + ".");
+            persistSoon();
+            refreshAll();
+            after.run();
+        });
+        grid.add(b);
+    }
+    if (grid.getComponentCount() == 0) {
+        JLabel all = new JLabel("Every condition is already applied.");
+        all.setForeground(App.TEXT_MUTED);
+        grid.add(all);
+    }
+    close[0] = App.showSheetOverlay(anchor, "Add Condition: " + t.label, grid, null);
+}
+
+// Use Item: a healing potion is a Bonus Action (roll to heal); anything else takes the action (Utilize)
+private void showUseItem(Component anchor, Tok t) {
+    JPanel list = new JPanel();
+    list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+    list.setOpaque(false);
+    Runnable[] close = new Runnable[1];
+    boolean myTurn = inCombat && t == active;
+    JLabel intro = new JLabel("<html><div style='width:440px'>Items " + App.escapeHtml(t.label) + " can use in this encounter"
+            + (PC.equals(t.kind) ? " (copied from Equipment; using one here doesn't change the character sheet)" : "") + ".</div></html>");
+    intro.setForeground(App.TEXT_MUTED);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+    list.add(intro);
+    list.add(Box.createRigidArea(new Dimension(0, 8)));
+    if (t.items.isEmpty()) list.add(muted("No usable items. Add one below (e.g. a Potion of Healing the DM hands out)."));
+    for (Map.Entry<String, Integer> en : new ArrayList<>(t.items.entrySet())) {
+        String item = en.getKey();
+        int[] potion = CombatItems.potion(item);
+        boolean bonus = potion != null;
+        boolean free = !myTurn || (bonus ? !bonusAttackUsed : !actionUsed);
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row.setMaximumSize(new Dimension(520, 56));
+        String desc = App.itemDescription(item);
+        JLabel l = new JLabel("<html><b>" + App.escapeHtml(item) + "</b> ×" + en.getValue() + "<br><span style='color:#aaa5a0'>"
+                + App.escapeHtml(bonus ? "Bonus Action · heals " + WeaponData.diceText(potion[0], potion[1], potion[2]) : "Action (Utilize)"
+                + (CombatItems.consumable(item) ? " · used up" : "")) + "</span></html>");
+        l.setForeground(App.TEXT_LIGHT);
+        l.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        App.clickable(l, () -> App.showInfoOverlay(l, item, bonus ? "Potion · Bonus Action" : "Item · Utilize action",
+                desc == null || desc.isEmpty() ? "No description." : desc, null));
+        row.add(l, BorderLayout.CENTER);
+        JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 6));
+        btns.setOpaque(false);
+        JButton use = economyButton(bonus ? "Drink / Give" : "Use", bonus ? BONUS_COLOR : ACTION_COLOR,
+                !free ? (bonus ? "Bonus Action already used this turn" : "Action already used this turn")
+                        : bonus ? "Bonus Action: drink it, or give it to a creature within 5 ft." : "Action (Utilize)");
+        use.setEnabled(free && en.getValue() > 0);
+        use.addActionListener(e -> {
+            close[0].run();
+            if (bonus) showPotion(anchor, t, item, potion);
+            else useGenericItem(t, item);
+        });
+        JButton minus = Tokens.smallButton("−", "Remove one from this encounter's items");
+        minus.addActionListener(e -> {
+            int n = t.items.getOrDefault(item, 0) - 1;
+            if (n <= 0) t.items.remove(item);
+            else t.items.put(item, n);
+            persistSoon();
+            close[0].run();
+            showUseItem(anchor, t);
+        });
+        btns.add(use);
+        btns.add(minus);
+        row.add(btns, BorderLayout.EAST);
+        list.add(row);
+        list.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    // add an item for this encounter
+    list.add(Box.createRigidArea(new Dimension(0, 8)));
+    list.add(sectionCaption("ADD AN ITEM FOR THIS ENCOUNTER"));
+    JPanel add = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+    add.setOpaque(false);
+    add.setAlignmentX(Component.LEFT_ALIGNMENT);
+    List<String> presets = new ArrayList<>(CombatItems.POTIONS.keySet());
+    for (String k : App.ITEM_PRESETS.keySet()) {
+        if (!presets.contains(k) && WeaponData.find(k) == null && WeaponData.findAmmo(k) == null && GameData.ARMOR_AC.get(k) == null) presets.add(k);
+    }
+    for (Map<String, Object> hb : CustomAssets.all(CustomAssets.ITEMS)) {
+        String n = CustomAssets.str(hb, "name");
+        if (!presets.contains(n) && Tags.allowedAsset(CustomAssets.ITEMS, hb)) presets.add(n);
+    }
+    presets.removeIf(n -> !Tags.allowed(CustomAssets.ITEMS, n));
+    JComboBox<String> pick = new JComboBox<>(presets.toArray(new String[0]));
+    App.styleCombo(pick);
+    pick.setEditable(true);
+    pick.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    pick.setPreferredSize(new Dimension(230, 30));
+    JSpinner qty = new JSpinner(new SpinnerNumberModel(1, 1, 99, 1));
+    qty.setPreferredSize(new Dimension(54, 28));
+    styleSpinner(qty);
+    JButton addB = Tokens.smallButton("Add", "Add to this token's items (this encounter only)");
+    addB.addActionListener(e -> {
+        Object v = pick.getEditor().getItem();
+        String name = v == null ? "" : String.valueOf(v).trim();
+        if (name.isEmpty()) return;
+        commit(qty);
+        t.items.merge(name, (Integer) qty.getValue(), Integer::sum);
+        persistSoon();
+        close[0].run();
+        refreshSide();
+        showUseItem(anchor, t);
+    });
+    add.add(pick);
+    add.add(qty);
+    add.add(addB);
+    list.add(add);
+    JScrollPane sp = new JScrollPane(list);
+    App.applyDarkScrollBar(sp);
+    sp.setBorder(null);
+    sp.setOpaque(false);
+    sp.getViewport().setOpaque(false);
+    sp.setPreferredSize(new Dimension(560, Math.min(460, list.getPreferredSize().height + 12)));
+    sp.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+    close[0] = App.showSheetOverlay(anchor, "Use Item: " + t.label, sp, null);
+}
+
+private void useGenericItem(Tok t, String item) {
+    if (inCombat && t == active) spendForAction(t, false);
+    boolean usedUp = CombatItems.consumable(item);
+    if (usedUp) {
+        int n = t.items.getOrDefault(item, 0) - 1;
+        if (n <= 0) t.items.remove(item);
+        else t.items.put(item, n);
+    }
+    setStatus(t.label + " uses " + item + (inCombat && t == active ? " (Utilize action)" : "") + (usedUp ? "; it's used up." : "."));
+    persistSoon();
+    refreshAll();
+}
+
+// Healing potion: pick who drinks it (self or a creature within 5 ft.), roll the healing (reroll or set), apply on Done
+private void showPotion(Component anchor, Tok user, String item, int[] dice) {
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    Runnable[] close = new Runnable[1];
+    List<Tok> targets = new ArrayList<>();
+    targets.add(user);
+    for (Tok o : tokens) if (o != user && distanceFt(user, o) <= 5) targets.add(o);
+    JLabel intro = new JLabel("<html><div style='width:420px'>As a <b style='color:#e08a2e'>Bonus Action</b>, " + App.escapeHtml(user.label)
+            + " drinks the " + App.escapeHtml(item) + " or gives it to a creature within 5 ft. The drinker regains "
+            + WeaponData.diceText(dice[0], dice[1], dice[2]) + " Hit Points.</div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(intro);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+    JPanel whoRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+    whoRow.setOpaque(false);
+    whoRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+    JLabel wl = new JLabel("Drinker");
+    wl.setForeground(App.TEXT_MUTED);
+    String[] names = new String[targets.size()];
+    for (int i = 0; i < targets.size(); i++) {
+        Tok o = targets.get(i);
+        names[i] = (o == user ? o.label + " (self)" : o.label) + "  ·  " + o.hp + " / " + o.maxHp + " HP";
+    }
+    JComboBox<String> who = new JComboBox<>(names);
+    App.styleCombo(who);
+    who.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    whoRow.add(wl);
+    whoRow.add(who);
+    body.add(whoRow);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+
+    int[][] rolled = {new int[0]};
+    int[] total = {0};
+    boolean[] replaced = {false};
+    JLabel result = new JLabel();
+    result.setFont(new Font("SansSerif", Font.BOLD, 16));
+    result.setForeground(new Color(0x7C, 0xD3, 0x8A));
+    result.setAlignmentX(Component.LEFT_ALIGNMENT);
+    Runnable roll = () -> {
+        rolled[0] = WeaponRules.rollDice(rng, dice[0], dice[1], false);
+        int s = dice[2];
+        for (int v : rolled[0]) s += v;
+        total[0] = s;
+        replaced[0] = false;
+    };
+    Runnable render = () -> {
+        StringBuilder sb = new StringBuilder();
+        for (int v : rolled[0]) sb.append(sb.length() == 0 ? "" : " + ").append(v);
+        result.setText(replaced[0] ? "Heals " + total[0] + " HP (your roll)" : dice[0] + "d" + dice[1] + " [" + sb + "] + " + dice[2] + " = heals " + total[0] + " HP");
+    };
+    roll.run();
+    render.run();
+    body.add(result);
+    JPanel rr = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
+    rr.setOpaque(false);
+    rr.setAlignmentX(Component.LEFT_ALIGNMENT);
+    JButton reroll = Tokens.smallButton("🎲 Reroll", "Roll the healing again");
+    reroll.addActionListener(e -> {
+        roll.run();
+        render.run();
+    });
+    JSpinner own = new JSpinner(new SpinnerNumberModel(dice[0] * dice[1] / 2 + dice[2], 0, 999, 1));
+    own.setPreferredSize(new Dimension(64, 28));
+    styleSpinner(own);
+    JButton useOwn = Tokens.smallButton("Use total", "Replace the healing with the total you rolled at the table");
+    useOwn.addActionListener(e -> {
+        commit(own);
+        total[0] = (Integer) own.getValue();
+        replaced[0] = true;
+        render.run();
+    });
+    rr.add(reroll);
+    rr.add(muted2("or set:"));
+    rr.add(own);
+    rr.add(useOwn);
+    body.add(rr);
+    body.add(Box.createRigidArea(new Dimension(0, 12)));
+    JPanel foot = new JPanel(new BorderLayout());
+    foot.setOpaque(false);
+    foot.setAlignmentX(Component.LEFT_ALIGNMENT);
+    JButton cancel = App.overlayButton("Cancel", false);
+    cancel.addActionListener(e -> close[0].run());
+    JButton done = App.overlayButton("Done: Heal", true);
+    done.setToolTipText("Uses the Bonus Action and the potion, and heals the drinker");
+    done.addActionListener(e -> {
+        Tok drinker = targets.get(Math.max(0, who.getSelectedIndex()));
+        int before = drinker.hp;
+        drinker.hp = Math.min(drinker.maxHp, drinker.hp + total[0]);
+        if (before <= 0 && drinker.hp > 0) drinker.conditions.remove("Unconscious");
+        if (inCombat && user == active) bonusAttackUsed = true;
+        int n = user.items.getOrDefault(item, 0) - 1;
+        if (n <= 0) user.items.remove(item);
+        else user.items.put(item, n);
+        close[0].run();
+        setStatus((drinker == user ? user.label + " drinks " : user.label + " gives " + drinker.label + " ") + item + ": +"
+                + (drinker.hp - before) + " HP (" + drinker.hp + " / " + drinker.maxHp + ").");
+        persistSoon();
+        refreshAll();
+    });
+    foot.add(cancel, BorderLayout.WEST);
+    foot.add(done, BorderLayout.EAST);
+    body.add(foot);
+    close[0] = App.showSheetOverlay(anchor, item, body, done);
 }
 
 // ===============================================================
@@ -1776,6 +2685,84 @@ private void showTokenDetail(Component anchor, Tok t) {
     }
 
     // HP
+    // damage modifiers (NPC traits + combat-only adjustments)
+    body.add(sectionCaption("DAMAGE MODIFIERS"));
+    JPanel modRow = new JPanel(new BorderLayout(8, 0));
+    modRow.setOpaque(false);
+    modRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+    modRow.setMaximumSize(new Dimension(460, 40));
+    String modSummary = DamageRules.summary(t.damageMods());
+    JLabel modLbl = new JLabel("<html><div style='width:320px'>" + App.escapeHtml(modSummary.isEmpty() ? "None: takes normal damage of every type." : modSummary) + "</div></html>");
+    modLbl.setForeground(modSummary.isEmpty() ? App.TEXT_MUTED : App.TEXT_LIGHT);
+    modLbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    App.clickable(modLbl, () -> App.showInfoOverlay(modLbl, "Damage Modifiers", t.label,
+            DamageRules.INFO + (NPC.equals(t.kind) ? "\n\nNPC traits with a Damage Vulnerability / Resistance / Immunity type set these; edit them in Assets → NPCs." : ""), null));
+    modRow.add(modLbl, BorderLayout.CENTER);
+    Runnable[] reopen = new Runnable[1];
+    JButton modEdit = Tokens.smallButton("Adjust", "Change this token's resistances, vulnerabilities and immunities for this encounter");
+    modRow.add(modEdit, BorderLayout.EAST);
+    body.add(modRow);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+
+    // ammunition (combat-only count)
+    if (!t.ammo.isEmpty()) {
+        body.add(sectionCaption("AMMUNITION (THIS ENCOUNTER)"));
+        JPanel ammoRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        ammoRow.setOpaque(false);
+        ammoRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        for (String am : new ArrayList<>(t.ammo.keySet())) {
+            JLabel al = new JLabel(am);
+            al.setForeground(App.TEXT_LIGHT);
+            al.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            AmmoItem item = WeaponData.findAmmo(am);
+            App.clickable(al, () -> App.showInfoOverlay(al, am, "Ammunition", (item != null ? item.description() : "")
+                    + "\n\nThis count is for this encounter only: it starts from " + (PC.equals(t.kind) ? "the character's Equipment" : NPC_DEFAULT_AMMO + " for NPCs")
+                    + " when the token is placed and when combat starts, and using it doesn't change the character sheet.", null));
+            JSpinner sp = new JSpinner(new SpinnerNumberModel((int) t.ammo.get(am), 0, 999, 1));
+            sp.setPreferredSize(new Dimension(64, 28));
+            styleSpinner(sp);
+            sp.addChangeListener(e -> {
+                t.ammo.put(am, (Integer) sp.getValue());
+                persistSoon();
+                refreshSide();
+            });
+            ammoRow.add(al);
+            ammoRow.add(sp);
+        }
+        body.add(ammoRow);
+        body.add(Box.createRigidArea(new Dimension(0, 10)));
+    }
+    // conditions (combat-only; any time, not just on its turn)
+    JPanel condHead = new JPanel(new BorderLayout(8, 0));
+    condHead.setOpaque(false);
+    condHead.setAlignmentX(Component.LEFT_ALIGNMENT);
+    condHead.setMaximumSize(new Dimension(460, 30));
+    condHead.add(sectionCaption("CONDITIONS"), BorderLayout.WEST);
+    JButton addCond = Tokens.smallButton("+ Add", "Apply a condition for this encounter");
+    condHead.add(addCond, BorderLayout.EAST);
+    body.add(condHead);
+    if (t.conditions.isEmpty()) body.add(muted("None."));
+    else body.add(conditionChips(t, true));
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+
+    // reactions (tracked on every creature, any time)
+    JPanel reactRow = new JPanel(new BorderLayout(8, 0));
+    reactRow.setOpaque(false);
+    reactRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+    reactRow.setMaximumSize(new Dimension(460, 52));
+    Pips rp = new Pips("REACTIONS", REACTION_COLOR, t.reactionsPerRound, Math.max(0, t.reactionsPerRound - t.reactionsUsed),
+            Math.max(0, t.reactionsPerRound - t.reactionsUsed) + " of " + t.reactionsPerRound + " left");
+    rp.setPreferredSize(new Dimension(130, 48));
+    reactRow.add(rp, BorderLayout.WEST);
+    JLabel dodgeLbl = new JLabel(t.dodging ? "Dodging: attacks against it have Disadvantage until its next turn." : "");
+    dodgeLbl.setForeground(new Color(0x7C, 0xD3, 0x8A));
+    dodgeLbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    reactRow.add(dodgeLbl, BorderLayout.CENTER);
+    JButton reactEdit = Tokens.smallButton("Use / Restore", "Spend or restore a Reaction (works on any creature's turn)");
+    reactRow.add(reactEdit, BorderLayout.EAST);
+    body.add(reactRow);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+
     JLabel hpCap = sectionCaption("HIT POINTS");
     body.add(hpCap);
     Bar hpBar = new Bar();
@@ -1873,10 +2860,27 @@ private void showTokenDetail(Component anchor, Tok t) {
     body.add(acts);
 
     close[0] = App.showSheetOverlay(anchor, t.label, body, null);
+    reopen[0] = () -> {
+        close[0].run();
+        refreshAll();
+        showTokenDetail(anchor, t);
+    };
+    modEdit.addActionListener(e -> showDamageModsEditor(modEdit, t, reopen[0]));
+    addCond.addActionListener(e -> showConditionPicker(addCond, t, reopen[0]));
+    reactEdit.addActionListener(e -> {
+        close[0].run();
+        showReactionEditor(anchor, t);
+    });
 }
 
 // Amount + Damage / Heal row shared by the token overlay and the Current Turn tab
+private static final String UNTYPED = "Untyped";
+
 private JPanel hpControls(Tok t, Runnable after) {
+    JPanel box = new JPanel();
+    box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
+    box.setOpaque(false);
+    box.setAlignmentX(Component.LEFT_ALIGNMENT);
     JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
     row.setOpaque(false);
     row.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -1884,14 +2888,27 @@ private JPanel hpControls(Tok t, Runnable after) {
     amt.setPreferredSize(new Dimension(64, 28));
     amt.setToolTipText("Amount of damage or healing");
     styleSpinner(amt);
+    String[] types = new String[CustomAssets.DAMAGE_TYPES.length + 1];
+    types[0] = UNTYPED;
+    System.arraycopy(CustomAssets.DAMAGE_TYPES, 0, types, 1, CustomAssets.DAMAGE_TYPES.length);
+    JComboBox<String> type = new JComboBox<>(types);
+    App.styleCombo(type);
+    type.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    type.setPreferredSize(new Dimension(120, 28));
+    type.setToolTipText("Damage type: the creature's resistances, vulnerabilities and immunities apply");
     JButton dmg = App.overlayButton("Damage", false);
     dmg.setForeground(App.ACCENT_HOVER);
     JButton heal = App.overlayButton("Heal", false);
     heal.setForeground(new Color(0x7C, 0xD3, 0x8A));
     dmg.addActionListener(e -> {
         commit(amt);
-        t.hp = Math.max(0, t.hp - (Integer) amt.getValue());
-        setStatus(t.label + " takes " + amt.getValue() + " damage" + (t.down() ? " and is down!" : " (" + t.hp + " / " + t.maxHp + " HP)."));
+        String dt = UNTYPED.equals(type.getSelectedItem()) ? "" : String.valueOf(type.getSelectedItem());
+        int raw = (Integer) amt.getValue();
+        int taken = DamageRules.apply(raw, dt, t.damageMods());
+        String why = DamageRules.explain(raw, dt, t.damageMods());
+        t.hp = Math.max(0, t.hp - taken);
+        setStatus(t.label + " takes " + taken + (dt.isEmpty() ? "" : " " + dt.toLowerCase()) + " damage" + (why.isEmpty() ? "" : " [" + why + "]")
+                + (t.down() ? " and is down!" : " (" + t.hp + " / " + t.maxHp + " HP)."));
         after.run();
     });
     heal.addActionListener(e -> {
@@ -1901,9 +2918,96 @@ private JPanel hpControls(Tok t, Runnable after) {
         after.run();
     });
     row.add(amt);
-    row.add(dmg);
-    row.add(heal);
-    return row;
+    row.add(type);
+    JPanel row2 = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+    row2.setOpaque(false);
+    row2.setAlignmentX(Component.LEFT_ALIGNMENT);
+    row2.add(dmg);
+    row2.add(heal);
+    box.add(row);
+    box.add(row2);
+    return box;
+}
+
+// Combat-only damage modifiers for one token: each damage type Normal / Resistant / Vulnerable / Immune.
+// NPC traits set the defaults; changes here are saved with the map (never on the character sheet or the NPC).
+private void showDamageModsEditor(Component anchor, Tok t, Runnable after) {
+    JPanel body = new JPanel(new BorderLayout(0, 10));
+    body.setOpaque(false);
+    JLabel intro = new JLabel("<html><div style='width:420px'>How " + App.escapeHtml(t.label) + " takes each damage type in this encounter"
+            + (NPC.equals(t.kind) ? ". Defaults come from the NPC's traits." : " (e.g. a Barbarian's Rage: Resistant to Bludgeoning, Piercing and Slashing).")
+            + " Changes stay with this map, not the " + (PC.equals(t.kind) ? "character sheet." : "NPC.") + "</div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    App.clickable(intro, () -> App.showInfoOverlay(intro, "Damage Modifiers", "Resistance, Vulnerability, Immunity", DamageRules.INFO, null));
+    body.add(intro, BorderLayout.NORTH);
+    String[] levels = {"Normal", "Resistant", "Vulnerable", "Immune"};
+    int[] masks = {0, DamageRules.RESIST, DamageRules.VULN, DamageRules.IMMUNE};
+    JPanel grid = new JPanel(new GridLayout(0, 2, 10, 4));
+    grid.setOpaque(false);
+    Map<String, JComboBox<String>> combos = new LinkedHashMap<>();
+    Map<String, Integer> eff = t.damageMods();
+    for (String dt : CustomAssets.DAMAGE_TYPES) {
+        JPanel cell = new JPanel(new BorderLayout(6, 0));
+        cell.setOpaque(false);
+        int source = t.sourceMods.getOrDefault(dt, 0);
+        JLabel l = new JLabel(dt + (source != 0 ? " *" : ""));
+        l.setForeground(App.TEXT_LIGHT);
+        l.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        l.setPreferredSize(new Dimension(95, 24));
+        if (source != 0) l.setToolTipText("NPC trait: " + DamageRules.levelName(source));
+        JComboBox<String> c = new JComboBox<>(levels);
+        App.styleCombo(c);
+        c.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        int m = eff.getOrDefault(dt, 0);
+        c.setSelectedIndex((m & DamageRules.IMMUNE) != 0 ? 3 : (m & DamageRules.RESIST) != 0 ? 1 : (m & DamageRules.VULN) != 0 ? 2 : 0);
+        combos.put(dt, c);
+        cell.add(l, BorderLayout.WEST);
+        cell.add(c, BorderLayout.CENTER);
+        grid.add(cell);
+    }
+    JPanel center = new JPanel(new BorderLayout(0, 4));
+    center.setOpaque(false);
+    center.add(grid, BorderLayout.CENTER);
+    if (!t.sourceMods.isEmpty()) {
+        JLabel star = new JLabel("* set by the NPC's traits");
+        star.setForeground(App.TEXT_MUTED);
+        star.setFont(new Font("SansSerif", Font.ITALIC, 11));
+        center.add(star, BorderLayout.SOUTH);
+    }
+    body.add(center, BorderLayout.CENTER);
+    Runnable[] close = new Runnable[1];
+    JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+    btns.setOpaque(false);
+    JButton reset = App.overlayButton("Reset to Defaults", false);
+    reset.addActionListener(e -> {
+        t.modOverrides.clear();
+        close[0].run();
+        persistSoon();
+        after.run();
+    });
+    JButton cancel = App.overlayButton("Cancel", false);
+    cancel.addActionListener(e -> close[0].run());
+    JButton save = App.overlayButton("Save", true);
+    save.addActionListener(e -> {
+        Map<String, Integer> next = new LinkedHashMap<>();
+        for (Map.Entry<String, JComboBox<String>> en : combos.entrySet()) {
+            int chosen = masks[en.getValue().getSelectedIndex()];
+            int src = t.sourceMods.getOrDefault(en.getKey(), 0);
+            // keep the trait's exact mask (e.g. Resistant + Vulnerable) when the choice matches its main level
+            if (src != 0 && DamageRules.levelName(src).startsWith(levels[en.getValue().getSelectedIndex()])) continue;
+            if (chosen != src) next.put(en.getKey(), chosen);
+        }
+        t.modOverrides = next;
+        close[0].run();
+        persistSoon();
+        after.run();
+    });
+    btns.add(reset);
+    btns.add(cancel);
+    btns.add(save);
+    body.add(btns, BorderLayout.SOUTH);
+    close[0] = App.showSheetOverlay(anchor, "Damage Modifiers: " + t.label, body, null);
 }
 
 private static void commit(JSpinner sp) {
@@ -2075,21 +3179,49 @@ private void buildTurnTab() {
     addSide(mv);
     gap(14);
 
+    // ---- turn economy: filled circle = still available, empty circle = used ----
+    boolean incap = t.down() || CombatConditions.incapacitated(t.conditions);
+    String incapWhy = t.down() ? "at 0 HP" : CombatConditions.incapacitatedBy(t.conditions);
+    String still = CombatConditions.speedZeroBy(t.conditions);
+    JPanel eco = new JPanel(new GridLayout(1, 3, 6, 0));
+    eco.setOpaque(false);
+    eco.setMaximumSize(new Dimension(400, 50));
+    eco.add(economyPips("ACTION", ACTION_COLOR, 1, actionUsed ? 0 : 1,
+            actionUsed ? (attackAction ? "Attack" + (attacksLeft > 0 ? " · " + attacksLeft + " left" : "") : "used") : "ready", () -> showEconomyInfo(t)));
+    eco.add(economyPips("BONUS", BONUS_COLOR, 1, bonusAttackUsed ? 0 : 1, bonusAttackUsed ? "used" : "ready", () -> showEconomyInfo(t)));
+    eco.add(economyPips("REACTION", REACTION_COLOR, t.reactionsPerRound, Math.max(0, t.reactionsPerRound - t.reactionsUsed),
+            t.reactionsUsed >= t.reactionsPerRound ? "used" : "ready", () -> showReactionEditor(sideContent, t)));
+    addSide(eco);
+    gap(8);
+    if (incap || !still.isEmpty() || disengaged || t.dodging) {
+        List<String> notes = new ArrayList<>();
+        if (incap) notes.add("<span style='color:#dc3c3c'>" + App.escapeHtml(t.label) + " is " + App.escapeHtml(incapWhy) + ": no actions, Bonus Actions or Reactions.</span>");
+        if (!still.isEmpty()) notes.add("<span style='color:#e0a030'>" + App.escapeHtml(still) + ": Speed is 0.</span>");
+        if (disengaged) notes.add("<span style='color:#7cd38a'>Disengaged: moving won't provoke opportunity attacks.</span>");
+        if (t.dodging) notes.add("<span style='color:#7cd38a'>Dodging until its next turn.</span>");
+        JLabel nl = new JLabel("<html><div style='width:280px'>" + String.join("<br>", notes) + "</div></html>");
+        nl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        addSide(nl);
+        gap(8);
+    }
+
+    // movement + attack
     JPanel actions = new JPanel(new GridLayout(1, 2, 8, 0));
     actions.setOpaque(false);
-    JButton move = App.overlayButton(moveMode ? "Cancel Move" : "Move", !moveMode);
-    move.setEnabled(moveMode || (moveLeft > 0 && !t.down()));
-    move.setToolTipText(moveLeft <= 0 ? "No movement left this turn" : t.down() ? "Down creatures can't move" : "Highlight the squares " + t.label + " can reach");
+    JButton move = economyButton(moveMode ? "Cancel Move" : "Move", MOVE_COLOR,
+            moveLeft <= 0 ? "No movement left this turn" : !still.isEmpty() ? still + ": Speed is 0" : t.down() ? "Down creatures can't move"
+                    : "Highlight the squares " + t.label + " can reach (movement, not an action)");
+    move.setEnabled(moveMode || (moveLeft > 0 && !t.down() && still.isEmpty()));
     move.addActionListener(e -> {
         setMoveMode(!moveMode);
         if (!moveMode) setStatus(defaultStatus());
         refreshSide();
     });
     boolean canBonus = canBonusAttack(t);
-    JButton attack = App.overlayButton(targeting != null ? "Cancel Attack" : "Attack", targeting == null);
-    attack.setEnabled(targeting != null || (!t.down() && (attacksLeft > 0 || canBonus)));
-    attack.setToolTipText(t.down() ? "Down creatures can't attack" : attacksLeft <= 0 && !canBonus ? "No attacks left this turn"
-            : "Pick a weapon, then click a target in range");
+    JButton attack = economyButton(targeting != null ? "Cancel Attack" : "Attack", ACTION_COLOR,
+            incap ? "Can't act: " + incapWhy : !canMainAttack() && !canBonus ? (actionUsed && !attackAction ? "Action already used this turn" : "No attacks left this turn")
+                    : "Action: pick a weapon, then click a target in range");
+    attack.setEnabled(targeting != null || (!incap && (canMainAttack() || canBonus)));
     attack.addActionListener(e -> {
         if (targeting != null) cancelModes();
         else showAttackPicker(attack, t);
@@ -2100,7 +3232,40 @@ private void buildTurnTab() {
     actions.setMaximumSize(new Dimension(400, 36));
     addSide(actions);
     gap(6);
-    JLabel budget = new JLabel("Attacks left: " + attacksLeft + " of " + t.attacksPerAction
+
+    // Dash / Disengage / Dodge / Use Item (actions; a Rogue's Cunning Action can Dash or Disengage as a Bonus Action)
+    boolean cunning = cunningAction(t) && !bonusAttackUsed;
+    JPanel other = new JPanel(new GridLayout(2, 2, 6, 6));
+    other.setOpaque(false);
+    other.setMaximumSize(new Dimension(400, 72));
+    boolean dashByBonus = actionUsed && cunning;
+    JButton dash = economyButton("Dash", dashByBonus ? BONUS_COLOR : ACTION_COLOR, (dashByBonus ? "Bonus Action (Cunning Action)" : "Action")
+            + ": gain extra movement equal to your Speed (" + t.speed + " ft.) this turn");
+    dash.setEnabled(!incap && still.isEmpty() && (!actionUsed || cunning));
+    dash.addActionListener(e -> doDash(t));
+    JButton dis = economyButton(disengaged ? "Disengaged" : "Disengage", dashByBonus ? BONUS_COLOR : ACTION_COLOR,
+            (dashByBonus ? "Bonus Action (Cunning Action)" : "Action") + ": your movement doesn't provoke opportunity attacks for the rest of the turn");
+    dis.setEnabled(!incap && !disengaged && (!actionUsed || cunning));
+    dis.addActionListener(e -> doDisengage(t));
+    JButton dodge = economyButton(t.dodging ? "Dodging" : "Dodge", ACTION_COLOR,
+            "Action: until your next turn, attacks against you have Disadvantage and you have Advantage on DEX saves");
+    dodge.setEnabled(!incap && !t.dodging && !actionUsed);
+    dodge.addActionListener(e -> doDodge(t));
+    int itemCount = 0;
+    for (int n : t.items.values()) itemCount += n;
+    JButton useItem = economyButton("Use Item" + (itemCount > 0 ? " (" + itemCount + ")" : ""), ACTION_COLOR,
+            "Use an item: most take your action (Utilize); a healing potion takes a Bonus Action");
+    useItem.setEnabled(!incap);
+    useItem.addActionListener(e -> showUseItem(useItem, t));
+    other.add(dash);
+    other.add(dis);
+    other.add(dodge);
+    other.add(useItem);
+    addSide(other);
+    gap(6);
+    addSide(economyLegend(t));
+    gap(6);
+    JLabel budget = new JLabel((actionUsed && !attackAction ? "Attack: action already used this turn" : "Attacks left: " + attacksLeft + " of " + t.attacksPerAction)
             + (hasOffHandAttack(t) ? "   •   Bonus attack: " + (bonusAttackUsed ? "used" : canBonus ? "ready" : "after a Light weapon attack") : ""));
     budget.setForeground(App.TEXT_MUTED);
     budget.setFont(new Font("SansSerif", Font.PLAIN, 12));
@@ -2111,6 +3276,21 @@ private void buildTurnTab() {
                     + "(no ability modifier on its damage unless you have Two-Weapon Fighting).", null));
     addSide(budget);
     gap(8);
+    if (!t.ammo.isEmpty()) {
+        List<String> parts = new ArrayList<>();
+        for (Map.Entry<String, Integer> en : t.ammo.entrySet()) parts.add(en.getKey() + ": " + en.getValue());
+        JLabel ammoLbl = new JLabel("Ammunition  " + String.join("   ", parts));
+        ammoLbl.setForeground(App.TEXT_LIGHT);
+        ammoLbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        ammoLbl.setToolTipText("Ammunition left in this encounter (click to adjust)");
+        App.clickable(ammoLbl, () -> showTokenDetail(ammoLbl, t));
+        addSide(ammoLbl);
+        gap(8);
+    }
+    if (!t.conditions.isEmpty()) {
+        addSide(conditionChips(t, false));
+        gap(8);
+    }
     JButton end = App.overlayButton("Skip / End Turn", false);
     end.setToolTipText("Pass to the next combatant in initiative order");
     end.addActionListener(e -> endTurn());
@@ -2176,7 +3356,7 @@ private void buildOrderTab() {
         row.setBorder(BorderFactory.createCompoundBorder(
                 new LineBorder(isActive ? App.GOLD : App.SHEET_BORDER, isActive ? 2 : 1, true),
                 BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 6, 0, 0, teamColor(t.team)), new EmptyBorder(4, 8, 4, 4))));
-        row.setMaximumSize(new Dimension(400, 46));
+        row.setMaximumSize(new Dimension(400, t.conditions.isEmpty() ? 46 : 62));
 
         JLabel init = new JLabel(String.valueOf(t.init), SwingConstants.CENTER);
         init.setForeground(App.GOLD);
@@ -2191,12 +3371,23 @@ private void buildOrderTab() {
         mid.add(new Tokens.Preview(t.style, t.label, 26, teamColor(t.team)), BorderLayout.WEST);
         JLabel nm = new JLabel("<html><b>" + App.escapeHtml(t.label) + "</b>" + (isActive ? " <span style='color:#d4af37'>◀ turn</span>" : "")
                 + "<br><span style='color:" + (t.down() ? "#dc3c3c" : "#aaa5a0") + "'>HP " + t.hp + " / " + t.maxHp
-                + (t.down() ? " · down" : "") + "</span></html>");
+                + (t.down() ? " · down" : "") + (t.dodging ? " · dodging" : "") + "</span>"
+                + (t.conditions.isEmpty() ? "" : "<br><span style='color:#f0c060'>" + App.escapeHtml(String.join(", ", t.conditions)) + "</span>")
+                + "</html>");
         nm.setForeground(t.down() ? App.TEXT_MUTED : App.TEXT_LIGHT);
         nm.setFont(new Font("SansSerif", Font.PLAIN, 12));
         mid.add(nm, BorderLayout.CENTER);
         App.clickable(mid, () -> showTokenDetail(mid, t));
         row.add(mid, BorderLayout.CENTER);
+
+        // Reaction circle(s): filled = available; click to spend / restore, even on others' turns
+        Pips rp = new Pips("R", REACTION_COLOR, t.reactionsPerRound, Math.max(0, t.reactionsPerRound - t.reactionsUsed), "");
+        rp.setPreferredSize(new Dimension(Math.max(26, t.reactionsPerRound * 19 + 6), 36));
+        rp.setToolTipText("Reactions: " + Math.max(0, t.reactionsPerRound - t.reactionsUsed) + " of " + t.reactionsPerRound + " left (click to use or restore)");
+        App.clickable(rp, () -> showReactionEditor(rp, t));
+        JPanel east = new JPanel(new BorderLayout(4, 0));
+        east.setOpaque(false);
+        east.add(rp, BorderLayout.WEST);
 
         JPanel arrows = new JPanel(new GridLayout(2, 1, 0, 2));
         arrows.setOpaque(false);
@@ -2208,7 +3399,8 @@ private void buildOrderTab() {
         down.addActionListener(e -> swapOrder(idx, idx + 1));
         arrows.add(up);
         arrows.add(down);
-        row.add(arrows, BorderLayout.EAST);
+        east.add(arrows, BorderLayout.EAST);
+        row.add(east, BorderLayout.EAST);
         addSide(row);
         gap(5);
     }
@@ -2737,7 +3929,22 @@ private class Board extends JComponent {
         return Math.hypot(x - (p.x + 0.5), y - (p.y + 0.5)) <= r + 0.15 ? p : null;
     }
 
+    private double drawnX(Tok t) {
+        return Double.isNaN(t.drawX) ? t.x : t.drawX;
+    }
+
+    private double drawnY(Tok t) {
+        return Double.isNaN(t.drawY) ? t.y : t.drawY;
+    }
+
     private void onPress(MouseEvent e) {
+        if (animating) {
+            pressPoint = lastPoint = e.getPoint();
+            panning = true; // the map can still be panned while a token slides
+            dragTok = null;
+            dragging = false;
+            return;
+        }
         requestFocusInWindow();
         pressPoint = lastPoint = e.getPoint();
         panning = dragging = false;
@@ -2806,6 +4013,7 @@ private class Board extends JComponent {
     }
 
     private void click(double x, double y) {
+        if (animating) return; // wait for the slide (and any opportunity attack) to finish
         int cx = (int) Math.floor(x), cy = (int) Math.floor(y);
         if (placing != null) {
             if (inMap(cx, cy)) placeAt(cx, cy);
@@ -2824,7 +4032,7 @@ private class Board extends JComponent {
             }
             WeaponRules.Attack atk = targeting;
             targeting = null;
-            showAttackRoll(this, active, target, atk, tc);
+            showAttackRoll(this, active, target, atk, tc, false);
             repaint();
             return;
         }
@@ -2936,9 +4144,9 @@ private class Board extends JComponent {
                 paintToken(g, t, t.x, t.y, 0.35f);
                 continue;
             }
-            paintToken(g, t, t.x, t.y, 1f);
+            paintToken(g, t, drawnX(t), drawnY(t), 1f);
         }
-        for (Tok t : drawOrder) if (!(dragging && t == dragTok)) paintLabels(g, t, t.x, t.y);
+        for (Tok t : drawOrder) if (!(dragging && t == dragTok)) paintLabels(g, t, drawnX(t), drawnY(t));
 
         // ghosts: drag target, placement preview, move preview
         if (targeting != null && active != null) paintTargets(g);
@@ -3021,11 +4229,11 @@ private class Board extends JComponent {
         g.draw(r);
     }
 
-    private void paintToken(Graphics2D g0, Tok t, int x, int y, float alpha) {
+    private void paintToken(Graphics2D g0, Tok t, double x, double y, float alpha) {
         Graphics2D g = (Graphics2D) g0.create();
         if (alpha < 1f) g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
         double s = t.size * scale;
-        double cx = offX + x * scale + s / 2, cy = offY + y * scale + s / 2;
+        double cx = offX + x * scale + s / 2 + t.shakeDx, cy = offY + y * scale + s / 2;
         double r = s / 2 * 0.84;
         float ow = (float) Math.max(2.5, Math.min(8, scale * 0.1 * Math.sqrt(t.size)));
         if (t == active && inCombat && alpha >= 1f) {
@@ -3038,6 +4246,12 @@ private class Board extends JComponent {
             g.setStroke(new BasicStroke(ow * 0.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             g.setColor(new Color(212, 175, 55, 120));
             g.draw(Tokens.shape(CustomAssets.str(t.style, "shape"), cx, cy, r + ow * 1.2));
+        }
+        if (t.alert) {
+            // waiting on its opportunity attack: red ring
+            g.setColor(new Color(230, 70, 70, 200));
+            g.setStroke(new BasicStroke(ow * 0.9f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.draw(Tokens.shape(CustomAssets.str(t.style, "shape"), cx, cy, r + ow * 1.6));
         }
         Tokens.paint(g, t.style, t.label, cx, cy, r, teamColor(t.team), ow);
         if (t.down()) {
@@ -3054,7 +4268,7 @@ private class Board extends JComponent {
     }
 
     // Name and HP bar above the token
-    private void paintLabels(Graphics2D g, Tok t, int x, int y) {
+    private void paintLabels(Graphics2D g, Tok t, double x, double y) {
         boolean names = showNames && scale >= 20;
         boolean hp = showHp && scale >= 12;
         if (!names && !hp) return;
@@ -3068,8 +4282,11 @@ private class Board extends JComponent {
         Font hf = new Font("SansSerif", Font.BOLD, 10);
         FontMetrics hfm = g.getFontMetrics(hf);
         double barW = Math.max(34, Math.min(s * 0.9, 90));
-        double boxW = Math.max(names ? fm.stringWidth(name) + 10 : 0, hp ? barW + hfm.stringWidth(hpText) + 14 : 0);
-        double boxH = (names ? fm.getHeight() : 0) + (hp ? 10 : 0) + 4;
+        String cond = t.conditions.isEmpty() || scale < 20 ? "" : String.join(", ", t.conditions) + (t.dodging ? ", Dodging" : "");
+        if (cond.isEmpty() && t.dodging && scale >= 20) cond = "Dodging";
+        if (cond.length() > 28) cond = cond.substring(0, 27) + "…";
+        double boxW = Math.max(Math.max(names ? fm.stringWidth(name) + 10 : 0, hp ? barW + hfm.stringWidth(hpText) + 14 : 0), cond.isEmpty() ? 0 : hfm.stringWidth(cond) + 10);
+        double boxH = (names ? fm.getHeight() : 0) + (hp ? 10 : 0) + (cond.isEmpty() ? 0 : hfm.getHeight()) + 4;
         double bx = cx - boxW / 2, by = top - boxH;
         g.setColor(new Color(20, 22, 30, 215));
         g.fill(new RoundRectangle2D.Double(bx, by, boxW, boxH, 7, 7));
@@ -3092,6 +4309,12 @@ private class Board extends JComponent {
             g.setFont(hf);
             g.setColor(App.TEXT_LIGHT);
             g.drawString(hpText, (float) (barX + barW + 5), (float) (yy + 9));
+            yy += 10;
+        }
+        if (!cond.isEmpty()) {
+            g.setFont(hf);
+            g.setColor(new Color(0xF0, 0xC0, 0x60));
+            g.drawString(cond, (float) (cx - hfm.stringWidth(cond) / 2.0), (float) (yy + hfm.getAscent()));
         }
     }
 

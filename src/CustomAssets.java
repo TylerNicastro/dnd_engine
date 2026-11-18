@@ -143,6 +143,7 @@ static class Field {
     int min = 0, max = 999;
     boolean editable;   // CHOICE: free text allowed
     boolean withLevel;  // ENTRIES: each entry has a level (class / subclass features)
+    boolean traitTypes; // ENTRIES: each entry has a Trait type (plain trait, or a damage vulnerability / resistance / immunity)
     String link;        // MULTI / CHOICE: link kind for the detail overlay
     String section;     // optional heading shown above this field in the editor
 
@@ -158,6 +159,7 @@ static class Field {
     Field range(int lo, int hi) { min = lo; max = hi; return this; }
     Field editable() { editable = true; return this; }
     Field levels() { withLevel = true; return this; }
+    Field traitTypes() { traitTypes = true; return this; }
     Field link(String l) { link = l; return this; }
     Field section(String s) { section = s; return this; }
     Field opts(String... o) { List<String> l = Arrays.asList(o); options = () -> l; return this; }
@@ -237,7 +239,8 @@ static {
             new Field("abilities", "Ability scores", ABILITIES),
             text("saves", "Saving throws").hint("e.g. STR +5, CON +4"),
             text("skills", "Skills").hint("e.g. Perception +4, Stealth +6"),
-            entries("traits", "Traits").section("Traits & actions"),
+            entries("traits", "Traits").traitTypes().section("Traits & actions")
+                    .help("Set a trait's type to Damage Vulnerability, Resistance or Immunity and pick the damage type: Combat then doubles, halves or ignores that damage."),
             entries("actions", "Actions"),
             new Field("token", "Map token", TOKEN).section("Token")
                     .help("How this NPC looks on the Combat map. Its footprint follows its size (Large 2 × 2, Huge 3 × 3, Gargantuan 4 × 4)."),

@@ -1919,7 +1919,10 @@ public class App {
         ITEM_PRESETS.put("Arrows", "Ammunition for bows. Placeholder description.");
         ITEM_PRESETS.put("Shield", "Grants +2 to Armor Class while wielded.");
         ITEM_PRESETS.put("Leather armor", "Light armor. AC 11 + Dex modifier.");
-        ITEM_PRESETS.put("Potion of Healing", "Drink to regain 2d4 + 2 Hit Points. Placeholder description.");
+        ITEM_PRESETS.put("Potion of Healing", "Potion (Common). As a Bonus Action, you can drink it or administer it to another creature within 5 feet of yourself. The creature that drinks the magical red fluid regains 2d4 + 2 Hit Points.");
+        ITEM_PRESETS.put("Potion of Greater Healing", "Potion (Uncommon). As a Bonus Action, drink it or administer it to a creature within 5 feet. The drinker regains 4d4 + 4 Hit Points.");
+        ITEM_PRESETS.put("Potion of Superior Healing", "Potion (Rare). As a Bonus Action, drink it or administer it to a creature within 5 feet. The drinker regains 8d4 + 8 Hit Points.");
+        ITEM_PRESETS.put("Potion of Supreme Healing", "Potion (Very Rare). As a Bonus Action, drink it or administer it to a creature within 5 feet. The drinker regains 10d4 + 20 Hit Points.");
         ITEM_PRESETS.put("Backpack", "Holds up to 30 lb. of gear. Placeholder description.");
         ITEM_PRESETS.put("Bedroll", "For sleeping in the wild. Placeholder description.");
         ITEM_PRESETS.put("Rations", "One day of travel food. Placeholder description.");
@@ -2588,6 +2591,11 @@ public class App {
     // window). Clicking the dimmed backdrop, the close button, or pressing Esc dismisses it.
     // Returns a Runnable that closes the overlay.
     static Runnable showSheetOverlay(Component anchor, String title, JComponent body, JComponent focus) {
+        return showSheetOverlay(anchor, title, body, focus, null);
+    }
+
+    // Same, and runs `onClose` once when the overlay closes, however it was closed
+    static Runnable showSheetOverlay(Component anchor, String title, JComponent body, JComponent focus, Runnable onClose) {
         JRootPane root = SwingUtilities.getRootPane(anchor);
         if (root == null) return () -> { };
         JLayeredPane layers = root.getLayeredPane();
@@ -2635,6 +2643,7 @@ public class App {
             layers.remove(scrim);
             layers.removeComponentListener(resize);
             layers.repaint();
+            if (onClose != null) onClose.run(); // closed by any means: a button, the backdrop, the close button or Esc
         };
         x.addActionListener(e -> close.run());
         scrim.addMouseListener(new MouseAdapter() {

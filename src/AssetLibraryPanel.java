@@ -1740,6 +1740,13 @@ private static JComponent entryCard(String cat, Map<String, Object> a, CustomAss
     String[] words = f.label.split(" ");
     String kind = words[words.length - 1].replaceAll("s$", ""); // "Species traits" -> "trait", "Actions" -> "Action"
     String sub = f.withLevel ? "Level " + CustomAssets.intVal(e, "level", 1) : kind;
+    String traitType = CustomAssets.str(e, "traitType");
+    boolean damageTrait = f.traitTypes && DamageRules.bitFor(traitType) != 0;
+    if (damageTrait) {
+        sub = traitType + " · " + CustomAssets.str(e, "damageType");
+        if (desc.isEmpty()) desc = DamageRules.levelName(DamageRules.bitFor(traitType)) + " to "
+                + (DamageRules.ALL_DAMAGE.equals(CustomAssets.str(e, "damageType")) ? "all damage" : CustomAssets.str(e, "damageType") + " damage") + ".";
+    }
     JPanel card = new JPanel(new BorderLayout());
     card.setBackground(App.SHEET_ROW_ALT);
     card.setBorder(BorderFactory.createCompoundBorder(
@@ -1753,7 +1760,8 @@ private static JComponent entryCard(String cat, Map<String, Object> a, CustomAss
     l.setFont(new Font("SansSerif", Font.PLAIN, 12));
     card.add(l, BorderLayout.CENTER);
     String source = CustomAssets.str(a, "name") + (f.withLevel ? " · level " + CustomAssets.intVal(e, "level", 1) : "");
-    App.clickable(card, () -> App.showInfoOverlay(card, title, source, desc.isEmpty() ? "No description." : desc, null));
+    String shown = desc.isEmpty() ? "No description." : desc + (damageTrait ? "\n\n" + DamageRules.INFO : "");
+    App.clickable(card, () -> App.showInfoOverlay(card, title, damageTrait ? source + " · " + traitType : source, shown, null));
     return card;
 }
 
@@ -2250,13 +2258,65 @@ private FieldUI entriesUI(CustomAssets.Field f, List<Map<String, Object>> initia
         JButton remove = iconButton("✕", "Remove this " + noun, () -> { });
         head.add(remove, BorderLayout.EAST);
         JTextArea desc = textArea(CustomAssets.str(e, "description"), 3);
-        card.add(head, BorderLayout.NORTH);
+        // NPC traits: Trait type (plain, or a damage vulnerability / resistance / immunity) + damage type
+        JComboBox<String> traitType = null, damageType = null;
+        JPanel north = head;
+        if (f.traitTypes) {
+            JComboBox<String> tt = new JComboBox<>(DamageRules.TRAIT_TYPES);
+            JComboBox<String> dt = new JComboBox<>(DamageRules.damageTypeOptions());
+            for (JComboBox<String> c : Arrays.asList(tt, dt)) {
+                App.styleCombo(c);
+                c.setFont(new Font("SansSerif", Font.PLAIN, 13));
+                c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            }
+            String curType = CustomAssets.str(e, "traitType");
+            tt.setSelectedItem(Arrays.asList(DamageRules.TRAIT_TYPES).contains(curType) ? curType : DamageRules.TRAIT);
+            String curDmg = CustomAssets.str(e, "damageType");
+            dt.setSelectedItem(curDmg.isEmpty() ? "Fire" : curDmg);
+            tt.setToolTipText("Trait type: a damage vulnerability, resistance or immunity changes the damage this NPC takes in Combat");
+            dt.setToolTipText("Damage type affected");
+            JLabel typeLbl = new JLabel("Type");
+            typeLbl.setForeground(App.TEXT_MUTED);
+            JLabel dmgLbl = new JLabel("Damage");
+            dmgLbl.setForeground(App.TEXT_MUTED);
+            JPanel typeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+            typeRow.setOpaque(false);
+            typeRow.add(typeLbl);
+            typeRow.add(tt);
+            typeRow.add(dmgLbl);
+            typeRow.add(dt);
+            Runnable sync = () -> {
+                boolean dmg = !DamageRules.TRAIT.equals(tt.getSelectedItem());
+                dmgLbl.setVisible(dmg);
+                dt.setVisible(dmg);
+                name.setToolTipText(dmg ? "Name (optional: blank shows e.g. \"Fire Resistance\")" : "Name");
+                typeRow.revalidate();
+            };
+            tt.addActionListener(ev -> sync.run());
+            sync.run();
+            north = new JPanel(new BorderLayout(0, 6));
+            north.setOpaque(false);
+            north.add(head, BorderLayout.NORTH);
+            north.add(typeRow, BorderLayout.SOUTH);
+            traitType = tt;
+            damageType = dt;
+        }
+        card.add(north, BorderLayout.NORTH);
         card.add(areaScroll(desc, 600), BorderLayout.CENTER);
 
+        final JComboBox<String> traitTypeF = traitType, damageTypeF = damageType;
         Supplier<Map<String, Object>> reader = () -> {
             Map<String, Object> out = new LinkedHashMap<>();
             if (level != null) out.put("level", level.getValue());
-            out.put("name", name.getText().trim());
+            String nm = name.getText().trim();
+            if (traitTypeF != null && !DamageRules.TRAIT.equals(traitTypeF.getSelectedItem())) {
+                String tt = String.valueOf(traitTypeF.getSelectedItem());
+                String dt = String.valueOf(damageTypeF.getSelectedItem());
+                out.put("traitType", tt);
+                out.put("damageType", dt);
+                if (nm.isEmpty()) nm = (DamageRules.ALL_DAMAGE.equals(dt) ? "All Damage" : dt) + " " + tt.replace("Damage ", "");
+            }
+            out.put("name", nm);
             out.put("description", desc.getText().trim());
             return out;
         };

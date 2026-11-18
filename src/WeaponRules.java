@@ -425,6 +425,7 @@ static List<Attack> npcAttacks(Map<String, Object> npc) {
         if (a == null) continue;
         a.weapon = w;
         if (w != null && a.damageType.isEmpty()) a.damageType = w.damageType;
+        if (w != null && w.usesAmmo() && a.rangeNormal > 0) a.ammo = w.ammunition; // tracked per token in Combat
         a.notes = desc;
         out.add(a);
     }
