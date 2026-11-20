@@ -11,6 +11,7 @@ import java.util.function.Supplier;
 class LevelUpPanel {
     final JPanel panel;
     final java.util.function.IntConsumer show;
+    final java.util.function.IntConsumer showDown; // Level Down: remove the last level from one class
 
     private final CardLayout outerLayout;
     private final JPanel outerCards;
@@ -23,10 +24,11 @@ class LevelUpPanel {
     LevelUpPanel(CardLayout outerLayout, JPanel outerCards) {
         this.outerLayout = outerLayout;
         this.outerCards = outerCards;
-        panel = App.buildSectionShell("Level Up", outerLayout, outerCards, "CHARACTERS");
+        panel = App.buildSectionShell("Level Up / Down", outerLayout, outerCards, "CHARACTERS");
         stepHolder.setBackground(App.BG_DARK);
         panel.add(stepHolder, BorderLayout.CENTER);
         show = this::open;
+        showDown = this::openDown;
     }
 
     // A feat choice as currently entered in the UI (error != null means it can't be confirmed yet)
@@ -1067,6 +1069,165 @@ class LevelUpPanel {
             CharacterStorage.saveAllCharacters(all);
         }
         close();
+    }
+
+    // ---------------------------------------------------------------
+    // Level Down: pick the class that loses a level, review what goes, confirm
+    // ---------------------------------------------------------------
+    private void openDown(int index) {
+        List<Object> all = CharacterStorage.loadSavedCharacters();
+        if (index < 0 || index >= all.size() || !(all.get(index) instanceof Map)) return;
+        Map<String, Object> copy = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> en : ((Map<?, ?>) all.get(index)).entrySet()) copy.put(String.valueOf(en.getKey()), en.getValue());
+        if (CharacterStorage.recLevel(copy) <= 1) return;
+        rec = copy;
+        charIndex = index;
+        showDownStep();
+        outerLayout.show(outerCards, "LEVEL_UP");
+    }
+
+    private void showDownStep() {
+        int level = CharacterStorage.recLevel(rec);
+        LinkedHashMap<String, Integer> classLevels = CharacterStorage.recClassLevels(rec);
+        String primary = CharacterStorage.recStr(rec, "characterClass");
+
+        JPanel content = column();
+        add(content, heading(displayName() + ": Level " + level + " → " + (level - 1)));
+        add(content, gap(6));
+        add(content, muted("Classes: " + classSummary(classLevels) + "     •     Hit Dice: " + FeatData.hitDiceString(classLevels)));
+        add(content, gap(28));
+        add(content, subheading("Which class loses a level?"));
+        add(content, gap(12));
+        for (Map.Entry<String, Integer> en : classLevels.entrySet()) {
+            String cls = en.getKey();
+            int lv = en.getValue();
+            boolean blocked = lv <= 1 && (cls.equals(primary) || classLevels.size() == 1);
+            JButton b = new JButton("Level down " + cls + "   (" + lv + " → " + (lv - 1) + ")");
+            App.styleAccentButton(b);
+            b.setFont(new Font("SansSerif", Font.BOLD, 16));
+            b.setEnabled(!blocked);
+            if (blocked) b.setToolTipText("Your starting class can't drop below level 1");
+            b.addActionListener(e -> showDownConfirm(cls));
+            add(content, b);
+            add(content, gap(10));
+        }
+        setStep(content, null, cancelButton());
+    }
+
+    private void showDownConfirm(String cls) {
+        int level = CharacterStorage.recLevel(rec);
+        int cl = CharacterStorage.recClassLevels(rec).getOrDefault(cls, 1);
+        JPanel content = column();
+        add(content, heading("Level down " + cls + " (" + cl + " → " + (cl - 1) + ")"));
+        add(content, gap(14));
+        add(content, subheading("This removes:"));
+        add(content, gap(8));
+        List<Integer> rolls = CharacterStorage.recHpRolls(rec);
+        if (!rolls.isEmpty()) add(content, bullet("Your last hit point roll (" + rolls.get(rolls.size() - 1) + ")"));
+        for (Map<String, Object> f : levelFeats(rec, cls, cl, level)) {
+            String inc = describeIncreases(CharacterStorage.featStatIncreases(f));
+            add(content, bullet("Feat: " + CharacterStorage.recStr(f, "name") + (inc.isEmpty() ? "" : " (" + inc + " undone)")));
+        }
+        if (cl - 1 <= 0) {
+            add(content, bullet("The " + cls + " class, with its spells and subclass"));
+        } else {
+            Object sub = CustomAssets.recSubclasses(rec).get(cls);
+            Map<String, Object> subAsset = sub == null ? null : CustomAssets.subclassAsset(cls, String.valueOf(sub));
+            if (subAsset != null && CustomAssets.intVal(subAsset, "subclassLevel", 3) > cl - 1) add(content, bullet("Subclass: " + sub));
+            if (SpellData.isCaster(cls)) add(content, bullet("Spells beyond what " + cls + " level " + (cl - 1) + " allows (the most recently added go first)"));
+        }
+        JButton back = new JButton("← Back");
+        App.styleSecondaryButton(back);
+        pad(back);
+        back.addActionListener(e -> showDownStep());
+        JButton confirm = new JButton("Confirm Level Down");
+        App.styleAccentButton(confirm);
+        confirm.addActionListener(e -> applyLevelDown(cls));
+        setStep(content, null, back, cancelButton(), confirm);
+    }
+
+    // Feats gained at this level: matched by character level, falling back to class + class level for old records
+    private static List<Map<String, Object>> levelFeats(Map<String, Object> rec, String cls, int classLevel, int level) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> f : CharacterStorage.recFeats(rec)) {
+            Integer charLv = CharacterStorage.recInt(f, "characterLevel");
+            Integer clLv = CharacterStorage.recInt(f, "classLevel");
+            boolean match = charLv != null ? charLv == level
+                    : cls.equals(CharacterStorage.recStr(f, "className")) && clLv != null && clLv == classLevel;
+            if (match) out.add(f);
+        }
+        return out;
+    }
+
+    private void applyLevelDown(String cls) {
+        Map<String, Object> out = new LinkedHashMap<>(rec);
+        int level = CharacterStorage.recLevel(rec);
+        LinkedHashMap<String, Integer> classLevels = CharacterStorage.recClassLevels(rec);
+        int cl = classLevels.getOrDefault(cls, 1), newCl = cl - 1;
+
+        Map<String, Object> clOut = new LinkedHashMap<>();
+        for (Map.Entry<String, Integer> en : classLevels.entrySet()) {
+            int v = en.getKey().equals(cls) ? newCl : en.getValue();
+            if (v > 0) clOut.put(en.getKey(), v);
+        }
+        out.put("classLevels", clOut);
+
+        List<Object> rolls = new ArrayList<>(CharacterStorage.recHpRolls(rec));
+        if (!rolls.isEmpty()) rolls.remove(rolls.size() - 1);
+        out.put("hpRolls", rolls);
+
+        List<Map<String, Object>> gone = levelFeats(rec, cls, cl, level);
+        List<Object> feats = new ArrayList<>();
+        Map<String, Integer> stats = CharacterStorage.recStatsMap(rec);
+        for (Map<String, Object> f : CharacterStorage.recFeats(rec)) {
+            if (!gone.contains(f)) {
+                feats.add(f);
+                continue;
+            }
+            for (Map.Entry<String, Integer> en : CharacterStorage.featStatIncreases(f).entrySet()) stats.merge(en.getKey(), -en.getValue(), Integer::sum);
+        }
+        out.put("feats", feats);
+        Map<String, Object> statsOut = new LinkedHashMap<>();
+        for (String s : GameData.STAT_ORDER) if (stats.containsKey(s)) statsOut.put(s, stats.get(s));
+        out.put("stats", statsOut);
+
+        Map<String, Object> subs = new LinkedHashMap<>(CustomAssets.recSubclasses(rec));
+        Object sub = subs.get(cls);
+        Map<String, Object> subAsset = sub == null ? null : CustomAssets.subclassAsset(cls, String.valueOf(sub));
+        if (newCl <= 0 || (subAsset != null && CustomAssets.intVal(subAsset, "subclassLevel", 3) > newCl)) subs.remove(cls);
+        out.put("subclasses", subs);
+
+        LinkedHashMap<String, Map<String, List<String>>> spells = CharacterStorage.recClassSpells(rec);
+        if (newCl <= 0) {
+            spells.remove(cls);
+        } else if (spells.containsKey(cls)) {
+            Map<String, List<String>> lists = spells.get(cls);
+            trimNewest(lists.get("cantrips"), SpellData.cantripsKnown(cls, cl), SpellData.cantripsKnown(cls, newCl));
+            trimNewest(lists.get("prepared"), SpellData.preparedCount(cls, cl), SpellData.preparedCount(cls, newCl));
+            if (SpellData.isPreparedFromBook(cls)) trimNewest(lists.get("spellbook"), 6 + 2 * (cl - 1), 6 + 2 * (newCl - 1));
+            if ("Warlock".equals(cls)) trimNewest(lists.get("arcanum"), arcanumCount(cl), arcanumCount(newCl));
+        }
+        out.put("classSpells", CharacterStorage.classSpellsToJson(spells));
+
+        CharacterStorage.refreshDerived(out);
+        List<Object> all = CharacterStorage.loadSavedCharacters();
+        if (charIndex >= 0 && charIndex < all.size()) {
+            all.set(charIndex, out);
+            CharacterStorage.saveAllCharacters(all);
+        }
+        close();
+    }
+
+    // Drops the most recently added entries: as many as the level gave, but never below the new level's allowance
+    private static void trimNewest(List<String> list, int oldMax, int newMax) {
+        int drop = Math.min(list.size() - newMax, Math.max(0, oldMax - newMax));
+        for (int i = 0; i < drop; i++) list.remove(list.size() - 1);
+    }
+
+    private static int arcanumCount(int warlockLevel) {
+        int n = 0;
+        for (int l : new int[]{11, 13, 15, 17}) if (warlockLevel >= l) n++;
+        return n;
     }
 
     // ---------------------------------------------------------------

@@ -57,7 +57,7 @@ public class App {
             CharacterDetailResult detailResult = buildCharacterDetailPanel(cardLayout, cards, levelUpPanel.show);
             cards.add(detailResult.panel, "CHARACTER_DETAIL");
 
-            cards.add(buildCharactersPanel(cardLayout, cards, wizardResult.resetForEdit, detailResult.show, levelUpPanel.show), "CHARACTERS");
+            cards.add(buildCharactersPanel(cardLayout, cards, wizardResult.resetForEdit, detailResult.show, levelUpPanel.show, levelUpPanel.showDown), "CHARACTERS");
             // NPCs are Asset Library assets: the NPC button opens the library's NPC editor (stat block + map token)
             cards.add(buildAddCharacterTypePanel(cardLayout, cards, wizardResult.reset, () -> {
                 cardLayout.show(cards, "ASSETS");
@@ -801,7 +801,8 @@ public class App {
     // CHARACTERS PANEL
     // ---------------------------------------------------------------
     private static JPanel buildCharactersPanel(CardLayout cardLayout, JPanel cards, java.util.function.IntConsumer resetForEdit,
-                                               java.util.function.IntConsumer showDetail, java.util.function.IntConsumer showLevelUp) {
+                                               java.util.function.IntConsumer showDetail, java.util.function.IntConsumer showLevelUp,
+                                               java.util.function.IntConsumer showLevelDown) {
         JPanel panel = buildSectionShell("Characters", cardLayout, cards, "MENU");
 
         Runnable[] rebuildCharacterListHolder = new Runnable[1];
@@ -837,8 +838,8 @@ public class App {
                     row.setBorder(BorderFactory.createCompoundBorder(
                             new LineBorder(BG_FIELD, 1, true),
                             new EmptyBorder(10, 14, 10, 10)));
-                    row.setMaximumSize(new Dimension(470, 74));
-                    row.setPreferredSize(new Dimension(470, 74));
+                    row.setMaximumSize(new Dimension(560, 74));
+                    row.setPreferredSize(new Dimension(560, 74));
                     row.setAlignmentX(Component.LEFT_ALIGNMENT);
 
                     Tokens.Preview circle = new Tokens.Preview(Tokens.read(c.get("token"), Tokens.PC_COLOR),
@@ -904,6 +905,40 @@ public class App {
                         levelUpButton.addActionListener(e -> showLevelUp.accept(idx));
                         actionsWrap.add(levelUpButton);
                     }
+                    if (charLevel > 1) {
+                        JButton levelDownButton = new JButton("−");
+                        styleSecondaryButton(levelDownButton);
+                        levelDownButton.setFont(new Font("SansSerif", Font.BOLD, 14));
+                        levelDownButton.setBorder(BorderFactory.createCompoundBorder(
+                                new LineBorder(TEXT_MUTED, 1, true), new EmptyBorder(4, 9, 4, 9)));
+                        levelDownButton.setToolTipText("Level down to " + (charLevel - 1));
+                        levelDownButton.addActionListener(e -> showLevelDown.accept(idx));
+                        actionsWrap.add(levelDownButton);
+                    }
+
+                    JButton duplicateButton = new JButton("📋");
+                    duplicateButton.setFont(new Font("SansSerif", Font.PLAIN, 16));
+                    duplicateButton.setForeground(TEXT_MUTED);
+                    duplicateButton.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+                    duplicateButton.setFocusPainted(false);
+                    duplicateButton.setContentAreaFilled(false);
+                    duplicateButton.setCursor(new Cursor(Cursor.HAND_CURSOR));
+                    duplicateButton.setToolTipText("Duplicate this character");
+                    duplicateButton.addMouseListener(new MouseAdapter() {
+                        @Override
+                        public void mouseEntered(MouseEvent e) {
+                            duplicateButton.setForeground(GOLD);
+                        }
+                        @Override
+                        public void mouseExited(MouseEvent e) {
+                            duplicateButton.setForeground(TEXT_MUTED);
+                        }
+                    });
+                    duplicateButton.addActionListener(e -> {
+                        CharacterStorage.duplicate(idx);
+                        rebuildCharacterListHolder[0].run();
+                    });
+                    actionsWrap.add(duplicateButton);
 
                     JButton editButton = new JButton("\uD83D\uDCDD");
                     editButton.setFont(new Font("SansSerif", Font.PLAIN, 16));
@@ -988,6 +1023,16 @@ public class App {
         bottomBar.setBackground(BG_DARK);
         bottomBar.setBorder(new EmptyBorder(20, 0, 30, 0));
         bottomBar.add(addButton);
+
+        // Debug / testing: adds a few ready-made characters (skips any that already exist by name)
+        JButton testButton = new JButton("+ Add Test Characters");
+        styleSecondaryButton(testButton);
+        testButton.setToolTipText("Adds " + String.join(", ", TestCharacters.NAMES) + " (any already in the list are skipped)");
+        testButton.addActionListener(e -> {
+            TestCharacters.addMissing();
+            rebuildCharacterListHolder[0].run();
+        });
+        bottomBar.add(testButton);
         panel.add(bottomBar, BorderLayout.SOUTH);
 
         return panel;

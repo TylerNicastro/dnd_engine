@@ -122,6 +122,21 @@ static List<Object> loadWithIds() {
     return all;
 }
 
+// Saves a deep copy of character `index` right after it, as "<name> (Copy)" with a new id.
+@SuppressWarnings("unchecked")
+static void duplicate(int index) {
+    List<Object> all = loadSavedCharacters();
+    if (index < 0 || index >= all.size() || !(all.get(index) instanceof Map)) return;
+    Object parsed = new MiniJsonParser(JsonUtil.toJson(all.get(index))).parse(); // JSON round trip = deep copy
+    if (!(parsed instanceof Map)) return;
+    Map<String, Object> copy = (Map<String, Object>) parsed;
+    String name = recStr(copy, "name");
+    copy.put("name", (name.isEmpty() ? "Unnamed Character" : name) + " (Copy)");
+    copy.put("id", CustomAssets.newId());
+    all.add(index + 1, copy);
+    saveAllCharacters(all);
+}
+
 // One-time update of characters saved before the 2024 species rules: Dwarves, Halflings and Gnomes move at 30 ft.
 // (not 25), and Dwarves add Dwarven Toughness to their HP. Marked with speciesRules = 2024 so it runs once.
 private static boolean migrateSpeciesRules(Map<String, Object> rec) {
