@@ -1,8 +1,10 @@
 # Combat Spells vs. Rules as Written
 
-This file lists every way the Combat screen's level 1 spells differ from the rules as written (2024 Player's Handbook, plus the four Heroes of Faerûn spells the app lists). If a spell isn't in a table below, Combat runs it as written.
+This file lists every way the Combat screen's spells differ from the rules as written: cantrips and level 1 spells (2024 Player's Handbook, plus the four Heroes of Faerûn spells the app lists), NPC spellcasting, and homebrew spells. If a spell isn't in a table below, Combat runs it as written.
 
-Code: per-spell mechanics are in `src/CombatSpells.java` (`DEFS`). The casting flow, effects, Concentration and reactions are in the "Spellcasting" section of `src/CombatPanel.java`.
+Built-in spells of level 2 and up have no combat automation yet. Casting one spends the slot and action, starts Concentration if the spell has it, and tracks its duration; you apply its effects by hand.
+
+Code: per-spell mechanics are in `src/CombatSpells.java` (`DEFS`, plus `fromAsset` for homebrew). The casting flow, effects, Concentration and reactions are in the "Spellcasting" section of `src/CombatPanel.java`.
 
 **Status key**
 - **Simplified**: the rule is in play, but Combat handles part of it by hand or approximately.
@@ -17,8 +19,10 @@ Code: per-spell mechanics are in `src/CombatSpells.java` (`DEFS`). The casting f
 These would be big changes, so they're on hold until you decide:
 
 1. **Spell slots aren't written back to the character sheet.** Following the project rule "keep combat state out of character sheets," each token gets a copy of the slots the sheet has left. The copy is made when the token is placed and again at Start Combat. Slots spent in a fight only change that copy. End Combat reminds you to mark used slots on the sheet's Spells tab, and the next Start Combat re-copies from the sheet. *Option:* End Combat could offer "Apply spent slots to character sheets." That would break the current rule, so it needs your approval.
-2. **NPCs can't cast spells.** NPC stat blocks have no spell list (only free-text actions), so Cast a Spell is for characters only. *Option:* add a "Spells" field to the NPC schema (spell list, save DC, attack bonus, slots or uses per day).
-3. **Cantrips aren't castable in Combat yet.** You asked for level 1 spells. Most cantrips would reuse the same machinery (spell attack, save, area), so adding them is mainly a table of definitions.
+2. **Magic Missile** rolls each dart separately. The 2014 Sage Advice ruling was to roll once and use that number for every dart. Which do you want? (See its row below.)
+3. **Buzzing Bee and Insidious Rhythm** couldn't be found in any official source. Keep them, or remove them? (See their rows below.)
+
+Done since the last version: NPCs can cast spells, cantrips are castable, and homebrew spells get combat rules from Asset Library fields.
 
 ---
 
@@ -73,7 +77,7 @@ These would be big changes, so they're on hold until you decide:
 | Grease | Simplified | The save for entering the grease happens once per Move. Dragging a token into it doesn't trigger a save. |
 | Hellish Rebuke | Simplified | Offered only when the damage comes from a Combat attack or spell with a known attacker. Damage typed into the HP box has no source, so it isn't offered then. |
 | Hex | Not modeled | Disadvantage on ability checks with the chosen ability (Combat makes almost no ability checks). |
-| Hunter's Mark | Not modeled | Advantage on WIS (Perception or Survival) checks to find the target. |
+| Hunter's Mark | Not modeled | Advantage on WIS (Perception or Survival) checks to find the target. You pick the enemy when casting. The mark shows as a red crosshair on the board and as "Hunter's Mark → *target*" in the caster's side panel. The 1d6 Force is added to the caster's attack-roll hits against it. |
 | **Insidious Rhythm** | **Unverified** | Same as Buzzing Bee: no official source found. It works as the app describes it: a WIS save, then Disadvantage on Concentration saves, with a repeat save at the end of each of the target's turns. |
 | Jump | Not modeled | Jumping isn't on the board. The duration is tracked only. |
 | Mage Armor | Simplified | For characters, any body armor listed in Equipment counts as worn, as the sheet assumes. NPCs are assumed to be unarmored. |
@@ -87,6 +91,60 @@ These would be big changes, so they're on hold until you decide:
 | Thunderous Smite / Thunderwave | Simplified | The 10-ft. push goes in a straight line away from you and stops at walls, closed doors and creatures. Thunderwave's unsecured objects and the audible boom aren't modeled. |
 | **Wardaway** | **Unverified details** | A real Heroes of Faerûn spell, but only a summary is public: "creature other than a Construct or Undead, CON save, 2d4 Force (+2d4 per level), Speed halved and only an action or a Bonus Action on its next turn." Combat follows that summary. |
 | Witch Bolt | As written | The Bonus Action damage is a button on later turns. The spell ends at your turn start if the target is out of range or behind Total Cover. |
+
+---
+
+## Smites (Divine Smite, Searing / Thunderous / Wrathful Smite, Ensnaring Strike, Hail of Thorns)
+
+| Rule | Status | What Combat does |
+|---|---|---|
+| Casting time "Bonus Action, immediately after you hit" | App feature | Two ways in. You can **ready** a smite from Cast a Spell before attacking: nothing is spent until a hit lands, and then pressing Done on the hit casts it. Or you can click a smite button in the attack roll after a hit. Either way it uses the Bonus Action and a slot (or a free cast) at the moment of the hit, as written. A readied smite that hasn't fired ends with the turn. |
+| Why a smite can't be used | App feature | The attack roll lists every smite with the reason it's unavailable: wrong weapon type, Bonus Action already used (for example, by Hunter's Mark that turn), no slot, or a slot already spent this turn. |
+
+---
+
+## Cantrips
+
+Cantrip damage grows at character levels 5, 11 and 17. NPCs use their "Spellcaster level" field instead.
+
+| Cantrip | Status | Difference |
+|---|---|---|
+| Blade Ward, Chill Touch, Fire Bolt, Mind Sliver, Poison Spray, Ray of Frost, Sacred Flame, Shocking Grasp, Thunderclap, Toll the Dead, Vicious Mockery, Word of Radiance, Acid Splash | As written | Rider effects (can't heal, Speed −10, no opportunity attacks, −1d4 on the next save, Disadvantage on the next attack, d12s against a wounded target) are applied and tracked. |
+| Eldritch Blast | Not modeled | Warlock invocations (Agonizing Blast, Repelling Blast...). The beam count and separate targets are handled. |
+| Friends | Simplified | It succeeds automatically if the target is on another team (you're fighting it). "Already cast on it in the past 24 hours" isn't tracked. |
+| Guidance, Resistance | Not modeled | Tracked only: add the 1d4 to the check, or subtract it from the damage, by hand. |
+| Light | Simplified | Cast on a creature, meaning an object it carries: that creature sheds torch-like light (20 ft. Bright plus 20 ft. Dim) for 1 hour. Objects lying on the map can't be targeted. |
+| Produce Flame | Simplified | Casting it (a Bonus Action) lights the caster like a torch. **Hurl Produce Flame** in the side panel is the Magic action: a ranged spell attack, after which the flame is gone. |
+| Shillelagh | Interpretation | The damage type (Bludgeoning or Force) is picked once when casting, not on each hit. The Club or Quarterstaff attack switches to the spellcasting modifier and the bigger die while the spell lasts. |
+| Sorcerous Burst | As written | Each 8 rolled adds a d8, up to your spellcasting modifier in extra dice. |
+| Spare the Dying | Not modeled | Death saving throws (the app has none). The target gets a "Stable" condition. |
+| Starry Wisp | Not modeled | The Dim Light the target sheds. Its "can't benefit from Invisible" is applied. |
+| Thorn Whip | Simplified | The pull goes in a straight line toward you and stops at obstacles. |
+| True Strike | Simplified | You pick the weapon and the damage type (normal or Radiant) before attacking. The attack works like a normal weapon attack (smites and Divine Favor apply; ammunition is used), and the extra Radiant dice are added at levels 5, 11 and 17. |
+| Dancing Lights, Druidcraft, Elementalism, Mage Hand, Message, Minor Illusion, Prestidigitation, Thaumaturgy | Not modeled | Tracked only. Mending (1 minute) can't be cast in combat. |
+
+---
+
+## NPC spellcasting
+
+| Rule | Status | What Combat does |
+|---|---|---|
+| Spell lists | App feature | The NPC editor's Spellcasting section has At will, 1/day each, 2/day each, 3/day each, and Spells cast with slots (with a "Spell slots" line such as 4, 3, 2). |
+| Save DC and attack bonus | Simplified | Taken from the stat block. If left at 0, Combat works them out: 8 + Proficiency Bonus (from CR) + ability modifier, and Proficiency Bonus + ability modifier. |
+| Per-day uses and slots | Simplified | Refill at every Start Combat. |
+| "Cast at a higher level" notes in stat blocks | Not modeled | At-will and per-day spells are cast at their own level. Slot spells can be upcast with higher slots. |
+
+---
+
+## Homebrew spells
+
+A homebrew spell's **Combat** section in the Asset Library (How it resolves, Targets, save, dice, conditions, lasting effect) is turned into combat rules automatically. If How it resolves is set to None, there's no automation; a built-in spell with the same name keeps its rules.
+
+| Rule | Status | What Combat does |
+|---|---|---|
+| A lasting effect on an instantaneous spell | Interpretation | If "Effect lasts" is "Spell's duration" but the spell is Instantaneous, the effect lasts until the end of your next turn. |
+| Homebrew smites | Simplified | A smite with a save and half damage deals all its damage through the save. Otherwise its dice are added to the hit and the save applies only the effect. |
+| Effects the fields can't express | Not modeled | Anything beyond the listed fields (forced movement, summoning, terrain) is tracked by duration only. |
 
 ---
 

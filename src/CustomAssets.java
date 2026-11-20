@@ -129,10 +129,19 @@ static String featDescription(String name) {
 // ===============================================================
 static final String TEXT = "TEXT", AREA = "AREA", INT = "INT", BOOL = "BOOL", CHOICE = "CHOICE",
         MULTI = "MULTI", LIST = "LIST", ABILITIES = "ABILITIES", ENTRIES = "ENTRIES", TAGS = "TAGS",
-        TOKEN = "TOKEN"; // {shape, color, image}: a map token (see Tokens)
+        TOKEN = "TOKEN", // {shape, color, image}: a map token (see Tokens)
+        SPELL_LIST = "SPELL_LIST"; // list of spell names, picked from a searchable list (NPC spellcasting)
 // Link kinds: what clicking a value in the detail overlay opens
 static final String LINK_SKILL = "skill", LINK_CONDITION = "condition", LINK_CLASS = "class",
-        LINK_LANGUAGE = "language", LINK_STAT = "stat", LINK_FEAT = "feat", LINK_TAG = "tag";
+        LINK_LANGUAGE = "language", LINK_STAT = "stat", LINK_FEAT = "feat", LINK_TAG = "tag", LINK_SPELL = "spell";
+
+// Every spell name the pickers offer (built-in + homebrew), respecting campaign tag filters
+static List<String> spellOptions() {
+    List<String> out = new ArrayList<>();
+    for (Spell s : SpellData.SPELLS.values()) if (Tags.allowed(SPELLS, s.name)) out.add(s.name);
+    out.sort(String.CASE_INSENSITIVE_ORDER);
+    return out;
+}
 
 static class Field {
     final String key, label, type;
@@ -178,6 +187,14 @@ private static Field choice(String k, String l, String... o) { return new Field(
 private static Field multi(String k, String l, String... o) { return new Field(k, l, MULTI).opts(o); }
 private static Field list(String k, String l) { return new Field(k, l, LIST); }
 private static Field entries(String k, String l) { return new Field(k, l, ENTRIES); }
+// Option list with "None" first (optional damage types)
+static String[] withNone(String[] opts) {
+    String[] out = new String[opts.length + 1];
+    out[0] = "None";
+    System.arraycopy(opts, 0, out, 1, opts.length);
+    return out;
+}
+
 private static Field tagsField() {
     return new Field("tags", "Tags", TAGS).link(LINK_TAG).section("Tags")
             .help("Used for searching, sorting and campaign content filters. New homebrew starts with HOMEBREW.");
@@ -243,6 +260,19 @@ static {
             entries("traits", "Traits").traitTypes().section("Traits & actions")
                     .help("Set a trait's type to Damage Vulnerability, Resistance or Immunity and pick the damage type: Combat then doubles, halves or ignores that damage."),
             entries("actions", "Actions"),
+            choice("spellcastingAbility", "Spellcasting ability", "INT", "WIS", "CHA").section("Spellcasting")
+                    .help("Used for healing / damage bonuses, and for the save DC and attack bonus when those are left at 0."),
+            num("spellSaveDC", "Spell save DC", 0, 30, 0).help("From the stat block. 0 = work it out: 8 + Proficiency Bonus (from CR) + ability modifier."),
+            num("spellAttackBonus", "Spell attack bonus", -5, 20, 0).help("From the stat block. 0 = work it out: Proficiency Bonus + ability modifier."),
+            num("spellcasterLevel", "Spellcaster level", 1, 20, 1).help("Sets cantrip damage (it grows at levels 5, 11 and 17)."),
+            new Field("spellsAtWill", "At will", SPELL_LIST).opts(CustomAssets::spellOptions).link(LINK_SPELL)
+                    .help("Cantrips and any spells it can cast without limit."),
+            new Field("spells1PerDay", "1/day each", SPELL_LIST).opts(CustomAssets::spellOptions).link(LINK_SPELL),
+            new Field("spells2PerDay", "2/day each", SPELL_LIST).opts(CustomAssets::spellOptions).link(LINK_SPELL),
+            new Field("spells3PerDay", "3/day each", SPELL_LIST).opts(CustomAssets::spellOptions).link(LINK_SPELL),
+            new Field("spells", "Spells cast with slots", SPELL_LIST).opts(CustomAssets::spellOptions).link(LINK_SPELL)
+                    .help("Older stat blocks: spells it casts by expending slots (listed below)."),
+            text("spellSlots", "Spell slots").hint("e.g. 4, 3, 2").help("Slots per level, starting at level 1 (\"4, 3, 2\" = four 1st, three 2nd, two 3rd)."),
             new Field("token", "Map token", TOKEN).section("Token")
                     .help("How this NPC looks on the Combat map. Its footprint follows its size (Large 2 × 2, Huge 3 × 3, Gargantuan 4 × 4)."),
             area("bio", "Bio / notes").section("Notes")));
@@ -272,8 +302,41 @@ static {
             area("description", "Description").section("Effect"),
             area("higherLevels", "At higher levels").help("Cantrip upgrades or higher-slot scaling."),
             new Field("conditions", "Inflicted conditions", MULTI).opts(CustomAssets::conditionOptions).link(LINK_CONDITION)
-                    .help("Leave empty to detect conditions named in the description automatically."),
-            text("imagePath", "Card art (optional)").hint("e.g. art/spells/ember_lance.png")));
+                    .help("Leave empty to detect conditions named in the description automatically. In Combat, these are applied on a failed save, a hit, or to an effect's targets."),
+            text("imagePath", "Card art (optional)").hint("e.g. art/spells/ember_lance.png"),
+            // ---- Combat: how the Combat screen resolves it (CombatSpells.fromAsset) ----
+            choice("combatMode", "How it resolves", CombatSpells.CUSTOM_MODES).section("Combat")
+                    .help("None: no combat automation (casting still spends the slot and tracks the duration; a built-in spell of the same name keeps its rules)."),
+            choice("combatTarget", "Targets", CombatSpells.CUSTOM_TARGETS).help("The range comes from the Range field above (Touch = 5 ft., Self = 0)."),
+            num("areaSize", "Area size (ft.)", 0, 500, 15).help("Cone length, cube side, emanation or sphere radius."),
+            num("targetCount", "Creatures / beams", 1, 20, 1).help("Several creatures: how many. Spell attack: how many separate attacks (beams)."),
+            num("targetsPerLevel", "Extra per slot level", 0, 10, 0).help("More creatures or beams per slot level above the spell's level (cantrips: at levels 5, 11, 17)."),
+            choice("attackType", "Spell attack", "Ranged", "Melee"),
+            choice("saveAbility", "Saving throw", "DEX", "STR", "CON", "INT", "WIS", "CHA"),
+            bool("halfOnSave", "Half damage on a successful save"),
+            text("damageDice", "Damage / healing dice").hint("e.g. 3d6 or 2d8 + 2"),
+            text("damagePerLevel", "Extra dice per slot level").hint("e.g. 1d6").help("Added for each slot level above the spell's level (cantrips: at levels 5, 11 and 17)."),
+            choice("damageType", "Damage type", withNone(DAMAGE_TYPES)),
+            bool("addModifier", "Add the spellcasting modifier").help("To the damage, healing or Temporary Hit Points."),
+            choice("smiteWith", "Smite: after a hit with", CombatSpells.CUSTOM_SMITE),
+            // ---- Combat: lasting effect ----
+            choice("effectDuration", "Effect lasts", CombatSpells.CUSTOM_DURATIONS).section("Combat: lasting effect")
+                    .help("Applies to the inflicted conditions and everything below. \"Spell's duration\" uses the Duration field (and Concentration)."),
+            bool("hostileEffect", "Effect (no roll) targets enemies").help("Effect spells target allies by default; tick this for curses and marks."),
+            bool("repeatSave", "Target repeats the save at the end of each of its turns"),
+            text("ongoingDice", "Damage at the start of its turns").hint("e.g. 1d6"),
+            choice("ongoingType", "Ongoing damage type", withNone(DAMAGE_TYPES)),
+            bool("ongoingSave", "Save after the ongoing damage ends it"),
+            num("acBonus", "AC change", -10, 10, 0),
+            num("speedBonus", "Speed change (ft.)", -60, 60, 0),
+            choice("rollDie", "Its attack rolls and saves", CombatSpells.CUSTOM_DICE).help("Like Bless (+1d4) or Bane (−1d4)."),
+            choice("againstDie", "Attack rolls against it", "None", "−1d4", "−1d6", "−1d8").help("Like Blade Ward."),
+            text("markDice", "Your hits against it deal extra").hint("e.g. 1d6").help("Like Hunter's Mark: added to the caster's attack-roll hits against the target."),
+            choice("markType", "Extra damage type", withNone(DAMAGE_TYPES)),
+            bool("advantageAgainst", "Attack rolls against it have Advantage"),
+            bool("revealInvisible", "It can't benefit from Invisible"),
+            bool("noReactions", "It can't take Reactions"),
+            text("tempHp", "Temporary Hit Points").hint("e.g. 2d4 + 4")));
 
     SCHEMAS.put(FEATS, Arrays.asList(
             text("name", "Name").hint("e.g. Stormborn Resolve"),
@@ -472,7 +535,7 @@ static Map<String, Object> newAsset(String cat) {
         if (f.def != null) a.put(f.key, f.def);
         else if (TAGS.equals(f.type)) a.put(f.key, new ArrayList<Object>(Collections.singletonList(Tags.HOMEBREW)));
         else if (TOKEN.equals(f.type)) a.put(f.key, Tokens.defaults(Tokens.NPC_COLOR));
-        else if (MULTI.equals(f.type) || LIST.equals(f.type) || ENTRIES.equals(f.type)) a.put(f.key, new ArrayList<>());
+        else if (MULTI.equals(f.type) || LIST.equals(f.type) || ENTRIES.equals(f.type) || SPELL_LIST.equals(f.type)) a.put(f.key, new ArrayList<>());
         else if (ABILITIES.equals(f.type)) {
             Map<String, Object> ab = new LinkedHashMap<>();
             for (String s : GameData.STAT_ORDER) ab.put(s, 10);
@@ -513,6 +576,14 @@ static String validate(String cat, Map<String, Object> a) {
         if (n != 0 && n != 3) return "Pick exactly 3 ability scores for the background (or none to allow any).";
     }
     if (SUBCLASSES.equals(cat) && str(a, "parentClass").trim().isEmpty()) return "Choose the subclass's parent class.";
+    if (SPELLS.equals(cat)) {
+        String[][] dice = {{"damageDice", "Damage / healing dice"}, {"damagePerLevel", "Extra dice per slot level"}, {"ongoingDice", "Damage at the start of its turns"},
+                {"markDice", "Your hits against it deal extra"}, {"tempHp", "Temporary Hit Points"}};
+        for (String[] d : dice) {
+            if (!CombatSpells.validDice(str(a, d[0]))) return d[1] + " should look like 1d6, 2d8 + 2 or 5.";
+        }
+    }
+    if (NPCS.equals(cat) && !str(a, "spellSlots").trim().matches("[0-9,/ ]*")) return "Spell slots should be numbers per level, like 4, 3, 2.";
     if (CLASSES.equals(cat) && ("Custom".equalsIgnoreCase(name))) return "\"Custom\" is reserved for the wizard's manual class.";
     if ((SPECIES.equals(cat) || BACKGROUNDS.equals(cat)) && "Custom".equalsIgnoreCase(name)) {
         return "\"Custom\" is reserved for the wizard's manual option.";
@@ -870,7 +941,7 @@ static void applyToRuntime() {
             GameData.CLASS_PACKAGE_B_GOLD, GameData.CONDITION_INFO, GameData.CLASS_SAVING_THROWS,
             GameData.CLASS_DECISIONS, GameData.LANGUAGE_INFO, GameData.ARMOR_AC, GameData.SPELL_SLOTS_LEVEL1,
             SpellData.SPELLS, SpellData.CASTING_ABILITY, SpellData.CASTER_TYPE, SpellData.CANTRIPS_BY_LEVEL,
-            SpellData.PREPARED_BY_LEVEL, FeatData.GENERAL_FEATS, FeatData.EPIC_BOONS, ORIGIN_FEATS);
+            SpellData.PREPARED_BY_LEVEL, FeatData.GENERAL_FEATS, FeatData.EPIC_BOONS, ORIGIN_FEATS, CombatSpells.DEFS);
     restoreSnapshots();
 
     // Conditions first: spell descriptions are scanned for condition names
@@ -973,6 +1044,8 @@ static void applyToRuntime() {
     for (Map<String, Object> a : DATA.get(SPELLS)) {
         Spell s = toSpell(a);
         SpellData.SPELLS.put(s.name, s);
+        CombatSpells.Def cd = CombatSpells.fromAsset(a, s); // its Combat fields (None keeps a built-in rule of the same name)
+        if (cd != null) CombatSpells.DEFS.put(s.name, cd);
     }
 
     // Level-1 wizard choices for homebrew classes (counts capped by what's actually available)

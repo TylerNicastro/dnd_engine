@@ -131,7 +131,7 @@ static class Tok {
 
     boolean hasReaction() {
         return reactionsUsed < reactionsPerRound && !CombatConditions.incapacitated(conditions) && !down()
-                && !CombatSpells.has(effects, "Arms of Hadar"); // Arms of Hadar: no Reactions until its next turn
+                && !CombatSpells.any(effects, e -> e.noReactions); // e.g. Arms of Hadar: no Reactions until its next turn
     }
 
     Map<String, Integer> damageMods() {
@@ -635,6 +635,7 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
         t.attacks = WeaponRules.npcAttacks(npc);
         t.attacksPerAction = WeaponRules.npcAttacksPerAction(npc);
     }
+    adjustSpellAttacks(t); // Shillelagh
     // damage modifiers: an NPC's typed traits, or a character's species resistances (e.g. a Dwarf resists Poison)
     t.sourceMods = NPC.equals(t.kind) ? DamageRules.fromTraits(t.source) : SpeciesTraits.damageMods(t.source);
     // ammunition this token's attacks need but isn't tracking yet (combat-only copy; the sheet is never changed)
@@ -674,7 +675,7 @@ private void equipHand(Tok t, String item, int which) {
     t.ac = WeaponRules.armorClass(combatRec(t));
     t.baseAc = t.ac;
     applySpellStats(t); // Mage Armor / Shield of Faith / Shield on top of the new grip
-    t.attacks = WeaponRules.characterAttacks(combatRec(t));
+    rebuildAttacks(t);
     for (WeaponRules.Attack a : t.attacks) if (!a.ammo.isEmpty() && !t.ammo.containsKey(a.ammo)) t.ammo.put(a.ammo, startingAmmo(t, a.ammo));
     persistSoon();
     refreshAll();
@@ -784,6 +785,8 @@ private String defaultStatus() {
 
 private void cancelModes() {
     boolean had = placing != null || moveMode || targeting != null || spellTargeting != null;
+    if (targetingCast != null && targetingCast.refund != null) targetingCast.refund.run(); // True Strike cancelled: refund it
+    targetingCast = null;
     targeting = null;
     spellTargeting = null;
     placing = null;
@@ -1413,6 +1416,7 @@ private void animateStep(Tok mover, List<int[]> path, int i, int cost, Set<Tok> 
         // enemies whose reach this step leaves get one chance each (in initiative order)
         for (Tok e : order) {
             if (e == mover || asked.contains(e) || !e.hasReaction() || !hasMelee(e)) continue;
+            if (CombatSpells.any(e.effects, x -> x.noOA)) continue; // Shocking Grasp: no opportunity attacks
             if (mover.team >= 0 && e.team == mover.team) continue;
             // opportunity attacks need a creature you can see (Darkness or being Blinded hides it)
             if (!canSee(e, mover) || e.conditions.stream().anyMatch("Blinded"::equalsIgnoreCase)) continue;
@@ -1676,7 +1680,10 @@ private int[] lineOfSight(Tok a, Tok b) {
 // The light a token carries: the brightest light item a character holds, or an NPC's torch; null for none
 private static int[] carriedLight(Tok t) {
     if (OBJ.equals(t.kind)) return null;
-    if (NPC.equals(t.kind)) return t.carriesTorch ? Lighting.TORCH_LIGHT : null;
+    // Light (an object it carries) and Produce Flame shed Bright Light 20 ft. and Dim Light 20 ft. more, like a torch
+    boolean spellLight = CombatSpells.has(t.effects, "Light") || CombatSpells.has(t.effects, "Produce Flame");
+    if (NPC.equals(t.kind)) return t.carriesTorch || spellLight ? Lighting.TORCH_LIGHT : null;
+    if (spellLight) return Lighting.TORCH_LIGHT;
     if (t.source == null) return null;
     WeaponRules.Hands h = WeaponRules.hands(combatRec(t));
     int[] best = null;
@@ -2052,9 +2059,25 @@ private void showAttackPicker(Component anchor, Tok t) {
         swap.setAlignmentX(Component.LEFT_ALIGNMENT);
         swap.addActionListener(e -> {
             close[0].run();
-            showUseItem(anchor, t);
+            showUseItem(board, t); // the side-panel button that opened this may be gone by now
         });
         list.add(swap);
+    }
+    // spells riding on these attacks: marks on enemies, Divine Favor, a readied smite
+    List<String> riders = new ArrayList<>();
+    for (Map.Entry<CombatSpells.Effect, Tok> en : marksBy(t).entrySet()) {
+        CombatSpells.Effect e = en.getKey();
+        riders.add(e.spell + ": hits against " + en.getValue().label + " add " + e.markDice + "d" + e.markSides + " " + e.markType);
+    }
+    if (CombatSpells.has(t.effects, "Divine Favor")) riders.add("Divine Favor: weapon hits add 1d4 Radiant");
+    if (readySmite != null && readySmite.caster == t) riders.add("⚡ " + readySmite.known.name + " readied for the next hit with " + smiteNeeds(readySmite.def));
+    if (!riders.isEmpty()) {
+        list.add(Box.createRigidArea(new Dimension(0, 8)));
+        JLabel rl = new JLabel("<html><div style='width:520px'><span style='color:#b8d0ff'>✦ " + App.escapeHtml(String.join("<br>✦ ", riders)).replace("&lt;br&gt;", "<br>")
+                + "</span></div></html>");
+        rl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        rl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        list.add(rl);
     }
     JScrollPane sp = new JScrollPane(list);
     App.applyDarkScrollBar(sp);
@@ -2102,22 +2125,23 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
             }
         }
     }
-    final boolean usedAmmo = cast == null && tc.ranged && !atk.ammo.isEmpty() && ammoCount(att, atk.ammo) > 0;
+    final boolean weaponAttack = cast == null || cast.weaponAtk != null; // True Strike is a weapon attack too
+    final boolean usedAmmo = weaponAttack && tc.ranged && !atk.ammo.isEmpty() && ammoCount(att, atk.ammo) > 0;
     if (usedAmmo) changeAmmo(att, atk.ammo, -1);
     Map<String, Integer> targetMods = target.damageMods();
     persistSoon();
     refreshSide();
 
     // Spellfire Flare ignores Half and Three-Quarters Cover
-    final boolean ignoresCover = cast != null && "Spellfire Flare".equals(cast.def.name);
+    final boolean ignoresCover = cast != null && cast.def.ignoreCover;
     final int coverBonus = tc.cover > 0 && !ignoresCover ? 2 : 0;
     int[] mode = {tc.advantage && !tc.disadvantage ? 1 : tc.disadvantage && !tc.advantage ? 2 : 0};
     int[][] d20 = {new int[0]};
     boolean[] replaced = {false}, applied = {false}, dmgReplaced = {false}, undone = {false}, smited = {false};
     int[] natural = {0};
-    // Bless / Bane: a d4 added to / subtracted from every attack roll (rolled with the d20)
-    final boolean blessed = !isObj && CombatSpells.has(att.effects, "Bless"), baned = !isObj && CombatSpells.has(att.effects, "Bane");
-    int[] blessD4 = {0}, baneD4 = {0};
+    // Bless / Bane / Blade Ward...: dice added to / subtracted from the attack roll (rolled with the d20)
+    final List<Object[]> rollDice = attackRollDice(att, target);
+    int[] dieRolls = new int[rollDice.size()];
     // Sanctuary: the attacker makes a WIS save first; on a failure the attack is lost (Undo to pick another target)
     final CombatSpells.Effect sanct = isObj ? null : CombatSpells.find(target.effects, "Sanctuary");
     boolean[] sanctFail = {false};
@@ -2132,14 +2156,14 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     DmgPart main = new DmgPart(atk.name, atk.damageType, atk.diceCount, atk.diceSides, atk.damageBonus);
     main.gwf = atk.greatWeaponFighting;
     parts.add(main);
-    if (!isObj) {
+    if (cast != null && "Sorcerous Burst".equals(cast.def.name)) main.explodeMax = Math.max(0, cast.mod);
+    if (!isObj) { // marks: Hex, Hunter's Mark, homebrew (only the caster's own hits)
         for (CombatSpells.Effect e : target.effects) {
-            if (!e.caster.equals(att.uid)) continue;
-            if ("Hex".equals(e.spell)) parts.add(new DmgPart("Hex", "Necrotic", 1, 6, 0));
-            if ("Hunter's Mark".equals(e.spell)) parts.add(new DmgPart("Hunter's Mark", "Force", 1, 6, 0));
+            if (e.caster.equals(att.uid) && e.markDice > 0) parts.add(new DmgPart(e.spell, e.markType, e.markDice, e.markSides, 0));
         }
     }
-    if (cast == null && atk.weapon != null && CombatSpells.has(att.effects, "Divine Favor")) parts.add(new DmgPart("Divine Favor", "Radiant", 1, 4, 0));
+    if (atk.weapon != null && CombatSpells.has(att.effects, "Divine Favor")) parts.add(new DmgPart("Divine Favor", "Radiant", 1, 4, 0));
+    if (cast != null && "True Strike".equals(cast.def.name) && cast.scale > 0) parts.add(new DmgPart("True Strike", "Radiant", cast.scale, 6, 0));
     List<Runnable> riders = new ArrayList<>(); // smite effects applied when the hit lands
     Runnable[] smiteRefund = {null};
     boolean[] rolledDmg = {false};
@@ -2181,8 +2205,20 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         if (ignoresCover && n.startsWith("Half cover")) n = "Half cover is ignored: " + atk.name + " ignores Half and Three-Quarters Cover.";
         body.add(muted(n));
     }
-    if (blessed) body.add(muted("Bless: +1d4 to this attack roll."));
-    if (baned) body.add(muted("Bane: −1d4 from this attack roll."));
+    for (Object[] rd : rollDice) {
+        int die = (Integer) rd[0];
+        body.add(muted(rd[1] + ": " + (die > 0 ? "+" : "−") + "1d" + Math.abs(die) + " to this attack roll."));
+    }
+    for (DmgPart p : parts) if (p != main) body.add(muted(p.label + ": +" + p.count + "d" + p.sides + " " + p.type + " on a hit."));
+    // a readied smite fires on Done when the attack hits
+    final boolean readyFits = readySmite != null && readySmite.caster == att && weaponAttack && !reaction && att == active && smiteFits(readySmite.def, atk) && !isObj;
+    if (readyFits) {
+        JLabel rl = new JLabel("<html><div style='width:430px'><span style='color:#e08a2e'>⚡ " + App.escapeHtml(readySmite.known.name)
+                + " is readied:</span> it's cast when you press Done on a hit.</div></html>");
+        rl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        rl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        body.add(rl);
+    }
 
     // Sanctuary save
     JPanel sanctRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
@@ -2208,8 +2244,7 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     String[] modeNames = {"Normal", "Advantage", "Disadvantage"};
     JButton[] modeButtons = new JButton[3];
     Runnable rollMods = () -> {
-        blessD4[0] = blessed ? rng.nextInt(4) + 1 : 0;
-        baneD4[0] = baned ? rng.nextInt(4) + 1 : 0;
+        for (int i = 0; i < rollDice.size(); i++) dieRolls[i] = rng.nextInt(Math.abs((Integer) rollDice.get(i)[0])) + 1;
     };
     for (int i = 0; i < 3; i++) {
         final int m = i;
@@ -2304,7 +2339,11 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     body.add(masteryLbl);
 
     java.util.function.IntSupplier effAC = () -> target.ac + coverBonus;
-    java.util.function.IntSupplier rollTotal = () -> natural[0] + atk.toHit + blessD4[0] - baneD4[0];
+    java.util.function.IntSupplier rollTotal = () -> {
+        int s = natural[0] + atk.toHit;
+        for (int i = 0; i < rollDice.size(); i++) s += (Integer) rollDice.get(i)[0] > 0 ? dieRolls[i] : -dieRolls[i];
+        return s;
+    };
     java.util.function.BooleanSupplier isHit = () -> !sanctFail[0] && (natural[0] == 20 || (natural[0] != 1 && rollTotal.getAsInt() >= effAC.getAsInt()));
     java.util.function.BooleanSupplier isCrit = () -> isHit.getAsBoolean() && (natural[0] == 20 || tc.autoCrit);
 
@@ -2391,14 +2430,33 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         persistSoon();
         refreshAll();
     });
+    // smites: the attacker's Bonus Action spells that ride on a weapon hit (from a button, or readied from the picker)
+    java.util.function.Consumer<SpellCast> applySmite = sc -> {
+        if (smited[0]) return;
+        smited[0] = true;
+        smiteRefund[0] = spendSpell(att, sc.known, sc.pick);
+        if (readySmite == sc) readySmite = null;
+        DmgPart extra = smitePart(sc.def, sc.scale, target);
+        if (extra != null) {
+            parts.add(extra);
+            if (rolledDmg[0]) extra.roll(rng, isCrit.getAsBoolean());
+        }
+        riders.add(() -> smiteRider(att, target, sc));
+        setStatus(att.label + " casts " + sc.known.name + sc.levelText() + (sc.pick.free ? " without a slot" : "") + ".");
+        persistSoon();
+        refreshSide();
+    };
     JButton done = App.overlayButton("Done", true);
     done.addActionListener(e -> {
         // apply automatically: a hit deals its damage (rolled now if needed); a Graze miss deals the ability modifier
         boolean hitNow = isHit.getAsBoolean();
+        if (!applied[0] && hitNow && readyFits && !smited[0] && readySmite != null && castBlocker(att, readySmite.known, readySmite.def).isEmpty()) {
+            applySmite.accept(readySmite); // the readied smite lands with this hit
+        }
         if (!applied[0] && hitNow) {
             if (!rolledDmg[0]) rollDmg.doClick();
             apply.doClick();
-        } else if (!applied[0] && cast == null && !sanctFail[0] && "Graze".equals(atk.mastery) && atk.abilityMod > 0) {
+        } else if (!applied[0] && weaponAttack && cast == null && !sanctFail[0] && "Graze".equals(atk.mastery) && atk.abilityMod > 0) {
             graze.doClick();
         } else if (!applied[0]) {
             setStatus(sanctFail[0] ? att.label + " fails the Sanctuary save: the attack on " + target.label + " is lost."
@@ -2411,7 +2469,12 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     foot.add(done, BorderLayout.EAST);
     body.add(foot);
 
-    // Shield (the target's Reaction) and smites (the attacker's Bonus Action), offered when they'd matter
+    // Shield (the target's Reaction) and smites (the attacker's Bonus Action), with the reason when one can't be used
+    List<CombatSpells.Known> smites = new ArrayList<>();
+    if (weaponAttack && !reaction && inCombat && att == active && !isObj) {
+        for (CombatSpells.Known k : spellsOf(att)) if (CombatSpells.SMITE.equals(defOf(k).mode)) smites.add(k);
+    }
+    spellRow.setLayout(new BoxLayout(spellRow, BoxLayout.Y_AXIS));
     Runnable[] buildSpellRow = new Runnable[1];
     buildSpellRow[0] = () -> {
         spellRow.removeAll();
@@ -2419,34 +2482,39 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         if (hit && !applied[0] && !isObj && canCastReaction(target, "Shield") && !CombatSpells.has(target.effects, "Shield")) {
             JButton sh = economyButton("🛡 " + target.label + ": Shield (+5 AC)", REACTION_COLOR,
                     "Reaction: " + target.label + " casts Shield. +5 AC until the start of its next turn, including against this attack");
+            sh.setAlignmentX(Component.LEFT_ALIGNMENT);
             sh.addActionListener(ev -> {
                 castShield(target);
                 render[0].run();
             });
             spellRow.add(sh);
+            spellRow.add(Box.createRigidArea(new Dimension(0, 6)));
         }
-        if (hit && !applied[0] && !smited[0] && cast == null && !reaction && inCombat && att == active && PC.equals(att.kind) && !isObj) {
-            for (CombatSpells.Known k : CombatSpells.castable(att.source)) {
-                CombatSpells.Def sd = CombatSpells.def(k.name);
-                if (sd == null || !CombatSpells.SMITE.equals(sd.mode) || !smiteFits(sd, atk)) continue;
-                String why = castBlocker(att, k, sd);
-                JButton sb = economyButton(k.name, BONUS_COLOR, why.isEmpty() ? "Bonus Action: " + sd.how : why);
+        if (!smites.isEmpty() && !applied[0]) {
+            JLabel cap = sectionCaption(smited[0] ? "SMITE CAST" : "BONUS ACTION: SMITE ON A HIT");
+            spellRow.add(cap);
+            JPanel grid = new JPanel(new GridLayout(0, 2, 6, 6));
+            grid.setOpaque(false);
+            grid.setAlignmentX(Component.LEFT_ALIGNMENT);
+            grid.setMaximumSize(new Dimension(460, 200));
+            List<String> reasons = new ArrayList<>();
+            for (CombatSpells.Known k : smites) {
+                CombatSpells.Def sd = defOf(k);
+                String why = !smiteFits(sd, atk) ? "needs " + smiteNeeds(sd) : smited[0] ? "already smote" : !hit ? "only after a hit" : castBlocker(att, k, sd);
+                JButton sb = economyButton("⚡ " + k.name, BONUS_COLOR, why.isEmpty() ? "Bonus Action: " + sd.how : k.name + ": " + why);
                 sb.setEnabled(why.isEmpty());
-                sb.addActionListener(ev -> chooseSlot(sb, att, k, sd, pick -> {
-                    smited[0] = true;
-                    smiteRefund[0] = spendSpell(att, k, sd, pick);
-                    DmgPart extra = smitePart(sd, pick.level, target);
-                    if (extra != null) {
-                        parts.add(extra);
-                        if (rolledDmg[0]) extra.roll(rng, isCrit.getAsBoolean());
-                    }
-                    riders.add(() -> smiteRider(att, target, k, sd, pick.level));
-                    setStatus(att.label + " casts " + k.name + (pick.level > 1 ? " (level " + pick.level + ")" : "") + (pick.free ? " without a slot" : "") + ".");
-                    persistSoon();
-                    refreshSide();
+                if (!why.isEmpty() && smiteFits(sd, atk) && !smited[0]) reasons.add(k.name + ": " + why);
+                sb.addActionListener(ev -> chooseSlot(att, k, pick -> {
+                    applySmite.accept(newCast(att, k, sd, pick));
                     render[0].run();
                 }));
-                spellRow.add(sb);
+                grid.add(sb);
+            }
+            spellRow.add(grid);
+            if (!reasons.isEmpty() && hit) {
+                JLabel rl = mutedHtml("<html><div style='width:440px'>" + App.escapeHtml(String.join(" · ", reasons)) + "</div></html>");
+                rl.setForeground(new Color(0xDC, 0x8C, 0x5C));
+                spellRow.add(rl);
             }
         }
         spellRow.setVisible(spellRow.getComponentCount() > 0);
@@ -2477,7 +2545,7 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         }
         String verdict = sanctFail[0] ? "LOST (Sanctuary)" : crit ? "CRITICAL HIT!" : fumble ? "MISS (natural 1)" : hit ? "HIT" : "MISS";
         rollLbl.setText("<html>d20 " + dice + (replaced[0] ? " <span style='color:#aaa5a0'>(your roll)</span>" : "")
-                + " " + WeaponRules.signed(atk.toHit) + (blessed ? " + d4 " + blessD4[0] : "") + (baned ? " − d4 " + baneD4[0] : "")
+                + " " + WeaponRules.signed(atk.toHit) + rollDiceText(rollDice, dieRolls)
                 + " = <b>" + total + "</b> vs AC " + ac + "  →  "
                 + "<span style='color:" + (hit ? "#7cd38a" : "#dc3c3c") + "'>" + verdict + "</span></html>");
         rollLbl.setForeground(App.TEXT_LIGHT);
@@ -2555,6 +2623,16 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     close[0] = App.showSheetOverlay(anchor, cast != null ? atk.name : "Attack Roll", body, null, onClose);
 }
 
+// " + d4 3 − d4 2" for the spell dice on an attack roll
+private static String rollDiceText(List<Object[]> dice, int[] rolls) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < dice.size(); i++) {
+        int die = (Integer) dice.get(i)[0];
+        sb.append(die > 0 ? " + d" : " − d").append(Math.abs(die)).append(" ").append(rolls[i]);
+    }
+    return sb.toString();
+}
+
 // " → target is resistant: takes 6" (empty when the target has no modifier for this type)
 private static String modText(int amount, String type, Map<String, Integer> mods) {
     int mask = type == null || type.isEmpty() ? 0 : mods.getOrDefault(DamageRules.normalizeType(type), 0);
@@ -2581,28 +2659,39 @@ private static JLabel muted2(String text) {
 }
 
 // ===============================================================
-// Spellcasting (level 1 spells; mechanics in CombatSpells.java, deviations from the rules in SPELLS_RAW.md)
-//   Cast a Spell (Current Turn tab) -> pick a spell -> pick a slot -> pick targets / aim the area on the board ->
-//   attack roll, saving throws, healing or an effect. Slots are a per-token copy of what the sheet has left
-//   (copied when placed and at Start Combat, never written back). 2024 rule: one spell slot per turn.
-//   Effects (Bless, Hex, Searing Smite...) live on tokens and tick at turn starts / ends (onTurnStart / onTurnEnd).
+// Spellcasting (mechanics in CombatSpells.java, deviations from the rules in SPELLS_RAW.md)
+//   Cast a Spell (Current Turn tab, characters and NPCs with spells) -> pick a spell -> pick a slot -> pick targets /
+//   aim the area on the board -> attack roll, saving throws, healing or an effect. Smites can be readied from the
+//   picker (cast automatically on the next weapon hit) or cast from the attack roll's buttons.
+//   Slots are a per-token copy (characters: what the sheet has left; NPCs: their stat block's slots and per-day uses),
+//   copied when placed and at Start Combat, never written back. 2024 rule: one spell slot per turn.
+//   Effects live on tokens (CombatSpells.Effect, copied from the spell's template) and tick at turn starts / ends.
 //   Damage goes through dealDamage: Temporary Hit Points, Concentration saves, Armor of Agathys, Hellish Rebuke,
 //   Sleep / Tasha's Hideous Laughter / Charm Person / Sanctuary endings. Follow-up prompts queue up in `prompts`.
+//   Spell overlays are anchored to the board: the side panel is rebuilt while they're open.
 // ===============================================================
 static final Color SPELL_COLOR = new Color(0x6E, 0xA8, 0xFE); // spell slots / Cast a Spell
+static final Color PACT_COLOR = new Color(170, 120, 220);
+static final Color FREE_COLOR = new Color(0x7C, 0xD3, 0x8A);
 
-// A spell slot choice: a regular slot of `level`, a Pact Magic slot, or a free cast (no slot)
+// A spell slot choice: a regular slot of `level`, a Pact Magic slot, a free cast, or at will (cantrips)
 static final class SlotPick {
     final int level;
-    final boolean pact, free;
+    final boolean pact, free, atWill;
 
     SlotPick(int level, boolean pact, boolean free) {
+        this(level, pact, free, false);
+    }
+
+    SlotPick(int level, boolean pact, boolean free, boolean atWill) {
         this.level = level;
         this.pact = pact;
         this.free = free;
+        this.atWill = atWill;
     }
 
     String text(Tok t, CombatSpells.Known k) {
+        if (atWill) return "At will";
         if (free) return "No slot (" + (k.freeKey.equals(k.name) ? "once per Long Rest" : k.freeKey) + ", " + t.freeCasts.getOrDefault(k.freeKey, 0) + " left)";
         if (pact) return "Pact slot · level " + level + " (" + t.slots[9] + " left)";
         return "Level " + level + " slot (" + t.slots[level - 1] + " left)";
@@ -2617,7 +2706,7 @@ final class SpellCast {
     Spell spell;
     String source = "";
     SlotPick pick;
-    int slot = 1, dc = 10, atkBonus, mod;
+    int slot = 1, scale, dc = 10, atkBonus, mod; // scale: slot levels above the spell's level, or cantrip tiers
     String choice = "";
     Runnable refund;          // gives back the slot / action / concentration (Undo)
     boolean spent, ownTurn;
@@ -2627,8 +2716,14 @@ final class SpellCast {
     int leapsLeft, blastsLeft, blastNo = 1;
     Set<Integer> areaCells = new LinkedHashSet<>();
     double ox, oy;            // area origin (squares)
-    boolean areaOk;
+    boolean areaOk, moveMark;
     String areaWhy = "";
+    WeaponRules.Attack weaponAtk; // True Strike: the weapon attack it's made with
+
+    String levelText() {
+        if (spell.level == 0) return scale > 0 ? " (cantrip tier " + (scale + 1) + ")" : "";
+        return slot > spell.level ? " (level " + slot + ")" : "";
+    }
 }
 
 // A damage roll component: the weapon / spell dice or an extra (Hex, Divine Favor, a smite)
@@ -2636,6 +2731,7 @@ static final class DmgPart {
     final String label, type;
     final int count, sides, bonus;
     boolean gwf;
+    int explodeMax;           // Sorcerous Burst: each max roll adds a die, up to this many extra dice
     int[] rolled = new int[0];
     int total = -1;
 
@@ -2648,9 +2744,21 @@ static final class DmgPart {
     }
 
     void roll(Random rng, boolean crit) {
-        rolled = WeaponRules.rollDice(rng, count * (crit ? 2 : 1), sides, gwf);
+        List<Integer> dice = new ArrayList<>();
+        for (int v : WeaponRules.rollDice(rng, count * (crit ? 2 : 1), sides, gwf)) dice.add(v);
+        int extra = 0;
+        for (int i = 0; i < dice.size() && extra < explodeMax; i++) {
+            if (dice.get(i) == sides) {
+                dice.add(rng.nextInt(sides) + 1);
+                extra++;
+            }
+        }
+        rolled = new int[dice.size()];
         int s = bonus;
-        for (int v : rolled) s += v;
+        for (int i = 0; i < dice.size(); i++) {
+            rolled[i] = dice.get(i);
+            s += rolled[i];
+        }
         total = Math.max(0, s);
     }
 
@@ -2663,42 +2771,67 @@ static final class DmgPart {
     }
 }
 
-// ---------------- slots ----------------
+// ---------------- slots & known spells ----------------
 private void loadSlots(Tok t) {
     t.slotsLoaded = true;
-    if (!PC.equals(t.kind) || t.source == null) {
+    boolean pc = PC.equals(t.kind);
+    if (t.source == null || OBJ.equals(t.kind)) {
         t.slots = new int[10];
         t.freeCasts = new LinkedHashMap<>();
         return;
     }
-    t.slots = CombatSpells.remainingSlots(t.source);
-    t.freeCasts = CombatSpells.freeCasts(t.source);
+    t.slots = CombatSpells.remainingSlots(t.source, pc);
+    t.freeCasts = CombatSpells.freeCasts(t.source, pc);
+}
+
+private List<CombatSpells.Known> spellsOf(Tok t) {
+    if (t.source == null || OBJ.equals(t.kind)) return Collections.emptyList();
+    return CombatSpells.castable(t.source, PC.equals(t.kind));
+}
+
+private int[] maxSlotsOf(Tok t) {
+    if (t.source == null || OBJ.equals(t.kind)) return new int[10];
+    return CombatSpells.maxSlots(t.source, PC.equals(t.kind));
+}
+
+private boolean isCaster(Tok t) {
+    if (!spellsOf(t).isEmpty()) return true;
+    for (int v : maxSlotsOf(t)) if (v > 0) return true;
+    return false;
 }
 
 private String turnKey() {
     return round + ":" + (active == null ? "" : active.uid);
 }
 
-// Slot choices for casting `k` now (empty = can't). 2024: only one spell slot per turn, so after one only free casts remain.
+// Slot choices for casting `k` now (empty = can't). 2024: only one spell slot per turn, so after one only free
+// casts and at-will spells remain.
 private List<SlotPick> slotOptions(Tok t, CombatSpells.Known k) {
     List<SlotPick> out = new ArrayList<>();
-    if (!k.freeKey.isEmpty() && t.freeCasts.getOrDefault(k.freeKey, 0) > 0) out.add(new SlotPick(1, false, true));
-    if (inCombat && turnKey().equals(t.slotTurn)) return out;
-    int pact = CombatSpells.pactLevel(t.source);
+    if (k.atWill) {
+        out.add(new SlotPick(k.spell.level, false, false, true));
+        return out;
+    }
+    if (!k.freeKey.isEmpty() && t.freeCasts.getOrDefault(k.freeKey, 0) > 0) out.add(new SlotPick(Math.max(1, k.spell.level), false, true));
+    if (!k.slots || (inCombat && turnKey().equals(t.slotTurn))) return out;
+    int pact = PC.equals(t.kind) ? CombatSpells.pactLevel(t.source) : 0;
     for (int lv = Math.max(1, k.spell.level); lv <= 9; lv++) if (t.slots[lv - 1] > 0) out.add(new SlotPick(lv, false, false));
     if (t.slots[9] > 0 && pact >= k.spell.level) out.add(new SlotPick(pact, true, false));
     return out;
 }
 
 private CombatSpells.Known knownSpell(Tok t, String name) {
-    if (!PC.equals(t.kind) || t.source == null) return null;
-    for (CombatSpells.Known k : CombatSpells.castable(t.source)) if (k.name.equals(name)) return k;
+    for (CombatSpells.Known k : spellsOf(t)) if (k.name.equals(name)) return k;
     return null;
+}
+
+private CombatSpells.Def defOf(CombatSpells.Known k) {
+    return CombatSpells.defOrUtility(k.spell);
 }
 
 // Why `t` can't cast `k` right now ("" = it can)
 private String castBlocker(Tok t, CombatSpells.Known k, CombatSpells.Def def) {
-    if (def == null) return "Not supported in Combat yet.";
+    if (def == null) def = defOf(k);
     if (CombatSpells.LONG.equals(def.mode)) return def.how;
     if (t.down()) return t.label + " is at 0 HP.";
     String inc = CombatConditions.incapacitatedBy(t.conditions);
@@ -2717,6 +2850,7 @@ private String castBlocker(Tok t, CombatSpells.Known k, CombatSpells.Def def) {
         return "Casting time " + time + ": too long for a combat turn.";
     }
     if (slotOptions(t, k).isEmpty()) {
+        if (!k.slots && !k.freeKey.isEmpty()) return "No uses left (" + k.freeKey + ").";
         return inCombat && turnKey().equals(t.slotTurn) ? "Already expended a spell slot this turn (2024: one slot per turn)." : "No spell slots of level " + k.spell.level + "+ left.";
     }
     return "";
@@ -2724,13 +2858,13 @@ private String castBlocker(Tok t, CombatSpells.Known k, CombatSpells.Def def) {
 
 // Can `t` cast this reaction spell right now (Shield, Hellish Rebuke)?
 private boolean canCastReaction(Tok t, String spell) {
-    if (!inCombat || !PC.equals(t.kind) || t.source == null || t.down() || !t.hasReaction()) return false;
+    if (!inCombat || t.source == null || OBJ.equals(t.kind) || t.down() || !t.hasReaction()) return false;
     CombatSpells.Known k = knownSpell(t, spell);
     return k != null && !slotOptions(t, k).isEmpty();
 }
 
-// Pick a slot (skipped when there's only one choice), then run `then`
-private void chooseSlot(Component anchor, Tok t, CombatSpells.Known k, CombatSpells.Def def, java.util.function.Consumer<SlotPick> then) {
+// Pick a slot (skipped when there's only one choice), then run `then`. Always anchored to the board.
+private void chooseSlot(Tok t, CombatSpells.Known k, java.util.function.Consumer<SlotPick> then) {
     List<SlotPick> opts = slotOptions(t, k);
     if (opts.isEmpty()) {
         setStatus(t.label + " has no spell slot to cast " + k.name + ".");
@@ -2745,26 +2879,27 @@ private void chooseSlot(Component anchor, Tok t, CombatSpells.Known k, CombatSpe
     body.setOpaque(false);
     Runnable[] close = new Runnable[1];
     String higher = k.spell.higherLevels;
-    body.add(muted("<html><div style='width:380px'>Cast " + App.escapeHtml(k.name) + " with which slot?"
-            + (higher.isEmpty() ? "" : "<br>Higher-level slot: " + App.escapeHtml(higher)) + "</div></html>"));
-    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    body.add(mutedHtml("<html><div style='width:400px'>Cast <b>" + App.escapeHtml(k.name) + "</b> with which slot?"
+            + (higher.isEmpty() ? "" : "<br><span style='color:#d4af37'>Higher-level slot:</span> " + App.escapeHtml(higher)) + "</div></html>"));
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
     for (SlotPick p : opts) {
-        JButton b = economyButton(p.text(t, k), p.pact ? new Color(170, 120, 220) : p.free ? new Color(0x7C, 0xD3, 0x8A) : SPELL_COLOR, "Cast at level " + p.level);
+        JButton b = economyButton(p.text(t, k), p.pact ? PACT_COLOR : p.free ? FREE_COLOR : SPELL_COLOR,
+                p.free ? "Cast without expending a slot" : "Cast at level " + p.level);
         b.setAlignmentX(Component.LEFT_ALIGNMENT);
-        b.setMaximumSize(new Dimension(420, 36));
+        b.setMaximumSize(new Dimension(440, 38));
         b.addActionListener(e -> {
             close[0].run();
             then.accept(p);
         });
         body.add(b);
-        body.add(Box.createRigidArea(new Dimension(0, 5)));
+        body.add(Box.createRigidArea(new Dimension(0, 6)));
     }
-    close[0] = App.showSheetOverlay(anchor, k.name + ": Spell Slot", body, null);
+    close[0] = App.showSheetOverlay(board, k.name + ": Spell Slot", body, null);
 }
 
 // Spends what casting costs: the action / Bonus Action / Reaction, the slot (or free cast), starts Concentration,
 // and ends the caster's Sanctuary (casting a spell ends it). Returns the refund for Undo.
-private Runnable spendSpell(Tok t, CombatSpells.Known k, CombatSpells.Def def, SlotPick pick) {
+private Runnable spendSpell(Tok t, CombatSpells.Known k, SlotPick pick) {
     String time = k.spell.castingTime;
     boolean myTurn = inCombat && t == active;
     boolean usedAction = false, usedBonus = false, usedReaction = false;
@@ -2781,7 +2916,9 @@ private Runnable spendSpell(Tok t, CombatSpells.Known k, CombatSpells.Def def, S
         usedReaction = true;
     }
     String prevSlotTurn = t.slotTurn;
-    if (pick.free) t.freeCasts.merge(k.freeKey, -1, Integer::sum);
+    if (pick.atWill) {
+        // cantrips / at-will spells cost nothing but the action
+    } else if (pick.free) t.freeCasts.merge(k.freeKey, -1, Integer::sum);
     else {
         if (pick.pact) t.slots[9] = Math.max(0, t.slots[9] - 1);
         else t.slots[pick.level - 1] = Math.max(0, t.slots[pick.level - 1] - 1);
@@ -2800,7 +2937,9 @@ private Runnable spendSpell(Tok t, CombatSpells.Known k, CombatSpells.Def def, S
         }
         if (ub) bonusAttackUsed = false;
         if (ur) t.reactionsUsed = Math.max(0, t.reactionsUsed - 1);
-        if (pick.free) t.freeCasts.merge(k.freeKey, 1, Integer::sum);
+        if (pick.atWill) {
+            // nothing to give back
+        } else if (pick.free) t.freeCasts.merge(k.freeKey, 1, Integer::sum);
         else if (pick.pact) t.slots[9]++;
         else t.slots[pick.level - 1]++;
         t.slotTurn = prevSlotTurn;
@@ -2815,21 +2954,29 @@ private Runnable spendSpell(Tok t, CombatSpells.Known k, CombatSpells.Def def, S
 
 private SpellCast newCast(Tok t, CombatSpells.Known k, CombatSpells.Def def, SlotPick pick) {
     SpellCast c = new SpellCast();
+    boolean pc = PC.equals(t.kind);
     c.caster = t;
     c.known = k;
-    c.def = def;
+    c.def = def != null ? def : defOf(k);
     c.spell = k.spell;
     c.source = k.source;
     c.pick = pick;
-    c.slot = pick == null ? 1 : pick.level;
-    c.mod = CombatSpells.abilityMod(t.source, k.ability);
-    int pb = CombatSpells.profBonus(t.source);
-    c.dc = 8 + pb + c.mod;
-    c.atkBonus = pb + c.mod;
+    c.slot = pick == null ? Math.max(1, k.spell.level) : pick.level;
+    c.scale = k.spell.level == 0 ? CombatSpells.cantripSteps(CombatSpells.casterLevel(t.source, pc)) : Math.max(0, c.slot - k.spell.level);
+    c.mod = CombatSpells.abilityMod(t.source, pc, k.ability);
+    int pb = pc ? CombatSpells.profBonus(t.source) : CombatSpells.crProficiency(CustomAssets.str(t.source, "cr"));
+    c.dc = k.dc >= 0 ? k.dc : 8 + pb + c.mod;
+    c.atkBonus = k.atk != Integer.MIN_VALUE ? k.atk : pb + c.mod;
     c.ownTurn = inCombat && t == active;
     c.leapsLeft = c.slot;
-    c.blastsLeft = def.targetsAt(c.slot);
+    c.blastsLeft = c.def.targetsAt(c.scale);
     return c;
+}
+
+private int spellDcFor(Tok caster, String spell) {
+    CombatSpells.Known k = knownSpell(caster, spell);
+    if (k == null) return 13;
+    return newCast(caster, k, null, null).dc;
 }
 
 // ---------------- concentration & effects ----------------
@@ -2864,6 +3011,7 @@ private void addEffect(Tok t, CombatSpells.Effect e) {
     }
     t.effects.add(e);
     applySpellStats(t);
+    if ("Shillelagh".equals(e.spell)) rebuildAttacks(t);
     if (!t.concentration.isEmpty() && CombatConditions.incapacitated(t.conditions)) endConcentration(t, "Incapacitated");
 }
 
@@ -2877,6 +3025,7 @@ private void removeEffect(Tok t, CombatSpells.Effect e) {
         if (!other) t.conditions.removeIf(x -> x.equalsIgnoreCase(c));
     }
     applySpellStats(t);
+    if ("Shillelagh".equals(e.spell)) rebuildAttacks(t);
     // the last effect of a concentration spell gone: its caster stops concentrating
     if (e.conc) {
         Tok caster = byUid(e.caster);
@@ -2887,7 +3036,6 @@ private void removeEffect(Tok t, CombatSpells.Effect e) {
 private boolean spellStillActive(Tok caster, String spell) {
     for (Tok o : tokens) for (CombatSpells.Effect e : o.effects) if (e.caster.equals(caster.uid) && e.spell.equals(spell)) return true;
     for (CombatSpells.Zone z : zones) if (z.caster.equals(caster.uid) && z.spell.equals(spell)) return true;
-    // spells whose whole effect is on the caster (Expeditious Retreat, Detect Magic...) are tracked as an effect too
     return false;
 }
 
@@ -2896,18 +3044,24 @@ private static boolean hasCond(Tok t, String c) {
     return false;
 }
 
-// AC and Speed with spell effects: Mage Armor (13 + DEX unarmored), Shield of Faith +2, Shield +5, Longstrider +10 ft.
+// AC and Speed with spell effects: Mage Armor (13 + DEX unarmored), then each spell's AC / Speed change
+// (the same spell twice doesn't stack)
 private void applySpellStats(Tok t) {
     int ac = t.baseAc;
     if (CombatSpells.has(t.effects, "Mage Armor") && t.source != null && !wearsArmor(t)) {
-        int dex = PC.equals(t.kind) ? CombatSpells.abilityMod(t.source, "DEX") : GameData.abilityModifier(CustomAssets.abilities(t.source).getOrDefault("DEX", 10));
+        int dex = CombatSpells.abilityMod(t.source, PC.equals(t.kind), "DEX");
         int shield = PC.equals(t.kind) ? Math.max(0, t.baseAc - GameData.computeAC(withoutShields(t), dex) - SpeciesTraits.acBonus(t.source)) : 0;
         ac = Math.max(ac, 13 + dex + shield + (PC.equals(t.kind) ? SpeciesTraits.acBonus(t.source) : 0));
     }
-    if (CombatSpells.has(t.effects, "Shield of Faith")) ac += 2;
-    if (CombatSpells.has(t.effects, "Shield")) ac += 5;
+    int speed = t.baseSpeed;
+    Set<String> seen = new HashSet<>();
+    for (CombatSpells.Effect e : t.effects) {
+        if (!seen.add(e.spell)) continue;
+        ac += e.ac;
+        speed += e.speed;
+    }
     t.ac = ac;
-    t.speed = t.baseSpeed + (CombatSpells.has(t.effects, "Longstrider") ? 10 : 0);
+    t.speed = Math.max(0, speed);
 }
 
 private List<String> withoutShields(Tok t) {
@@ -2928,8 +3082,48 @@ private static boolean wearsArmor(Tok t) {
 
 private static String spellAcText(Tok t) {
     List<String> p = new ArrayList<>();
-    for (String s : new String[]{"Mage Armor", "Shield of Faith", "Shield"}) if (CombatSpells.has(t.effects, s)) p.add(s);
+    if (CombatSpells.has(t.effects, "Mage Armor")) p.add("Mage Armor");
+    for (CombatSpells.Effect e : t.effects) if (e.ac != 0 && !p.contains(e.spell)) p.add(e.spell + " " + signedInt(e.ac));
     return String.join(", ", p);
+}
+
+// Rebuilds a token's attacks (Shillelagh changes its Club / Quarterstaff attacks)
+private void rebuildAttacks(Tok t) {
+    if (t.source == null) return;
+    if (PC.equals(t.kind)) t.attacks = WeaponRules.characterAttacks(combatRec(t));
+    adjustSpellAttacks(t);
+}
+
+// Shillelagh: Club / Quarterstaff attacks use the spellcasting ability, a d8 (d10 / d12 / 2d6 at levels 5 / 11 / 17)
+// and the damage type picked when casting
+private void adjustSpellAttacks(Tok t) {
+    CombatSpells.Effect sh = CombatSpells.find(t.effects, "Shillelagh");
+    if (sh == null) return;
+    List<WeaponRules.Attack> out = new ArrayList<>();
+    for (WeaponRules.Attack a : t.attacks) {
+        if (a.weapon == null || !(a.weapon.name.equalsIgnoreCase("Club") || a.weapon.name.equalsIgnoreCase("Quarterstaff")) || a.offHand) {
+            out.add(a);
+            continue;
+        }
+        WeaponRules.Attack b = new WeaponRules.Attack();
+        b.name = a.name + " (Shillelagh)";
+        b.weapon = a.weapon;
+        b.melee = true;
+        b.reach = a.reach;
+        b.mastery = a.mastery;
+        b.toHit = a.toHit - a.abilityMod + sh.value;
+        b.damageBonus = a.damageBonus - a.abilityMod + sh.value;
+        b.abilityMod = sh.value;
+        int tier = sh.slot; // cantrip tier steps
+        b.diceCount = tier >= 3 ? 2 : 1;
+        b.diceSides = tier >= 3 ? 6 : tier == 2 ? 12 : tier == 1 ? 10 : 8;
+        b.damageType = sh.choice.isEmpty() ? a.damageType : sh.choice;
+        b.source = "Shillelagh";
+        b.hitBreakdown = a.hitBreakdown;
+        b.damageBreakdown = a.damageBreakdown;
+        out.add(b);
+    }
+    t.attacks = out;
 }
 
 // Effects that end with the fight (anything counted in rounds); hour-long ones stay on the token
@@ -2940,11 +3134,12 @@ private void endShortSpellEffects() {
     }
     zones.removeIf(z -> z.casterStarts >= 0);
     for (Tok t : tokens) if (!t.concentration.isEmpty() && !spellStillActive(t, t.concentration)) t.concentration = "";
+    readySmite = null;
 }
 
-// Conditions as attackers see them: Faerie Fire / Buzzing Bee stop a creature benefiting from Invisible
+// Conditions as attackers see them: Faerie Fire / Starry Wisp / Buzzing Bee stop a creature benefiting from Invisible
 private List<String> visibleConditions(Tok t) {
-    if (!CombatSpells.has(t.effects, "Faerie Fire") && !CombatSpells.has(t.effects, "Buzzing Bee")) return t.conditions;
+    if (!CombatSpells.any(t.effects, e -> e.reveal)) return t.conditions;
     List<String> out = new ArrayList<>(t.conditions);
     out.removeIf("Invisible"::equalsIgnoreCase);
     return out;
@@ -2953,13 +3148,21 @@ private List<String> visibleConditions(Tok t) {
 // Spell effects on an attack roll (weapon or spell)
 private void spellAttackEffects(Tok att, Tok target, TargetCheck tc) {
     if (OBJ.equals(target.kind)) return;
-    if (CombatSpells.has(target.effects, "Faerie Fire")) {
-        tc.advantage = true;
-        tc.notes.add(target.label + " is outlined by Faerie Fire: Advantage.");
+    for (CombatSpells.Effect e : target.effects) {
+        if (e.advAgainst) {
+            tc.advantage = true;
+            tc.notes.add(target.label + " is under " + e.spell + ": attacks against it have Advantage.");
+        }
     }
     if (CombatSpells.has(target.effects, "Guiding Bolt")) {
         tc.advantage = true;
         tc.notes.add("Guiding Bolt: this attack roll against " + target.label + " has Advantage (used up by it).");
+    }
+    for (CombatSpells.Effect e : att.effects) {
+        if (e.nextAttackDis) {
+            tc.disadvantage = true;
+            tc.notes.add(e.spell + ": " + att.label + " has Disadvantage on this attack roll (used up by it).");
+        }
     }
     if (CombatSpells.has(target.effects, "Protection from Evil and Good")
             && CombatSpells.isAny(CombatSpells.creatureType(att.source, PC.equals(att.kind)), CombatSpells.EXTRAPLANAR)) {
@@ -2976,8 +3179,9 @@ private void spellAttackEffects(Tok att, Tok target, TargetCheck tc) {
 }
 
 // What making an attack does to spells: it ends the attacker's Sanctuary, Compelled Duel's caster attacking someone
-// else ends the duel, and Guiding Bolt's Advantage is used up
+// else ends the duel, and single-use effects (Guiding Bolt, Vicious Mockery) are used up
 private void afterAttackMade(Tok att, Tok target, SpellCast cast) {
+    for (CombatSpells.Effect e : new ArrayList<>(att.effects)) if (e.nextAttackDis) removeEffect(att, e);
     if (OBJ.equals(target.kind)) return;
     CombatSpells.Effect s = CombatSpells.find(att.effects, "Sanctuary");
     if (s != null && cast == null) removeEffect(att, s);
@@ -2989,6 +3193,18 @@ private void afterAttackMade(Tok att, Tok target, SpellCast cast) {
     }
     CombatSpells.Effect gb = CombatSpells.find(target.effects, "Guiding Bolt");
     if (gb != null) removeEffect(target, gb);
+}
+
+// d4-style dice an attack roll gets from spells: {signed die, label} (Bless +1d4, Bane −1d4, Blade Ward −1d4 against)
+private List<Object[]> attackRollDice(Tok att, Tok target) {
+    List<Object[]> out = new ArrayList<>();
+    Set<String> seen = new HashSet<>();
+    for (CombatSpells.Effect e : att.effects) if (e.rollDie != 0 && seen.add(e.spell)) out.add(new Object[]{e.rollDie, e.spell});
+    if (!OBJ.equals(target.kind)) {
+        seen.clear();
+        for (CombatSpells.Effect e : target.effects) if (e.againstDie > 0 && seen.add(e.spell)) out.add(new Object[]{-e.againstDie, e.spell + " (" + target.label + ")"});
+    }
+    return out;
 }
 
 // ---------------- zones ----------------
@@ -3041,12 +3257,6 @@ private void queueGreaseSave(Tok t, CombatSpells.Zone z, String why) {
                     note(t.label + " slips in the grease and falls Prone.");
                 } else note(t.label + " keeps its footing in the grease.");
             }));
-}
-
-private int spellDcFor(Tok caster, String spell) {
-    CombatSpells.Known k = knownSpell(caster, spell);
-    if (k == null || caster.source == null) return 13;
-    return 8 + CombatSpells.profBonus(caster.source) + CombatSpells.abilityMod(caster.source, k.ability);
 }
 
 // ---------------- prompts & notes ----------------
@@ -3124,29 +3334,44 @@ private int dealDamage(Tok target, int amount, Tok source, boolean meleeHit) {
     return lost;
 }
 
-private void healTok(Tok t, int amount) {
+// Heals unless a spell stops it (Chill Touch). Returns the HP regained.
+private int healTok(Tok t, int amount) {
+    for (CombatSpells.Effect e : t.effects) {
+        if (e.noHeal) {
+            note(t.label + " can't regain Hit Points (" + e.spell + ").");
+            return 0;
+        }
+    }
     int before = t.hp;
     t.hp = Math.min(t.maxHp, t.hp + Math.max(0, amount));
-    if (before <= 0 && t.hp > 0) t.conditions.removeIf("Unconscious"::equalsIgnoreCase);
+    if (before <= 0 && t.hp > 0) t.conditions.removeIf(c -> "Unconscious".equalsIgnoreCase(c) || "Stable".equalsIgnoreCase(c));
+    return t.hp - before;
 }
 
 // ---------------- saving throws ----------------
 static final class SaveRoll {
     Tok who;
     String ability;
-    int dc, bonus, natural, total, bless, bane, cover;
+    int dc, bonus, natural, total, cover;
     int[] dice = new int[0];
-    boolean adv, dis, autoFail, autoSucceed, success, include = true;
+    List<Object[]> dieMods = new ArrayList<>(); // {signed die, label}
+    int[] dieRolls = new int[0];
+    boolean adv, dis, autoFail, autoSucceed, success, include = true, noSave;
     List<String> why = new ArrayList<>();
 }
 
-// Rolls a saving throw with everything Combat knows: proficiency, Bless / Bane, Dodge (DEX Advantage), Restrained
-// (DEX Disadvantage), Paralyzed / Stunned / Unconscious / Petrified (STR and DEX fail), half cover (+2 DEX)
+// Rolls a saving throw with everything Combat knows: proficiency, Bless / Bane / Mind Sliver, Dodge (DEX Advantage),
+// Restrained (DEX Disadvantage), Paralyzed / Stunned / Unconscious / Petrified (STR and DEX fail), half cover (+2 DEX)
 private SaveRoll rollSave(Tok who, String ability, int dc, int cover, boolean adv, boolean dis) {
     SaveRoll r = new SaveRoll();
     r.who = who;
     r.ability = ability;
     r.dc = dc;
+    if (ability == null || ability.isEmpty()) { // automatic damage: no save
+        r.noSave = true;
+        r.success = false;
+        return r;
+    }
     r.bonus = saveBonusOf(who, ability);
     r.adv = adv;
     r.dis = dis;
@@ -3160,18 +3385,32 @@ private SaveRoll rollSave(Tok who, String ability, int dc, int cover, boolean ad
     if ("DEX".equals(ability) && who.dodging) { r.adv = true; r.why.add("Dodging: Advantage"); }
     if ("DEX".equals(ability) && hasCond(who, "Restrained")) { r.dis = true; r.why.add("Restrained: Disadvantage"); }
     if ("DEX".equals(ability) && cover > 0) { r.cover = 2; r.why.add("half cover: +2"); }
+    Set<String> seen = new HashSet<>();
+    for (CombatSpells.Effect e : who.effects) if (e.rollDie != 0 && seen.add(e.spell)) r.dieMods.add(new Object[]{e.rollDie, e.spell});
+    for (CombatSpells.Effect e : new ArrayList<>(who.effects)) {
+        if (e.nextSaveDie) { // Mind Sliver: used up by this save
+            r.dieMods.add(new Object[]{-4, e.spell});
+            removeEffect(who, e);
+        }
+    }
     rerollSave(r);
     return r;
 }
 
 private void rerollSave(SaveRoll r) {
+    if (r.noSave) return;
     boolean two = r.adv != r.dis;
     int a = rollD20(), b = rollD20();
     r.dice = two ? new int[]{a, b} : new int[]{a};
     r.natural = !two ? a : r.adv ? Math.max(a, b) : Math.min(a, b);
-    r.bless = CombatSpells.has(r.who.effects, "Bless") ? rng.nextInt(4) + 1 : 0;
-    r.bane = CombatSpells.has(r.who.effects, "Bane") ? rng.nextInt(4) + 1 : 0;
-    r.total = r.natural + r.bonus + r.cover + r.bless - r.bane;
+    r.dieRolls = new int[r.dieMods.size()];
+    int mods = 0;
+    for (int i = 0; i < r.dieMods.size(); i++) {
+        int die = (Integer) r.dieMods.get(i)[0];
+        r.dieRolls[i] = rng.nextInt(Math.abs(die)) + 1;
+        mods += die > 0 ? r.dieRolls[i] : -r.dieRolls[i];
+    }
+    r.total = r.natural + r.bonus + r.cover + mods;
     r.success = !r.autoFail && (r.autoSucceed || r.total >= r.dc);
 }
 
@@ -3181,19 +3420,28 @@ private int saveBonusOf(Tok t, String ability) {
 }
 
 private String saveText(SaveRoll r) {
+    if (r.noSave) return "no save: hit automatically";
     if (r.autoSucceed) return r.ability + " save: succeeds automatically" + (r.why.isEmpty() ? "" : " (" + String.join(", ", r.why) + ")");
     StringBuilder d = new StringBuilder();
     for (int v : r.dice) d.append(d.length() == 0 ? "" : " ").append(v == r.natural ? "[" + v + "]" : "(" + v + ")");
-    return r.ability + " save: d20 " + d + " " + signedInt(r.bonus) + (r.cover > 0 ? " +2 cover" : "") + (r.bless > 0 ? " + d4 " + r.bless : "")
-            + (r.bane > 0 ? " − d4 " + r.bane : "") + " = " + r.total + " vs DC " + r.dc + (r.autoFail ? " (fails automatically)" : "");
+    StringBuilder m = new StringBuilder();
+    for (int i = 0; i < r.dieMods.size(); i++) {
+        int die = (Integer) r.dieMods.get(i)[0];
+        m.append(die > 0 ? " + " : " − ").append("d").append(Math.abs(die)).append(" ").append(r.dieRolls.length > i ? r.dieRolls[i] : 0)
+                .append(" (").append(r.dieMods.get(i)[1]).append(")");
+    }
+    return r.ability + " save: d20 " + d + " " + signedInt(r.bonus) + (r.cover > 0 ? " +2 cover" : "") + m
+            + " = " + r.total + " vs DC " + r.dc + (r.autoFail ? " (fails automatically)" : "");
 }
 
 // One row per save with Reroll / Flip (and an include box for area spells); `onChange` re-renders the caller
 private JPanel saveRow(SaveRoll r, boolean includeBox, Runnable onChange) {
     JPanel row = new JPanel(new BorderLayout(8, 0));
-    row.setOpaque(false);
+    row.setOpaque(true);
+    row.setBackground(App.SHEET_ROW_ALT);
+    row.setBorder(new EmptyBorder(4, 6, 4, 6));
     row.setAlignmentX(Component.LEFT_ALIGNMENT);
-    row.setMaximumSize(new Dimension(620, 54));
+    row.setMaximumSize(new Dimension(640, 60));
     JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
     left.setOpaque(false);
     if (includeBox) {
@@ -3206,12 +3454,13 @@ private JPanel saveRow(SaveRoll r, boolean includeBox, Runnable onChange) {
         });
         left.add(inc);
     }
-    left.add(new Tokens.Preview(r.who.style, r.who.label, 26, teamColor(r.who.team)));
+    left.add(new Tokens.Preview(r.who.style, r.who.label, 28, teamColor(r.who.team)));
     JLabel l = new JLabel();
     l.setFont(new Font("SansSerif", Font.PLAIN, 12));
     Runnable paint = () -> {
-        l.setText("<html><b>" + App.escapeHtml(r.who.label) + "</b>  <span style='color:" + (!r.include ? "#77736e" : r.success ? "#7cd38a" : "#dc3c3c") + "'>"
-                + (!r.include ? "not affected" : r.success ? "SUCCESS" : "FAIL") + "</span><br><span style='color:#aaa5a0'>"
+        String verdict = !r.include ? "not affected" : r.noSave ? "HIT" : r.success ? "SUCCESS" : "FAIL";
+        String col = !r.include ? "#77736e" : r.success ? "#7cd38a" : "#dc3c3c";
+        l.setText("<html><b>" + App.escapeHtml(r.who.label) + "</b>  <span style='color:" + col + "'><b>" + verdict + "</b></span><br><span style='color:#aaa5a0'>"
                 + App.escapeHtml(saveText(r) + (r.why.isEmpty() || r.autoSucceed ? "" : " · " + String.join(", ", r.why))) + "</span></html>");
         l.setForeground(App.TEXT_LIGHT);
     };
@@ -3219,24 +3468,25 @@ private JPanel saveRow(SaveRoll r, boolean includeBox, Runnable onChange) {
     App.clickable(l, () -> showTokenDetail(l, r.who));
     left.add(l);
     row.add(left, BorderLayout.CENTER);
-    JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 6));
-    btns.setOpaque(false);
-    JButton rr = Tokens.smallButton("🎲", "Reroll this save");
-    rr.addActionListener(e -> {
-        rerollSave(r);
-        paint.run();
-        onChange.run();
-    });
-    JButton flip = Tokens.smallButton("Flip", "Swap success / failure (e.g. the player rolled at the table, or a feature changed it)");
-    flip.addActionListener(e -> {
-        r.success = !r.success;
-        paint.run();
-        onChange.run();
-    });
-    btns.add(rr);
-    btns.add(flip);
-    row.add(btns, BorderLayout.EAST);
-    row.putClientProperty("paint", paint);
+    if (!r.noSave) {
+        JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 6));
+        btns.setOpaque(false);
+        JButton rr = Tokens.smallButton("🎲", "Reroll this save");
+        rr.addActionListener(e -> {
+            rerollSave(r);
+            paint.run();
+            onChange.run();
+        });
+        JButton flip = Tokens.smallButton("Flip", "Swap success / failure (e.g. the player rolled at the table, or a feature changed it)");
+        flip.addActionListener(e -> {
+            r.success = !r.success;
+            paint.run();
+            onChange.run();
+        });
+        btns.add(rr);
+        btns.add(flip);
+        row.add(btns, BorderLayout.EAST);
+    }
     return row;
 }
 
@@ -3245,7 +3495,7 @@ private void showSaveList(String title, String intro, List<SaveRoll> rows, java.
     JPanel body = new JPanel();
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
-    JLabel il = new JLabel("<html><div style='width:460px'>" + App.escapeHtml(intro) + "</div></html>");
+    JLabel il = new JLabel("<html><div style='width:470px'>" + App.escapeHtml(intro) + "</div></html>");
     il.setForeground(App.TEXT_LIGHT);
     il.setFont(new Font("SansSerif", Font.PLAIN, 13));
     il.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -3380,16 +3630,16 @@ private void onTurnStart(Tok t) {
                 note("Command (Flee): " + t.label + " spends its turn moving away from its caster by the fastest means.");
         }
     }
-    // start-of-turn damage: Searing Smite (then a CON save ends it), Ensnaring Strike (while Restrained)
+    // start-of-turn damage: Searing Smite (then a CON save ends it), Ensnaring Strike (while Restrained), homebrew
     for (CombatSpells.Effect e : new ArrayList<>(t.effects)) {
         if (e.dotDice <= 0) continue;
         prompts.add(() -> startOfTurnDamage(t, e));
     }
-    if (!prompts.isEmpty()) SwingUtilities.invokeLater(this::flushPrompts);
-    else if (!notes.isEmpty()) SwingUtilities.invokeLater(this::flushPrompts);
+    if (!prompts.isEmpty() || !notes.isEmpty()) SwingUtilities.invokeLater(this::flushPrompts);
 }
 
 private void onTurnEnd(Tok t) {
+    readySmite = null;
     for (Tok o : tokens) {
         for (CombatSpells.Effect e : new ArrayList<>(o.effects)) {
             if (e.caster.equals(t.uid) && e.casterEnds > 0 && --e.casterEnds == 0) {
@@ -3470,7 +3720,7 @@ private void startOfTurnDamage(Tok t, CombatSpells.Effect e) {
 }
 
 // Escape check (an action): STR (Athletics) against the spell's DC ends Entangle / Ensnaring Strike on the creature
-private void escapeCheck(Component anchor, Tok t, CombatSpells.Effect e) {
+private void escapeCheck(Tok t, CombatSpells.Effect e) {
     int bonus = athleticsBonus(t);
     int d = rollD20(), total = d + bonus;
     boolean ok = total >= e.dc;
@@ -3499,7 +3749,7 @@ private int athleticsBonus(Tok t) {
     }
     java.util.regex.Matcher m = java.util.regex.Pattern.compile("Athletics\\s*([+-]\\s*\\d+)").matcher(CustomAssets.str(t.source, "skills"));
     if (m.find()) return Integer.parseInt(m.group(1).replace(" ", "").replace("+", ""));
-    return GameData.abilityModifier(CustomAssets.abilities(t.source).getOrDefault("STR", 10));
+    return CombatSpells.abilityMod(t.source, false, "STR");
 }
 
 // ---------------- reactions ----------------
@@ -3509,12 +3759,13 @@ private void castShield(Tok t) {
     if (k == null) return;
     List<SlotPick> opts = slotOptions(t, k);
     if (opts.isEmpty()) return;
-    spendSpell(t, k, CombatSpells.def("Shield"), opts.get(0));
+    spendSpell(t, k, opts.get(0));
     CombatSpells.Effect e = new CombatSpells.Effect();
     e.spell = "Shield";
     e.caster = t.uid;
     e.casterStarts = 1;
     e.castRound = round;
+    e.copyTemplate(CombatSpells.def("Shield"));
     addEffect(t, e);
     note(t.label + " casts Shield: +5 AC until the start of its next turn.");
     persistSoon();
@@ -3548,10 +3799,9 @@ private void offerHellishRebuke(Tok t, Tok attacker) {
     cast.addActionListener(e -> {
         casting[0] = true;
         close[0].run();
-        CombatSpells.Def def = CombatSpells.def("Hellish Rebuke");
-        chooseSlot(board, t, k, def, pick -> {
-            SpellCast c = newCast(t, k, def, pick);
-            c.refund = spendSpell(t, k, def, pick);
+        chooseSlot(t, k, pick -> {
+            SpellCast c = newCast(t, k, null, pick);
+            c.refund = spendSpell(t, k, pick);
             c.spent = true;
             resolveSave(c, Collections.singletonList(attacker), t.x + t.size / 2.0, t.y + t.size / 2.0, null);
         });
@@ -3566,7 +3816,9 @@ private void offerHellishRebuke(Tok t, Tok attacker) {
     });
 }
 
-// ---------------- smites (cast from the attack roll) ----------------
+// ---------------- smites (readied from the picker, or cast from the attack roll) ----------------
+private SpellCast readySmite; // a smite waiting for this turn's next weapon hit (not spent until it lands)
+
 private static boolean smiteFits(CombatSpells.Def d, WeaponRules.Attack atk) {
     boolean unarmed = "Unarmed Strike".equals(atk.name);
     switch (d.smiteWith) {
@@ -3576,39 +3828,45 @@ private static boolean smiteFits(CombatSpells.Def d, WeaponRules.Attack atk) {
     }
 }
 
-private DmgPart smitePart(CombatSpells.Def d, int slot, Tok target) {
-    switch (d.name) {
-        case "Divine Smite":
-            boolean extra = CombatSpells.isAny(CombatSpells.creatureType(target.source, PC.equals(target.kind)), new String[]{"Fiend", "Undead"});
-            return new DmgPart("Divine Smite" + (extra ? " (+1d8 vs " + CombatSpells.creatureType(target.source, false) + ")" : ""), "Radiant", d.diceAt(slot) + (extra ? 1 : 0), 8, 0);
-        case "Searing Smite":
-        case "Thunderous Smite":
-        case "Wrathful Smite":
-            return new DmgPart(d.name, d.type, d.diceAt(slot), d.sides, 0);
-        default:
-            return null; // Ensnaring Strike / Hail of Thorns deal their damage later
+private static String smiteNeeds(CombatSpells.Def d) {
+    switch (d.smiteWith) {
+        case "MELEE": return "a Melee weapon or Unarmed Strike";
+        case "RANGED": return "a Ranged weapon";
+        default: return "a weapon";
     }
 }
 
-private void smiteRider(Tok att, Tok target, CombatSpells.Known k, CombatSpells.Def d, int slot) {
-    SpellCast c = newCast(att, k, d, new SlotPick(slot, false, true));
-    c.spent = true;
+// Extra damage the smite adds to the hit (null: its damage comes later, through a save)
+private DmgPart smitePart(CombatSpells.Def d, int scale, Tok target) {
+    switch (d.name) {
+        case "Divine Smite":
+            boolean extra = CombatSpells.isAny(CombatSpells.creatureType(target.source, PC.equals(target.kind)), new String[]{"Fiend", "Undead"});
+            return new DmgPart("Divine Smite" + (extra ? " (+1d8 vs " + CombatSpells.creatureType(target.source, false) + ")" : ""), "Radiant", d.diceAt(scale) + (extra ? 1 : 0), 8, 0);
+        case "Ensnaring Strike":
+        case "Hail of Thorns":
+            return null;
+        default:
+            if (d.dice <= 0) return null;
+            if (d.custom && !d.save.isEmpty() && d.half) return null; // homebrew save-for-half smites deal damage through the save
+            return new DmgPart(d.name, d.type, d.diceAt(scale), d.sides, d.bonusAt(scale));
+    }
+}
+
+private void smiteRider(Tok att, Tok target, SpellCast c) {
+    CombatSpells.Def d = c.def;
     switch (d.name) {
         case "Searing Smite": {
             CombatSpells.Effect e = effectFor(c, target);
             e.casterStarts = 10;
-            e.dotDice = d.diceAt(slot);
+            e.dotDice = d.diceAt(c.scale);
             e.dotSides = 6;
             e.dotType = "Fire";
             e.startSave = "CON";
             addEffect(target, e);
-            note(target.label + " is burning (Searing Smite): " + d.diceAt(slot) + "d6 Fire at the start of each of its turns until it succeeds on a CON save.");
+            note(target.label + " is burning (Searing Smite): " + e.dotDice + "d6 Fire at the start of each of its turns until it succeeds on a CON save.");
             break;
         }
-        case "Thunderous Smite":
-        case "Wrathful Smite":
-        case "Ensnaring Strike":
-            prompts.add(() -> resolveSave(c, Collections.singletonList(target), att.x + att.size / 2.0, att.y + att.size / 2.0, saveSpecNoDamage(c)));
+        case "Divine Smite":
             break;
         case "Hail of Thorns": {
             List<Tok> hit = new ArrayList<>();
@@ -3618,10 +3876,16 @@ private void smiteRider(Tok att, Tok target, CombatSpells.Known k, CombatSpells.
             break;
         }
         default:
+            if (!d.save.isEmpty()) {
+                SaveSpec s = d.custom && d.half ? saveSpecOf(c) : saveSpecNoDamage(c);
+                prompts.add(() -> resolveSave(c, Collections.singletonList(target), att.x + att.size / 2.0, att.y + att.size / 2.0, s));
+            } else if (d.lasting()) {
+                addEffect(target, templateEffect(c, target));
+            }
     }
 }
 
-// ---------------- Witch Bolt / Hex / Hunter's Mark follow-ups ----------------
+// ---------------- Witch Bolt / marks / Produce Flame ----------------
 private Tok witchBoltTarget(Tok caster) {
     for (Tok o : tokens) {
         CombatSpells.Effect e = CombatSpells.find(o.effects, "Witch Bolt");
@@ -3646,94 +3910,128 @@ private void witchBoltSustain(Tok t) {
 }
 
 private boolean canSustainWitchBolt(Tok t) {
-    if (!"Witch Bolt".equals(t.concentration) || bonusAttackUsed) return false;
+    if (!"Witch Bolt".equals(t.concentration) || bonusAttackUsed || t != active) return false;
     Tok wt = witchBoltTarget(t);
     if (wt == null || wt.down()) return false;
     CombatSpells.Effect e = CombatSpells.find(wt.effects, "Witch Bolt");
     return e != null && !turnKey().equals(e.choice) && distanceFt(t, wt) <= 60 && lineOfSight(t, wt)[0] == 0;
 }
 
-// Hex / Hunter's Mark: when the target drops to 0 HP, a Bonus Action on a later turn moves it to a new creature
-private CombatSpells.Effect markOf(Tok caster, String spell) {
-    for (Tok o : tokens) {
-        CombatSpells.Effect e = CombatSpells.find(o.effects, spell);
-        if (e != null && e.caster.equals(caster.uid)) return e;
-    }
-    return null;
+// Creatures carrying this caster's mark-type effects (Hex, Hunter's Mark, homebrew marks): effect -> holder
+private Map<CombatSpells.Effect, Tok> marksBy(Tok caster) {
+    Map<CombatSpells.Effect, Tok> out = new LinkedHashMap<>();
+    for (Tok o : tokens) for (CombatSpells.Effect e : o.effects) if (e.markDice > 0 && e.caster.equals(caster.uid)) out.put(e, o);
+    return out;
 }
 
-private Tok markHolder(Tok caster, String spell) {
-    for (Tok o : tokens) {
-        CombatSpells.Effect e = CombatSpells.find(o.effects, spell);
-        if (e != null && e.caster.equals(caster.uid)) return o;
-    }
-    return null;
-}
-
+// Hex / Hunter's Mark: when the marked creature drops to 0 HP, a Bonus Action on a later turn moves the mark
 private boolean canMoveMark(Tok t, String spell) {
-    if (!spell.equals(t.concentration) || bonusAttackUsed) return false;
-    Tok h = markHolder(t, spell);
-    return h == null || h.down();
+    if (!spell.equals(t.concentration) || bonusAttackUsed || t != active) return false;
+    for (Map.Entry<CombatSpells.Effect, Tok> en : marksBy(t).entrySet()) if (en.getKey().spell.equals(spell)) return en.getValue().down();
+    return true; // concentrating but the mark is gone (its target left the map)
 }
 
 private void startMoveMark(Tok t, String spell) {
     CombatSpells.Known k = knownSpell(t, spell);
-    CombatSpells.Def def = CombatSpells.def(spell);
-    if (k == null || def == null) return;
-    CombatSpells.Effect old = markOf(t, spell);
-    SpellCast c = newCast(t, k, def, new SlotPick(old != null ? old.slot : 1, false, true));
+    if (k == null) return;
+    CombatSpells.Effect old = null;
+    for (CombatSpells.Effect e : marksBy(t).keySet()) if (e.spell.equals(spell)) old = e;
+    SpellCast c = newCast(t, k, null, new SlotPick(old != null ? old.slot : 1, false, true));
     c.spent = true;
     c.choice = old != null ? old.choice : "";
-    c.refund = null;
-    c.areaWhy = "move";
+    c.moveMark = true;
     spellTargeting = c;
-    setStatus("Move " + spell + ": click a creature within " + def.range + " ft. (Bonus Action). Esc to cancel.");
+    setStatus("Move " + spell + ": click an enemy within " + c.def.range + " ft. (Bonus Action). Esc to cancel.");
+    refreshSide();
+    board.repaint();
+}
+
+// Produce Flame: hurl the flame (a Magic action): ranged spell attack, then the flame is gone
+private void hurlProduceFlame(Tok t) {
+    CombatSpells.Effect pf = CombatSpells.find(t.effects, "Produce Flame");
+    CombatSpells.Known k = knownSpell(t, "Produce Flame");
+    if (pf == null || k == null || actionUsed) return;
+    CombatSpells.Def hurl = new CombatSpells.Def("Produce Flame", CombatSpells.ATTACK, CombatSpells.ONE).range(60).dmg(1, 8, 1, "Fire")
+            .how("Hurl the flame: a ranged spell attack for the Fire damage. The spell ends.");
+    hurl.level = 0;
+    SpellCast c = newCast(t, k, hurl, new SlotPick(0, false, false, true));
+    c.spent = true;
+    boolean prev = attackAction;
+    actionUsed = true;
+    attackAction = false;
+    c.refund = () -> {
+        actionUsed = false;
+        attackAction = prev;
+    };
+    spellTargeting = c;
+    setStatus("Hurl Produce Flame: click a creature within 60 ft. Esc to cancel.");
     refreshSide();
     board.repaint();
 }
 
 // ---------------- picker & casting flow ----------------
-private void showSpellPicker(Component anchor, Tok t) {
-    List<CombatSpells.Known> known = CombatSpells.castable(t.source);
+private void showSpellPicker(Tok t) {
+    List<CombatSpells.Known> known = spellsOf(t);
     JPanel list = new JPanel();
     list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
     list.setOpaque(false);
     Runnable[] close = new Runnable[1];
-    JLabel intro = new JLabel("<html><div style='width:520px'>Level 1 spells " + App.escapeHtml(t.label) + " has prepared. "
-            + "Slots left this encounter: " + App.escapeHtml(slotsText(t)) + ". On a turn you can expend only one spell slot.</div></html>");
+    // header: slots left and casts without a slot
+    JPanel slotRow = slotPipsRow(t, false);
+    if (slotRow.getComponentCount() > 0) {
+        slotRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        list.add(slotRow);
+    }
+    String free = freeCastsText(t);
+    JLabel intro = new JLabel("<html><div style='width:580px'>" + (free.isEmpty() ? "" : App.escapeHtml("Without a slot: " + free) + "<br>")
+            + "<span style='color:#77736e'>Spell slots are this encounter's copy (the character sheet isn't changed). On a turn you can expend only one spell slot. "
+            + "<span style='color:#3fa34d'>■</span> Action <span style='color:#e08a2e'>■</span> Bonus Action <span style='color:#9b6bdf'>■</span> Reaction</span></div></html>");
     intro.setForeground(App.TEXT_MUTED);
     intro.setFont(new Font("SansSerif", Font.PLAIN, 12));
     intro.setAlignmentX(Component.LEFT_ALIGNMENT);
     list.add(intro);
     list.add(Box.createRigidArea(new Dimension(0, 8)));
-    if (known.isEmpty()) list.add(muted("No level 1 spells prepared. Prepare spells on the character sheet's Spells tab."));
+    if (known.isEmpty()) list.add(muted(PC.equals(t.kind) ? "No spells prepared. Prepare spells on the character sheet's Spells tab."
+            : "This NPC has no spells. Add them in its stat block (Assets → NPCs → Spellcasting)."));
+    int lastLevel = -1;
     for (CombatSpells.Known k : known) {
-        CombatSpells.Def def = CombatSpells.def(k.name);
+        if (k.spell.level != lastLevel) {
+            lastLevel = k.spell.level;
+            JLabel cap = sectionCaption(lastLevel == 0 ? "CANTRIPS · AT WILL" : "LEVEL " + lastLevel + " SPELLS");
+            cap.setBorder(new EmptyBorder(8, 0, 4, 0));
+            list.add(cap);
+        }
+        CombatSpells.Def def = defOf(k);
         String time = k.spell.castingTime;
         Color c = "Bonus Action".equals(time) ? BONUS_COLOR : "Reaction".equals(time) ? REACTION_COLOR : "Action".equals(time) ? ACTION_COLOR : App.TEXT_MUTED;
-        String why = def != null && CombatSpells.SMITE.equals(def.mode) ? "Cast from the attack roll right after a weapon hit."
-                : "Shield".equals(k.name) ? "Offered automatically in the attack roll when " + t.label + " is hit."
+        boolean smite = CombatSpells.SMITE.equals(def.mode);
+        String why = "Shield".equals(k.name) ? "Offered automatically in the attack roll when " + t.label + " is hit."
                 : "Hellish Rebuke".equals(k.name) ? "Offered automatically when a creature " + t.label + " can see damages it."
                 : castBlocker(t, k, def);
-        JButton b = App.overlayButton("", false);
+        boolean ready = readySmite != null && readySmite.caster == t && readySmite.known.name.equals(k.name);
+        JButton b = economyButton("", c, why.isEmpty() ? (smite ? "Ready it: it's cast on your next weapon hit this turn" : "Cast " + k.name) : why);
         b.setHorizontalAlignment(SwingConstants.LEFT);
         String hex = String.format("#%02x%02x%02x", c.getRed(), c.getGreen(), c.getBlue());
+        String uses = k.atWill ? "at will" : !k.freeKey.isEmpty() && !k.slots ? t.freeCasts.getOrDefault(k.freeKey, 0) + " left" : "";
         b.setText("<html><b>" + App.escapeHtml(k.name) + "</b>  <span style='color:" + hex + "'>" + App.escapeHtml(time) + "</span>"
-                + (k.spell.concentration ? "  <span style='color:#d4af37'>· Concentration</span>" : "")
+                + (k.spell.concentration ? "  <span style='color:#d4af37'>◆ Concentration</span>" : "")
+                + (uses.isEmpty() ? "" : "  <span style='color:#7cd38a'>" + uses + "</span>")
+                + (ready ? "  <span style='color:#e08a2e'>⚡ READIED</span>" : "")
                 + "  <span style='color:#aaa5a0'>· " + App.escapeHtml(k.spell.range) + " · " + App.escapeHtml(k.source) + "</span>"
-                + "<br><span style='color:#aaa5a0'>" + App.escapeHtml(def == null ? k.spell.description : def.how) + "</span>"
-                + (why.isEmpty() ? "" : "<br><span style='color:#dc3c3c'>" + App.escapeHtml(why) + "</span>") + "</html>");
+                + "<br><span style='color:#cfcac2'>" + App.escapeHtml(def.how) + "</span>"
+                + (why.isEmpty() ? (smite ? "<br><span style='color:#e08a2e'>Click to ready it for your next hit with " + App.escapeHtml(smiteNeeds(def)) + " (or pick it in the attack roll).</span>" : "")
+                : "<br><span style='color:#dc3c3c'>" + App.escapeHtml(why) + "</span>") + "</html>");
         b.setAlignmentX(Component.LEFT_ALIGNMENT);
-        b.setMaximumSize(new Dimension(560, 90));
+        b.setMaximumSize(new Dimension(600, 100));
         b.setEnabled(why.isEmpty());
         b.addActionListener(e -> {
             close[0].run();
-            startCast(anchor, t, k, def);
+            startCast(t, k, def);
         });
         JPanel row = new JPanel(new BorderLayout(6, 0));
         row.setOpaque(false);
         row.setAlignmentX(Component.LEFT_ALIGNMENT);
-        row.setMaximumSize(new Dimension(600, 92));
+        row.setMaximumSize(new Dimension(640, 102));
         row.add(b, BorderLayout.CENTER);
         JButton info = Tokens.smallButton("i", "Spell details");
         info.addActionListener(e -> App.showSpellOverlay(info, k.spell, k.name, k.source, false));
@@ -3747,47 +4045,134 @@ private void showSpellPicker(Component anchor, Tok t) {
     sp.setOpaque(false);
     sp.getViewport().setOpaque(false);
     sp.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-    sp.setPreferredSize(new Dimension(640, Math.min(520, list.getPreferredSize().height + 12)));
-    close[0] = App.showSheetOverlay(anchor, t.label + ": Cast a Spell", sp, null);
+    sp.getVerticalScrollBar().setUnitIncrement(16);
+    sp.setPreferredSize(new Dimension(680, Math.min(560, list.getPreferredSize().height + 12)));
+    close[0] = App.showSheetOverlay(board, t.label + ": Cast a Spell", sp, null);
+}
+
+// Slot pips (gold per level, purple Pact Magic), clickable to adjust when `editable`
+private JPanel slotPipsRow(Tok t, boolean editable) {
+    JPanel pips = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
+    pips.setOpaque(false);
+    int[] max = maxSlotsOf(t);
+    for (int i = 0; i < 10; i++) {
+        if (max[i] <= 0) continue;
+        final int idx = i;
+        String lbl = i < 9 ? SpellData.ordinal(i + 1).toUpperCase() : "PACT " + CombatSpells.pactLevel(t.source);
+        Pips p = new Pips(lbl, i < 9 ? App.GOLD : PACT_COLOR, max[i], t.slots[i], t.slots[i] + " left");
+        p.setPreferredSize(new Dimension(Math.max(64, max[i] * 19 + 14), 48));
+        p.setToolTipText((i < 9 ? "Level " + (i + 1) + " slots" : "Pact Magic slots") + ": " + t.slots[i] + " of " + max[i] + " left this encounter." + (editable ? " Click to adjust." : ""));
+        if (editable) App.clickable(p, () -> showSlotEditor(p, t, idx));
+        pips.add(p);
+    }
+    return pips;
+}
+
+private String freeCastsText(Tok t) {
+    List<String> fc = new ArrayList<>();
+    for (Map.Entry<String, Integer> en : t.freeCasts.entrySet()) fc.add(en.getKey() + " ×" + en.getValue());
+    return String.join(", ", fc);
 }
 
 private String slotsText(Tok t) {
     List<String> p = new ArrayList<>();
-    int[] max = CombatSpells.maxSlots(t.source);
+    int[] max = maxSlotsOf(t);
     for (int i = 0; i < 9; i++) if (max[i] > 0) p.add(SpellData.ordinal(i + 1) + " " + t.slots[i] + "/" + max[i]);
     if (max[9] > 0) p.add("Pact (" + SpellData.ordinal(CombatSpells.pactLevel(t.source)) + ") " + t.slots[9] + "/" + max[9]);
     for (Map.Entry<String, Integer> en : t.freeCasts.entrySet()) if (en.getValue() > 0) p.add(en.getKey() + " ×" + en.getValue() + " free");
     return p.isEmpty() ? "none" : String.join(", ", p);
 }
 
-// Choice (damage type, command word, ability) and slot, then targets
-private void startCast(Component anchor, Tok t, CombatSpells.Known k, CombatSpells.Def def) {
-    Runnable pickSlot = () -> chooseSlot(anchor, t, k, def, pick -> {
+// Choice (damage type, command word, ability), slot, then targets. Smites are readied instead; True Strike picks a weapon.
+private void startCast(Tok t, CombatSpells.Known k, CombatSpells.Def def) {
+    java.util.function.Consumer<String> withChoice = choice -> chooseSlot(t, k, pick -> {
         SpellCast c = newCast(t, k, def, pick);
-        c.choice = pendingChoice;
+        c.choice = choice;
+        if (CombatSpells.SMITE.equals(def.mode)) {
+            readySmite = c;
+            setStatus(k.name + " is readied: it's cast (and its slot spent) on " + t.label + "'s next hit with " + smiteNeeds(def) + " this turn. Make an attack.");
+            refreshAll();
+            if (canMainAttack() || canBonusAttack(t)) showAttackPicker(board, t);
+            return;
+        }
+        if ("True Strike".equals(def.name)) {
+            chooseTrueStrikeWeapon(c);
+            return;
+        }
         beginSpellTargeting(c);
     });
-    pendingChoice = "";
-    if (def.choices == null) {
-        pickSlot.run();
+    String[] choices = def.choices;
+    if ("Shillelagh".equals(def.name)) choices = new String[]{"Bludgeoning", "Force"};
+    if (choices == null) {
+        withChoice.accept("");
         return;
     }
     JPanel body = new JPanel(new GridLayout(0, 3, 6, 6));
     body.setOpaque(false);
     Runnable[] close = new Runnable[1];
-    for (String ch : def.choices) {
-        JButton b = Tokens.smallButton(ch, def.choiceLabel + ": " + ch);
+    for (String ch : choices) {
+        JButton b = Tokens.smallButton(ch, (def.choiceLabel.isEmpty() ? "Damage type" : def.choiceLabel) + ": " + ch);
         b.addActionListener(e -> {
             close[0].run();
-            pendingChoice = ch;
-            pickSlot.run();
+            withChoice.accept(ch);
         });
         body.add(b);
     }
-    close[0] = App.showSheetOverlay(anchor, k.name + ": " + def.choiceLabel, body, null);
+    close[0] = App.showSheetOverlay(board, k.name + ": " + (def.choiceLabel.isEmpty() ? "Damage type" : def.choiceLabel), body, null);
 }
 
-private String pendingChoice = "";
+// True Strike: pick the weapon (and Radiant or its normal damage type), then a target as for an attack
+private void chooseTrueStrikeWeapon(SpellCast c) {
+    Tok t = c.caster;
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    body.add(mutedHtml("<html><div style='width:420px'>Make one attack with a weapon you're holding, using your spellcasting ability (" + signedInt(c.mod)
+            + ") instead of STR or DEX." + (c.scale > 0 ? " The hit adds " + c.scale + "d6 Radiant damage." : "") + "</div></html>"));
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    Runnable[] close = new Runnable[1];
+    int n = 0;
+    for (WeaponRules.Attack a : t.attacks) {
+        if (a.weapon == null || a.offHand) continue;
+        for (String type : new String[]{a.damageType, "Radiant"}) {
+            if ("Radiant".equals(type) && "Radiant".equalsIgnoreCase(a.damageType) && n > 0) continue;
+            WeaponRules.Attack b = new WeaponRules.Attack();
+            b.name = "True Strike (" + a.name + ")";
+            b.weapon = a.weapon;
+            b.melee = a.melee;
+            b.reach = a.reach;
+            b.rangeNormal = a.rangeNormal;
+            b.rangeLong = a.rangeLong;
+            b.ammo = a.ammo;
+            b.mastery = a.mastery;
+            b.diceCount = a.diceCount;
+            b.diceSides = a.diceSides;
+            b.toHit = a.toHit - a.abilityMod + c.mod;
+            b.damageBonus = a.damageBonus - a.abilityMod + c.mod;
+            b.abilityMod = c.mod;
+            b.damageType = type;
+            b.heavyPenalty = false;
+            JButton btn = economyButton(a.name + " · " + WeaponRules.signed(b.toHit) + " · " + b.damageText(), ACTION_COLOR, "Attack with " + a.name + " (" + type + ")");
+            btn.setAlignmentX(Component.LEFT_ALIGNMENT);
+            btn.setMaximumSize(new Dimension(440, 36));
+            btn.addActionListener(e -> {
+                close[0].run();
+                c.weaponAtk = b;
+                c.refund = spendSpell(t, c.known, c.pick);
+                c.spent = true;
+                targetingCast = c;
+                startTargeting(b);
+            });
+            body.add(btn);
+            body.add(Box.createRigidArea(new Dimension(0, 5)));
+            n++;
+        }
+    }
+    if (n == 0) body.add(muted(t.label + " isn't holding a weapon (Use Item → Hands)."));
+    close[0] = App.showSheetOverlay(board, "True Strike: Weapon", body, null);
+}
+
+private SpellCast targetingCast; // True Strike: the spell behind the weapon attack waiting for a target
 
 private void beginSpellTargeting(SpellCast c) {
     if (moveMode) setMoveMode(false);
@@ -3816,23 +4201,30 @@ private void beginSpellTargeting(SpellCast c) {
     board.repaint();
 }
 
+private int spellRange(SpellCast c) {
+    if ("Spare the Dying".equals(c.def.name)) return 15 << c.scale; // doubles at levels 5, 11 and 17
+    return c.def.meleeAttack ? c.def.reach : c.def.range;
+}
+
 private String spellPrompt(SpellCast c) {
     CombatSpells.Def d = c.def;
     if (d.area()) {
         switch (d.target) {
-            case CombatSpells.CONE: return c.def.name + ": point the " + d.size + "-ft. Cone with the mouse, click to cast. Esc to cancel.";
-            case CombatSpells.CUBE_SELF: return c.def.name + ": point to the side the " + d.size + "-ft. Cube comes out of, click to cast. Esc to cancel.";
-            case CombatSpells.SPHERE: return c.def.name + ": place the " + d.sizeAt(c.slot) + "-ft.-radius Sphere within " + d.range + " ft., click to cast. Esc to cancel.";
-            default: return c.def.name + ": place the " + d.size + "-ft. area within " + d.range + " ft., click to cast. Esc to cancel.";
+            case CombatSpells.CONE: return d.name + ": point the " + d.size + "-ft. Cone with the mouse, click to cast. Esc to cancel.";
+            case CombatSpells.CUBE_SELF: return d.name + ": point to the side the " + d.size + "-ft. Cube comes out of, click to cast. Esc to cancel.";
+            case CombatSpells.SPHERE: return d.name + ": place the " + d.sizeAt(c.scale) + "-ft.-radius Sphere within " + d.range + " ft., click to cast. Esc to cancel.";
+            default: return d.name + ": place the " + d.size + "-ft. area within " + d.range + " ft., click to cast. Esc to cancel.";
         }
     }
+    if (c.moveMark) return "Move " + d.name + ": click an enemy within " + d.range + " ft. (Bonus Action). Esc to cancel.";
     if (c.leapFrom != null) return "Chromatic Orb leaps: click a creature within 30 ft. of " + c.leapFrom.label + " (" + c.leapsLeft + " leap" + (c.leapsLeft == 1 ? "" : "s") + " left). Esc to stop.";
-    if (CombatSpells.ATTACK.equals(d.mode) && c.blastsLeft > 0 && d.targetsAt(c.slot) > 1)
-        return d.name + ": click the target for blast " + c.blastNo + " of " + d.targetsAt(c.slot) + ". Esc to cancel.";
-    int max = d.targetsAt(c.slot);
+    int total = d.targetsAt(c.scale);
+    if (CombatSpells.ATTACK.equals(d.mode) && total > 1)
+        return d.name + ": click the target for " + ("Eldritch Blast".equals(d.name) ? "beam" : "blast") + " " + c.blastNo + " of " + total + ". Esc to stop.";
     if (CombatSpells.MULTI.equals(d.target))
-        return d.name + ": click up to " + max + " creature" + (max == 1 ? "" : "s") + " (" + c.picked.size() + " picked), then Cast in the side panel. Esc to cancel.";
-    return d.name + ": click a creature within " + (d.range <= 5 ? "reach (Touch)" : d.range + " ft.") + ". Esc to cancel.";
+        return d.name + ": click up to " + total + " creature" + (total == 1 ? "" : "s") + " (" + c.picked.size() + " picked), then Cast in the side panel. Esc to cancel.";
+    int r = spellRange(c);
+    return d.name + ": click " + (d.hostile ? "an enemy" : "a creature") + " within " + (r <= 5 ? "reach (Touch)" : r + " ft.") + ". Esc to cancel.";
 }
 
 // Why `o` can't be targeted by this casting ("" = it can)
@@ -3840,13 +4232,12 @@ private String spellTargetProblem(SpellCast c, Tok o) {
     CombatSpells.Def d = c.def;
     if (OBJ.equals(o.kind)) return "Spells here target creatures.";
     Tok from = c.leapFrom != null ? c.leapFrom : c.caster;
-    int range = c.leapFrom != null ? 30 : Math.max(5, d.range); // Touch = an adjacent creature (5 ft.)
+    int range = c.leapFrom != null ? 30 : Math.max(5, spellRange(c)); // Touch = an adjacent creature (5 ft.)
     boolean self = o == c.caster;
     if (self && d.hostile) return "Pick another creature.";
-    if (self && ("Hex".equals(d.name) || "Hunter's Mark".equals(d.name) || "Compelled Duel".equals(d.name))) return "Pick another creature.";
     if (c.leapFrom != null && (o == c.leapFrom || c.struck.contains(o))) return "Each creature can be targeted only once by this casting.";
     int dist = self ? 0 : distanceFt(from, o);
-    if (dist > range) return "Out of range (" + dist + " ft.; " + (d.range <= 5 && c.leapFrom == null ? "Touch" : range + " ft.") + ").";
+    if (dist > range) return "Out of range (" + dist + " ft.; " + (range <= 5 && c.leapFrom == null ? "Touch" : range + " ft.") + ").";
     if (!self && lineOfSight(from, o)[0] == 1) return "No line of sight: a wall or closed door is in the way.";
     if (!self && d.sight && hasCond(c.caster, "Blinded")) return "You're Blinded: this spell needs a creature you can see.";
     if (!self && d.sight && visibleConditions(o).stream().anyMatch("Invisible"::equalsIgnoreCase)) return o.label + " is Invisible: you can't see it.";
@@ -3855,7 +4246,7 @@ private String spellTargetProblem(SpellCast c, Tok o) {
     if (d.onlyTypes != null && !CombatSpells.isAny(type, d.onlyTypes)) return d.name + " only affects " + String.join(" / ", d.onlyTypes) + "s (this is a" + (type.isEmpty() ? " creature" : " " + type) + ").";
     if (d.notTypes != null && CombatSpells.isAny(type, d.notTypes)) return d.name + " can't affect " + type + "s.";
     if ("Mage Armor".equals(d.name) && wearsArmor(o)) return o.label + " is wearing armor.";
-    if (CombatSpells.ATTACK.equals(d.mode) && self) return "Pick another creature.";
+    if ("Spare the Dying".equals(d.name) && !o.down()) return o.label + " isn't at 0 Hit Points.";
     return "";
 }
 
@@ -3872,21 +4263,21 @@ private void spellHover(double x, double y) {
     switch (d.target) {
         case CombatSpells.CONE: {
             double ang = Math.atan2(y - my, x - mx);
-            c.areaCells = CombatSpells.cone(t.x, t.y, t.size, ang, d.size, w, h);
+            c.areaCells = CombatSpells.cone(t.x, t.y, t.size, ang, d.sizeAt(c.scale), w, h);
             c.ox = mx;
             c.oy = my;
             break;
         }
         case CombatSpells.CUBE_SELF: {
             int dir = CombatSpells.dir8(Math.atan2(y - my, x - mx));
-            c.areaCells = CombatSpells.cubeFromSelf(t.x, t.y, t.size, dir, d.size, w, h);
+            c.areaCells = CombatSpells.cubeFromSelf(t.x, t.y, t.size, dir, d.sizeAt(c.scale), w, h);
             c.ox = mx;
             c.oy = my;
             break;
         }
         case CombatSpells.SPHERE: {
             double px = Math.round(x), py = Math.round(y);
-            c.areaCells = CombatSpells.sphere(px, py, d.sizeAt(c.slot), w, h);
+            c.areaCells = CombatSpells.sphere(px, py, d.sizeAt(c.scale), w, h);
             c.ox = px;
             c.oy = py;
             double gx = Math.max(0, Math.max(t.x - px, px - (t.x + t.size))), gy = Math.max(0, Math.max(t.y - py, py - (t.y + t.size)));
@@ -3896,14 +4287,14 @@ private void spellHover(double x, double y) {
             break;
         }
         default: { // SQUARE
-            int n = Math.max(1, d.size / 5);
+            int n = Math.max(1, d.sizeAt(c.scale) / 5);
             int x0 = (int) Math.floor(x - n / 2.0 + (n % 2 == 1 ? 0.5 : 0)), y0 = (int) Math.floor(y - n / 2.0 + (n % 2 == 1 ? 0.5 : 0));
             x0 = Math.max(0, Math.min(w - n, x0));
             y0 = Math.max(0, Math.min(h - n, y0));
-            c.areaCells = CombatSpells.square(x0, y0, d.size, w, h);
+            c.areaCells = CombatSpells.square(x0, y0, n * 5, w, h);
             c.ox = x0 + n / 2.0;
             c.oy = y0 + n / 2.0;
-            int gx = Math.max(0, Math.max(x0 - (t.x + t.size - 1), t.x - (x0 + n - 1))) , gy = Math.max(0, Math.max(y0 - (t.y + t.size - 1), t.y - (y0 + n - 1)));
+            int gx = Math.max(0, Math.max(x0 - (t.x + t.size - 1), t.x - (x0 + n - 1))), gy = Math.max(0, Math.max(y0 - (t.y + t.size - 1), t.y - (y0 + n - 1)));
             int dist = Math.max(gx, gy) * 5;
             if (dist > d.range) { c.areaOk = false; c.areaWhy = "Out of range (" + dist + " ft.; " + d.range + " ft.)."; }
             else if (Lighting.sight(model, mx, my, c.ox, c.oy)[0] == 1) { c.areaOk = false; c.areaWhy = "No line of sight to that area."; }
@@ -3948,12 +4339,18 @@ private void spellClick(double x, double y, Tok clicked) {
         setStatus(clicked.label + ": " + why);
         return;
     }
-    if ("move".equals(c.areaWhy)) { // moving Hex / Hunter's Mark
+    if (c.moveMark) { // moving Hex / Hunter's Mark (or a homebrew mark)
         spellTargeting = null;
-        CombatSpells.Effect old = markOf(c.caster, c.def.name);
-        Tok holder = markHolder(c.caster, c.def.name);
+        CombatSpells.Effect old = null;
+        Tok holder = null;
+        for (Map.Entry<CombatSpells.Effect, Tok> en : marksBy(c.caster).entrySet()) {
+            if (en.getKey().spell.equals(c.def.name)) {
+                old = en.getKey();
+                holder = en.getValue();
+            }
+        }
         if (old != null && holder != null) holder.effects.remove(old);
-        CombatSpells.Effect e = old != null ? old : effectFor(c, clicked);
+        CombatSpells.Effect e = old != null ? old : templateEffect(c, clicked);
         e.conc = true;
         clicked.effects.add(e);
         bonusAttackUsed = true;
@@ -3964,8 +4361,8 @@ private void spellClick(double x, double y, Tok clicked) {
     }
     if (CombatSpells.MULTI.equals(c.def.target)) {
         if (c.picked.contains(clicked)) c.picked.remove(clicked);
-        else if (c.picked.size() < c.def.targetsAt(c.slot)) c.picked.add(clicked);
-        if (c.picked.size() >= c.def.targetsAt(c.slot)) {
+        else if (c.picked.size() < c.def.targetsAt(c.scale)) c.picked.add(clicked);
+        if (c.picked.size() >= c.def.targetsAt(c.scale)) {
             resolveSpell(c, new ArrayList<>(c.picked));
             return;
         }
@@ -3981,10 +4378,10 @@ private void spellClick(double x, double y, Tok clicked) {
 private void resolveSpell(SpellCast c, List<Tok> targets) {
     spellTargeting = null;
     if (!c.spent) {
-        c.refund = spendSpell(c.caster, c.known, c.def, c.pick);
+        c.refund = spendSpell(c.caster, c.known, c.pick);
         c.spent = true;
     }
-    if (c.def.area() && c.ox == 0 && c.oy == 0) {
+    if (!c.def.area() || (c.ox == 0 && c.oy == 0)) {
         c.ox = c.caster.x + c.caster.size / 2.0;
         c.oy = c.caster.y + c.caster.size / 2.0;
     }
@@ -3994,13 +4391,17 @@ private void resolveSpell(SpellCast c, List<Tok> targets) {
             spellAttack(c, targets.isEmpty() ? null : targets.get(0));
             break;
         case CombatSpells.SAVE:
-            if (!c.def.area()) {
-                c.ox = c.caster.x + c.caster.size / 2.0;
-                c.oy = c.caster.y + c.caster.size / 2.0;
-            }
+        case CombatSpells.AUTO: {
             makeZone(c);
-            resolveSave(c, targets, c.ox, c.oy, null);
+            SaveSpec s = null;
+            if ("Toll the Dead".equals(c.def.name) && !targets.isEmpty() && targets.get(0).hp < targets.get(0).maxHp) {
+                s = saveSpecOf(c);
+                s.sides = 12;
+                s.note = targets.get(0).label + " is missing Hit Points: d12s instead of d8s.";
+            }
+            resolveSave(c, targets, c.ox, c.oy, s);
             break;
+        }
         case CombatSpells.DARTS:
             resolveDarts(c, targets);
             break;
@@ -4023,7 +4424,7 @@ private void makeZone(SpellCast c) {
     z.caster = c.caster.uid;
     z.cells = new LinkedHashSet<>(c.areaCells);
     z.conc = c.spell.concentration;
-    z.casterStarts = "Grease".equals(n) ? 10 : "Entangle".equals(n) ? 10 : -1; // Fog Cloud: 1 hour (until concentration ends)
+    z.casterStarts = "Fog Cloud".equals(n) ? -1 : 10; // Fog Cloud: 1 hour (until concentration ends)
     zones.add(z);
     if (moveMode) computeReach();
 }
@@ -4032,16 +4433,19 @@ private void makeZone(SpellCast c) {
 private WeaponRules.Attack spellAttackFor(SpellCast c) {
     WeaponRules.Attack a = new WeaponRules.Attack();
     CombatSpells.Def d = c.def;
-    int total = d.targetsAt(c.slot);
-    a.name = d.name + (total > 1 ? " (blast " + c.blastNo + " of " + total + ")" : c.leapFrom != null ? " (leap)" : "");
+    int total = d.targetsAt(c.scale);
+    a.name = d.name + (total > 1 ? " (" + ("Eldritch Blast".equals(d.name) ? "beam " : "blast ") + c.blastNo + " of " + total + ")" : c.leapFrom != null ? " (leap)" : "");
     a.toHit = c.atkBonus;
-    a.diceCount = d.diceAt(c.slot);
+    // Eldritch Blast and Spellfire Flare scale by beams / blasts, not dice
+    a.diceCount = d.targetsPerLevel > 0 && CombatSpells.ATTACK.equals(d.mode) ? d.dice : d.diceAt(c.scale);
     a.diceSides = d.sides;
+    a.damageBonus = d.bonusAt(c.scale) + (d.addMod ? c.mod : 0);
     a.damageType = d.type.isEmpty() ? (c.choice.isEmpty() ? "Force" : c.choice) : d.type;
-    a.melee = false;
-    a.ranged = true;
-    a.rangeNormal = d.range;
-    a.rangeLong = d.range; // spells have no long range
+    a.melee = d.meleeAttack;
+    a.ranged = !d.meleeAttack;
+    a.reach = d.meleeAttack ? d.reach : 5;
+    a.rangeNormal = d.meleeAttack ? 0 : d.range;
+    a.rangeLong = a.rangeNormal; // spells have no long range
     a.abilityMod = c.mod;
     a.source = c.source;
     return a;
@@ -4061,24 +4465,23 @@ private void spellAttack(SpellCast c, Tok target) {
 private void afterSpellAttack(SpellCast c, Tok att, Tok target, boolean hit, boolean made, int[] mainDice) {
     String n = c.def.name;
     c.refund = null; // the spell is cast: later blasts / leaps can't refund its slot
+    if ("Produce Flame".equals(n)) {
+        CombatSpells.Effect pf = CombatSpells.find(att.effects, "Produce Flame");
+        if (pf != null) removeEffect(att, pf);
+    }
+    boolean multi = CombatSpells.ATTACK.equals(c.def.mode) && c.def.targetsAt(c.scale) > 1;
+    if (multi && --c.blastsLeft > 0) { // more beams / blasts: pick the next target
+        c.blastNo++;
+        spellTargeting = c;
+        setStatus(spellPrompt(c));
+    }
     if (!made) {
         if ("Witch Bolt".equals(n)) endConcentration(att, "the bolt was lost");
-        if ("Spellfire Flare".equals(n) && --c.blastsLeft > 0) { // a lost blast doesn't stop the others
-            c.blastNo++;
-            spellTargeting = c;
-            setStatus(spellPrompt(c));
-        }
         return;
     }
     if (hit && "Guiding Bolt".equals(n)) {
         CombatSpells.Effect e = effectFor(c, target);
         e.casterEnds = c.ownTurn ? 2 : 1; // until the end of your next turn
-        addEffect(target, e);
-    }
-    if (hit && "Ray of Sickness".equals(n)) {
-        CombatSpells.Effect e = effectFor(c, target);
-        e.casterEnds = c.ownTurn ? 2 : 1;
-        e.conds.add("Poisoned");
         addEffect(target, e);
     }
     if ("Witch Bolt".equals(n)) {
@@ -4089,6 +4492,11 @@ private void afterSpellAttack(SpellCast c, Tok att, Tok target, boolean hit, boo
             addEffect(target, e);
         } else endConcentration(att, "the bolt missed");
     }
+    if (hit && "Thorn Whip".equals(n) && target.size <= 2 && !target.down()) {
+        int moved = pushAway(att, target, 10, true);
+        if (moved > 0) note(target.label + " is pulled " + moved + " ft toward " + att.label + ".");
+    }
+    if (hit && c.def.lasting() && !target.down() && !"Witch Bolt".equals(n)) addEffect(target, templateEffect(c, target));
     if ("Ice Knife".equals(n)) {
         List<Tok> hitBy = new ArrayList<>();
         hitBy.add(target);
@@ -4096,7 +4504,7 @@ private void afterSpellAttack(SpellCast c, Tok att, Tok target, boolean hit, boo
         SaveSpec s = new SaveSpec();
         s.ability = "DEX";
         s.half = false;
-        s.count = 2 + (c.slot - 1);
+        s.count = 2 + c.scale;
         s.sides = 6;
         s.type = "Cold";
         s.title = "Ice Knife: Explosion";
@@ -4120,16 +4528,6 @@ private void afterSpellAttack(SpellCast c, Tok att, Tok target, boolean hit, boo
             }));
         }
     }
-    if ("Spellfire Flare".equals(n)) {
-        c.blastsLeft--;
-        c.blastNo++;
-        if (c.blastsLeft > 0) {
-            spellTargeting = c;
-            setStatus(spellPrompt(c));
-            refreshSide();
-            board.repaint();
-        }
-    }
 }
 
 // ---------------- saving-throw spells ----------------
@@ -4143,12 +4541,13 @@ private SaveSpec saveSpecOf(SpellCast c) {
     SaveSpec s = new SaveSpec();
     CombatSpells.Def d = c.def;
     s.title = d.name;
-    s.ability = d.save;
+    s.ability = CombatSpells.AUTO.equals(d.mode) ? "" : d.save;
     s.half = d.half;
-    s.count = CombatSpells.SMITE.equals(d.mode) && !"Hail of Thorns".equals(d.name) ? 0 : d.diceAt(c.slot);
+    boolean smiteNoDamage = CombatSpells.SMITE.equals(d.mode) && !"Hail of Thorns".equals(d.name) && !(d.custom && d.half);
+    s.count = smiteNoDamage ? 0 : d.diceAt(c.scale);
     s.sides = d.sides;
-    s.bonus = 0;
-    s.type = d.type;
+    s.bonus = smiteNoDamage ? 0 : d.bonusAt(c.scale) + (d.addMod ? c.mod : 0);
+    s.type = d.type.isEmpty() ? c.choice : d.type;
     s.note = d.how;
     return s;
 }
@@ -4156,6 +4555,7 @@ private SaveSpec saveSpecOf(SpellCast c) {
 private SaveSpec saveSpecNoDamage(SpellCast c) {
     SaveSpec s = saveSpecOf(c);
     s.count = 0;
+    s.bonus = 0;
     return s;
 }
 
@@ -4171,6 +4571,33 @@ private CombatSpells.Effect effectFor(SpellCast c, Tok target) {
     return e;
 }
 
+// The spell's lasting-effect template as an Effect on `target` (conditions, duration, AC / Speed, dice, marks...)
+private CombatSpells.Effect templateEffect(SpellCast c, Tok target) {
+    CombatSpells.Def d = c.def;
+    CombatSpells.Effect e = effectFor(c, target);
+    e.copyTemplate(d);
+    e.conds.addAll(d.conds);
+    switch (d.dur) {
+        case CombatSpells.DUR_CASTER_END: e.casterEnds = c.ownTurn ? 2 : 1; break;
+        case CombatSpells.DUR_CASTER_START: e.casterStarts = 1; break;
+        case CombatSpells.DUR_OWN_START: e.ownStarts = 1; break;
+        case CombatSpells.DUR_OWN_END: e.ownEnds = 1; break;
+        default: {
+            int r = roundsFor(c.spell.duration);
+            if (r > 0) e.casterStarts = r;
+            else if (r == 0 && !e.conc) e.casterEnds = c.ownTurn ? 2 : 1; // instantaneous spell with a lingering effect
+        }
+    }
+    if (d.endSave && !d.save.isEmpty()) e.endSave = d.save;
+    if (d.dotDice > 0) {
+        e.dotDice = d.dotDice;
+        e.dotSides = d.dotSides;
+        e.dotType = d.dotType;
+        if (d.dotSave && !d.save.isEmpty()) e.startSave = d.save;
+    }
+    return e;
+}
+
 // Saving throws for every target, one shared damage roll, then damage (half on a success where the spell says so)
 // and the spell's effect on each failure
 private void resolveSave(SpellCast c, List<Tok> targets, double ox, double oy, SaveSpec spec) {
@@ -4178,7 +4605,7 @@ private void resolveSave(SpellCast c, List<Tok> targets, double ox, double oy, S
     List<SaveRoll> rows = new ArrayList<>();
     for (Tok o : targets) {
         if (o.down() && s.count == 0) continue;
-        int cover = Lighting.sight(model, ox, oy, o.x + o.size / 2.0, o.y + o.size / 2.0)[1];
+        int cover = c.def.ignoreCover ? 0 : Lighting.sight(model, ox, oy, o.x + o.size / 2.0, o.y + o.size / 2.0)[1];
         boolean adv = false;
         List<String> why = new ArrayList<>();
         if ("Charm Person".equals(c.def.name) && o.team != c.caster.team) { adv = true; why.add("you're fighting it: Advantage"); }
@@ -4190,24 +4617,29 @@ private void resolveSave(SpellCast c, List<Tok> targets, double ox, double oy, S
             r.success = true;
             r.why.add("doesn't sleep");
         }
+        if ("Friends".equals(c.def.name) && o.team >= 0 && o.team != c.caster.team) {
+            r.autoSucceed = true;
+            r.success = true;
+            r.why.add("you're fighting it");
+        }
         if (c.def.choose) r.include = o.team < 0 || o.team != c.caster.team; // creatures of your choice: enemies preselected
         rows.add(r);
     }
     JPanel body = new JPanel();
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
-    JLabel head = new JLabel("<html><div style='width:520px'><b>" + App.escapeHtml(c.caster.label) + "</b> casts <b>" + App.escapeHtml(c.def.name) + "</b>"
-            + (c.slot > 1 ? " (level " + c.slot + ")" : "") + (s.title.equals(c.def.name) ? "" : ": " + App.escapeHtml(s.title))
-            + ". " + s.ability + " save DC " + c.dc + ".<br><span style='color:#aaa5a0'>" + App.escapeHtml(s.note) + "</span></div></html>");
+    boolean auto = s.ability.isEmpty();
+    JLabel head = new JLabel("<html><div style='width:540px'><b>" + App.escapeHtml(c.caster.label) + "</b> casts <b>" + App.escapeHtml(c.def.name) + "</b>"
+            + App.escapeHtml(c.levelText()) + (s.title.equals(c.def.name) ? "" : ": " + App.escapeHtml(s.title))
+            + (auto ? "." : ". " + s.ability + " save DC " + c.dc + ".") + "<br><span style='color:#aaa5a0'>" + App.escapeHtml(s.note) + "</span></div></html>");
     head.setForeground(App.TEXT_LIGHT);
     head.setFont(new Font("SansSerif", Font.PLAIN, 13));
     head.setAlignmentX(Component.LEFT_ALIGNMENT);
     App.clickable(head, () -> App.showSpellOverlay(head, c.spell, c.def.name, c.source, false));
     body.add(head);
     body.add(Box.createRigidArea(new Dimension(0, 10)));
-    body.add(sectionCaption("SAVING THROWS"));
+    body.add(sectionCaption(auto ? "TARGETS" : "SAVING THROWS"));
     if (rows.isEmpty()) body.add(muted("No creatures are affected." + (c.def.area() ? " The area still takes effect." : "")));
-    // damage
     int[][] dice = {new int[0]};
     int[] total = {-1};
     boolean[] own = {false};
@@ -4224,10 +4656,10 @@ private void resolveSave(SpellCast c, List<Tok> targets, double ox, double oy, S
         body.add(saveRow(r, true, () -> render[0].run()));
         body.add(Box.createRigidArea(new Dimension(0, 3)));
     }
-    if (s.count > 0) {
+    if (s.count > 0 || s.bonus > 0) {
         body.add(Box.createRigidArea(new Dimension(0, 8)));
-        body.add(sectionCaption("DAMAGE: " + s.count + "d" + s.sides + (s.bonus != 0 ? signedInt(s.bonus) : "") + " " + s.type.toUpperCase()
-                + (s.half ? " · half on a success" : " · none on a success")));
+        body.add(sectionCaption("DAMAGE: " + WeaponData.diceText(s.count, s.sides, s.bonus) + " " + s.type.toUpperCase()
+                + (auto ? "" : s.half ? " · half on a success" : " · none on a success")));
         dmgLbl.setFont(new Font("SansSerif", Font.BOLD, 14));
         dmgLbl.setForeground(App.TEXT_LIGHT);
         dmgLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -4257,12 +4689,11 @@ private void resolveSave(SpellCast c, List<Tok> targets, double ox, double oy, S
         body.add(dr);
         roll.run();
     }
-    // Shield against... nothing here (saves). Footer:
     body.add(Box.createRigidArea(new Dimension(0, 12)));
     JPanel foot = new JPanel(new BorderLayout());
     foot.setOpaque(false);
     foot.setAlignmentX(Component.LEFT_ALIGNMENT);
-    boolean mainCast = spec == null && c.refund != null;
+    boolean mainCast = c.refund != null && (spec == null || "Toll the Dead".equals(c.def.name));
     JButton undo = App.overlayButton("Undo Spell", false);
     undo.setToolTipText("Take the spell back: its slot and action are refunded");
     JButton done = App.overlayButton("Done: Apply", true);
@@ -4274,17 +4705,18 @@ private void resolveSave(SpellCast c, List<Tok> targets, double ox, double oy, S
     Runnable apply = () -> {
         if (finished[0]) return;
         finished[0] = true;
+        c.refund = null;
         List<String> out = new ArrayList<>();
         for (SaveRoll r : rows) {
             if (!r.include) continue;
             Tok o = r.who;
             boolean failed = !r.success;
-            String part = o.label + (failed ? " fails" : " saves");
-            if (s.count > 0 && total[0] > 0) {
+            String part = o.label + (r.noSave ? " is hit" : failed ? " fails" : " saves");
+            if ((s.count > 0 || s.bonus > 0) && total[0] > 0) {
                 int dmg = failed ? total[0] : s.half ? total[0] / 2 : 0;
                 int taken = DamageRules.apply(dmg, s.type, o.damageMods());
                 if (taken > 0) dealDamage(o, taken, c.caster, false);
-                part += " (" + taken + " " + s.type.toLowerCase() + (o.down() ? ", down" : "") + ")";
+                part += " (" + taken + (s.type.isEmpty() ? "" : " " + s.type.toLowerCase()) + (o.down() ? ", down" : "") + ")";
             }
             out.add(part);
             if (!o.down() || "Sleep".equals(c.def.name)) applySaveOutcome(c, o, failed, s);
@@ -4305,15 +4737,15 @@ private void resolveSave(SpellCast c, List<Tok> targets, double ox, double oy, S
     });
     done.addActionListener(e -> close[0].run());
     render[0] = () -> {
-        if (s.count > 0) {
+        if (s.count > 0 || s.bonus > 0) {
             StringBuilder sb = new StringBuilder();
             for (int v : dice[0]) sb.append(sb.length() == 0 ? "" : " + ").append(v);
             dmgLbl.setText(own[0] ? total[0] + " " + s.type.toLowerCase() + " damage (your roll)" : "[" + sb + "]" + (s.bonus != 0 ? " " + signedInt(s.bonus) : "") + " = " + total[0]
-                    + " " + s.type.toLowerCase() + (s.half ? "  ·  success: " + total[0] / 2 : ""));
+                    + " " + s.type.toLowerCase() + (s.half && !auto ? "  ·  on a success: " + total[0] / 2 : ""));
         }
         int n = 0;
         for (SaveRoll r : rows) if (r.include && !r.success) n++;
-        done.setText("Done: Apply (" + n + " failed)");
+        done.setText(auto ? "Done: Apply" : "Done: Apply (" + n + " failed)");
         body.revalidate();
         body.repaint();
     };
@@ -4324,33 +4756,22 @@ private void resolveSave(SpellCast c, List<Tok> targets, double ox, double oy, S
     sp.setOpaque(false);
     sp.getViewport().setOpaque(false);
     sp.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-    sp.setPreferredSize(new Dimension(660, Math.min(560, body.getPreferredSize().height + 16)));
+    sp.setPreferredSize(new Dimension(680, Math.min(560, body.getPreferredSize().height + 16)));
     close[0] = App.showSheetOverlay(board, s.title, sp, done, () -> {
         apply.run(); // closing applies what's shown (use Undo Spell to take it back)
         flushPrompts();
     });
 }
 
-// What failing (or passing) a spell's save does, beyond damage
+// What failing (or passing) a spell's save does, beyond damage. Named spells have their own rules; everything else
+// (homebrew included) applies the spell's lasting-effect template on a failure.
 private void applySaveOutcome(SpellCast c, Tok o, boolean failed, SaveSpec s) {
     String n = c.def.name;
     if ("Ice Knife: Explosion".equals(s.title)) return;
     CombatSpells.Effect e = effectFor(c, o);
     switch (n) {
-        case "Animal Friendship":
-        case "Charm Person":
-            if (failed) { e.conds.add("Charmed"); addEffect(o, e); }
-            break;
-        case "Arms of Hadar":
-            if (failed) { e.ownStarts = 1; addEffect(o, e); } // no Reactions until the start of its next turn
-            break;
-        case "Bane":
         case "Compelled Duel":
-        case "Faerie Fire":
             if (failed) { e.casterStarts = 10; addEffect(o, e); }
-            break;
-        case "Color Spray":
-            if (failed) { e.casterEnds = c.ownTurn ? 2 : 1; e.conds.add("Blinded"); addEffect(o, e); }
             break;
         case "Command":
             if (failed) { e.ownEnds = 1; addEffect(o, e); }
@@ -4360,9 +4781,6 @@ private void applySaveOutcome(SpellCast c, Tok o, boolean failed, SaveSpec s) {
                 o.reactionsUsed++;
                 note(o.label + " uses its Reaction to flee from " + c.caster.label + " as far as its Speed allows: drag its token away (this movement can provoke opportunity attacks).");
             } else if (failed) note(o.label + " has no Reaction left, so it doesn't flee.");
-            break;
-        case "Entangle":
-            if (failed) { e.casterStarts = 10; e.conds.add("Restrained"); addEffect(o, e); }
             break;
         case "Grease":
             if (failed && !hasCond(o, "Prone")) o.conditions.add("Prone");
@@ -4383,7 +4801,7 @@ private void applySaveOutcome(SpellCast c, Tok o, boolean failed, SaveSpec s) {
         case "Thunderwave":
         case "Thunderous Smite":
             if (failed) {
-                int moved = pushAway(c.caster, o, 10);
+                int moved = pushAway(c.caster, o, 10, false);
                 if ("Thunderous Smite".equals(n) && !hasCond(o, "Prone")) o.conditions.add("Prone");
                 note(o.label + " is pushed " + moved + " ft" + (moved < 10 ? " (blocked)" : "") + ("Thunderous Smite".equals(n) ? " and knocked Prone." : "."));
             }
@@ -4394,32 +4812,40 @@ private void applySaveOutcome(SpellCast c, Tok o, boolean failed, SaveSpec s) {
         case "Ensnaring Strike":
             if (failed) {
                 e.casterStarts = 10;
-                e.dotDice = c.def.diceAt(c.slot);
+                e.dotDice = c.def.diceAt(c.scale);
                 e.dotSides = 6;
                 e.dotType = "Piercing";
                 e.conds.add("Restrained");
                 addEffect(o, e);
+                note(o.label + " is Restrained by thorny vines (Ensnaring Strike): " + e.dotDice + "d6 Piercing at the start of each of its turns.");
             } else endConcentration(c.caster, o.label + " succeeded on the save");
             break;
         case "Wardaway":
             if (failed) { e.ownEnds = 1; addEffect(o, e); }
             break;
-        case "Insidious Rhythm":
-            if (failed) { e.casterStarts = 10; e.endSave = "WIS"; addEffect(o, e); }
+        case "Hellish Rebuke":
+        case "Hail of Thorns":
             break;
         default:
+            if (failed && c.def.lasting()) addEffect(o, templateEffect(c, o));
     }
 }
 
-// Pushes `t` straight away from `from` up to `feet`, stopping at walls, closed doors and other creatures
-private int pushAway(Tok from, Tok t, int feet) {
+// Pushes `t` straight away from `from` (or pulls it toward `from`) up to `feet`, stopping at walls, closed doors,
+// other creatures, and (pulling) when it reaches `from`
+private int pushAway(Tok from, Tok t, int feet, boolean toward) {
     double dx = (t.x + t.size / 2.0) - (from.x + from.size / 2.0), dy = (t.y + t.size / 2.0) - (from.y + from.size / 2.0);
+    if (toward) {
+        dx = -dx;
+        dy = -dy;
+    }
     int sx = Math.abs(dx) < 0.25 ? 0 : (int) Math.signum(dx), sy = Math.abs(dy) < 0.25 ? 0 : (int) Math.signum(dy);
     if (Math.abs(dx) > 2.4 * Math.abs(dy)) sy = 0;
     if (Math.abs(dy) > 2.4 * Math.abs(dx)) sx = 0;
     if (sx == 0 && sy == 0) return 0;
     int moved = 0;
     for (int i = 0; i < feet / 5; i++) {
+        if (toward && distanceFt(from, t) <= 5) break;
         int nx = t.x + sx, ny = t.y + sy;
         if (nx < 0 || ny < 0 || nx + t.size > model.width || ny + t.size > model.height) break;
         if (!canStep(t, t.x, t.y, sx, sy) || !fits(t, t.size, nx, ny, true)) break;
@@ -4435,13 +4861,14 @@ private int pushAway(Tok from, Tok t, int feet) {
 private void resolveHeal(SpellCast c, List<Tok> targets) {
     if (targets.isEmpty()) return;
     Tok o = targets.get(0);
-    int count = c.def.diceAt(c.slot);
+    int count = c.def.diceAt(c.scale);
+    int bonus = c.def.bonusAt(c.scale) + (c.def.addMod ? c.mod : 0);
     int[][] dice = {new int[0]};
     int[] total = {0};
     boolean[] own = {false}, finished = {false};
     Runnable roll = () -> {
         dice[0] = WeaponRules.rollDice(rng, count, c.def.sides, false);
-        int s = c.mod;
+        int s = bonus;
         for (int v : dice[0]) s += v;
         total[0] = Math.max(0, s);
         own[0] = false;
@@ -4451,8 +4878,8 @@ private void resolveHeal(SpellCast c, List<Tok> targets) {
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
     JLabel head = new JLabel("<html><div style='width:420px'><b>" + App.escapeHtml(c.caster.label) + "</b> casts <b>" + App.escapeHtml(c.def.name) + "</b>"
-            + (c.slot > 1 ? " (level " + c.slot + ")" : "") + " on <b>" + App.escapeHtml(o.label) + "</b> (" + o.hp + " / " + o.maxHp + " HP): "
-            + count + "d" + c.def.sides + " " + signedInt(c.mod) + " Hit Points.</div></html>");
+            + App.escapeHtml(c.levelText()) + " on <b>" + App.escapeHtml(o.label) + "</b> (" + o.hp + " / " + o.maxHp + " HP): "
+            + WeaponData.diceText(count, c.def.sides, bonus) + " Hit Points.</div></html>");
     head.setForeground(App.TEXT_LIGHT);
     head.setFont(new Font("SansSerif", Font.PLAIN, 13));
     head.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -4461,13 +4888,13 @@ private void resolveHeal(SpellCast c, List<Tok> targets) {
     body.add(Box.createRigidArea(new Dimension(0, 10)));
     JLabel res = new JLabel();
     res.setFont(new Font("SansSerif", Font.BOLD, 16));
-    res.setForeground(new Color(0x7C, 0xD3, 0x8A));
+    res.setForeground(FREE_COLOR);
     res.setAlignmentX(Component.LEFT_ALIGNMENT);
     body.add(res);
     Runnable render = () -> {
         StringBuilder sb = new StringBuilder();
         for (int v : dice[0]) sb.append(sb.length() == 0 ? "" : " + ").append(v);
-        res.setText(own[0] ? "Heals " + total[0] + " HP (your roll)" : "[" + sb + "] " + signedInt(c.mod) + " = heals " + total[0] + " HP");
+        res.setText(own[0] ? "Heals " + total[0] + " HP (your roll)" : "[" + sb + "] " + signedInt(bonus) + " = heals " + total[0] + " HP");
     };
     render.run();
     JPanel rr = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
@@ -4514,9 +4941,8 @@ private void resolveHeal(SpellCast c, List<Tok> targets) {
     close[0] = App.showSheetOverlay(board, c.def.name, body, done, () -> {
         if (!finished[0]) {
             finished[0] = true;
-            int before = o.hp;
-            healTok(o, total[0]);
-            setStatus(c.caster.label + " casts " + c.def.name + ": " + o.label + " regains " + (o.hp - before) + " HP (" + o.hp + " / " + o.maxHp + ").");
+            int got = healTok(o, total[0]);
+            setStatus(c.caster.label + " casts " + c.def.name + ": " + o.label + " regains " + got + " HP (" + o.hp + " / " + o.maxHp + ").");
             persistSoon();
             refreshAll();
         }
@@ -4527,11 +4953,11 @@ private void resolveHeal(SpellCast c, List<Tok> targets) {
 // ---------------- Magic Missile ----------------
 private void resolveDarts(SpellCast c, List<Tok> targets) {
     if (targets.isEmpty()) return;
-    int darts = c.def.targetsAt(c.slot);
+    int darts = c.def.targetsAt(c.scale);
     JPanel body = new JPanel();
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
-    JLabel head = new JLabel("<html><div style='width:460px'><b>" + App.escapeHtml(c.caster.label) + "</b> casts <b>Magic Missile</b>" + (c.slot > 1 ? " (level " + c.slot + ")" : "")
+    JLabel head = new JLabel("<html><div style='width:460px'><b>" + App.escapeHtml(c.caster.label) + "</b> casts <b>Magic Missile</b>" + App.escapeHtml(c.levelText())
             + ": " + darts + " darts, each hitting automatically for 1d4 + 1 Force damage. Split them between the targets.</div></html>");
     head.setForeground(App.TEXT_LIGHT);
     head.setFont(new Font("SansSerif", Font.PLAIN, 13));
@@ -4645,7 +5071,7 @@ private void resolveBuff(SpellCast c, List<Tok> targets) {
     String who = String.join(", ", names);
     switch (n) {
         case "Armor of Agathys": {
-            int amt = c.def.bonusAt(c.slot);
+            int amt = c.def.bonusAt(c.scale);
             me.tempHp = Math.max(me.tempHp, amt);
             CombatSpells.Effect old = CombatSpells.find(me.effects, n);
             if (old != null) removeEffect(me, old);
@@ -4653,15 +5079,6 @@ private void resolveBuff(SpellCast c, List<Tok> targets) {
             e.value = amt;
             addEffect(me, e);
             setStatus(me.label + " casts Armor of Agathys: " + amt + " Temporary Hit Points; melee attackers that hit take " + amt + " Cold damage.");
-            break;
-        }
-        case "False Life": {
-            int[] d = WeaponRules.rollDice(rng, 2, 4, false);
-            int amt = d[0] + d[1] + c.def.bonusAt(c.slot);
-            boolean better = amt > me.tempHp;
-            me.tempHp = Math.max(me.tempHp, amt);
-            setStatus(me.label + " casts False Life: 2d4 [" + d[0] + " + " + d[1] + "] + " + c.def.bonusAt(c.slot) + " = " + amt + " Temporary Hit Points"
-                    + (better ? "." : " (keeps its current " + me.tempHp + "; they don't stack)."));
             break;
         }
         case "Divine Favor": {
@@ -4680,43 +5097,63 @@ private void resolveBuff(SpellCast c, List<Tok> targets) {
             setStatus(me.label + " casts Expeditious Retreat and Dashes: " + moveLeft + " ft. of movement left. Later turns: Dash as a Bonus Action.");
             break;
         }
-        case "Goodberry": {
+        case "Goodberry":
             me.items.merge("Goodberry", 10, Integer::sum);
             setStatus(me.label + " casts Goodberry: 10 berries in its items (Use Item: Bonus Action, restores 1 HP each).");
             break;
-        }
-        case "Fog Cloud": {
+        case "Fog Cloud":
             makeZone(c);
             setStatus(me.label + " casts Fog Cloud: the area is Heavily Obscured while it concentrates.");
             break;
+        case "Produce Flame": {
+            CombatSpells.Effect old = CombatSpells.find(me.effects, n);
+            if (old != null) removeEffect(me, old);
+            CombatSpells.Effect e = effectFor(c, me);
+            e.casterStarts = 100;
+            addEffect(me, e);
+            setStatus(me.label + " conjures a flame (lights 20 ft.). Hurl it later with the Magic action button in the side panel.");
+            break;
         }
+        case "Shillelagh": {
+            CombatSpells.Effect old = CombatSpells.find(me.effects, n);
+            if (old != null) removeEffect(me, old);
+            CombatSpells.Effect e = effectFor(c, me);
+            e.casterStarts = 10;
+            e.value = c.mod;
+            e.slot = c.scale;
+            addEffect(me, e);
+            setStatus(me.label + " casts Shillelagh: Club and Quarterstaff attacks now use " + signedInt(c.mod) + " and deal "
+                    + (c.scale >= 3 ? "2d6" : "1d" + (c.scale == 2 ? 12 : c.scale == 1 ? 10 : 8)) + " " + (c.choice.isEmpty() ? "" : c.choice.toLowerCase() + " ") + "damage.");
+            break;
+        }
+        case "Spare the Dying":
+            for (Tok o : targets) if (o.down() && !hasCond(o, "Stable")) o.conditions.add("Stable");
+            setStatus(me.label + " casts Spare the Dying: " + who + " is Stable.");
+            break;
         default: {
+            List<String> extra = new ArrayList<>();
             for (Tok o : targets) {
                 CombatSpells.Effect old = CombatSpells.find(o.effects, n);
                 if (old != null && old.caster.equals(me.uid)) removeEffect(o, old);
-                CombatSpells.Effect e = effectFor(c, o);
-                switch (n) {
-                    case "Bless":
-                    case "Buzzing Bee":
-                    case "Heroism":
-                    case "Jump":
-                    case "Sanctuary":
-                        e.casterStarts = 10;
-                        break;
-                    case "Shield of Faith":
-                    case "Protection from Evil and Good":
-                        e.casterStarts = 100;
-                        break;
-                    default: // Hex, Hunter's Mark, Longstrider, Mage Armor: an hour or more
-                }
+                CombatSpells.Effect e = templateEffect(c, o);
                 if ("Heroism".equals(n)) {
                     e.value = Math.max(0, c.mod);
                     o.conditions.removeIf("Frightened"::equalsIgnoreCase);
                 }
-                addEffect(o, e);
+                if (c.def.tempDice > 0 || c.def.tempBonus > 0) { // Temporary Hit Points (False Life, homebrew)
+                    int[] d = WeaponRules.rollDice(rng, c.def.tempDice, c.def.tempSides, false);
+                    int amt = c.def.tempBonus + c.def.tempPerLevel * c.scale + (c.def.tempMod ? c.mod : 0);
+                    for (int v : d) amt += v;
+                    boolean better = amt > o.tempHp;
+                    o.tempHp = Math.max(o.tempHp, amt);
+                    extra.add(o.label + " gains " + amt + " Temporary Hit Points" + (better ? "" : " (keeps " + o.tempHp + ": they don't stack)"));
+                }
+                if (c.def.lasting() || !"False Life".equals(n)) addEffect(o, e);
             }
-            String extra = "Hex".equals(n) ? " (Disadvantage on " + c.choice + " checks)" : "";
-            setStatus(me.label + " casts " + n + (c.slot > 1 ? " (level " + c.slot + ")" : "") + " on " + (who.isEmpty() ? "no one" : who) + extra + ".");
+            String choice = "Hex".equals(n) ? " (Disadvantage on " + c.choice + " checks)" : "Resistance".equals(n) ? " (" + c.choice + ")" : "";
+            String mark = c.def.markDice > 0 ? " Your attack-roll hits against it deal +" + c.def.markDice + "d" + c.def.markSides + " " + c.def.markType + "." : "";
+            setStatus(me.label + " casts " + n + c.levelText() + " on " + (who.isEmpty() ? "no one" : who) + choice + "." + mark
+                    + (extra.isEmpty() ? "" : " " + String.join("; ", extra) + "."));
         }
     }
     persistSoon();
@@ -4730,7 +5167,7 @@ private void resolveUtility(SpellCast c) {
     int r = roundsFor(c.spell.duration);
     if (r > 0) e.casterStarts = r;
     if (r != 0) addEffect(me, e); // instantaneous spells leave nothing to track
-    setStatus(me.label + " casts " + c.def.name + (c.slot > 1 ? " (level " + c.slot + ")" : "") + ". " + c.def.how);
+    setStatus(me.label + " casts " + c.def.name + c.levelText() + ". " + c.def.how);
     persistSoon();
     refreshAll();
 }
@@ -4739,7 +5176,7 @@ private void resolveUtility(SpellCast c) {
 static int roundsFor(String duration) {
     String d = duration.replace("C ", "").toLowerCase();
     java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)\\s*(round|minute|hour|day)").matcher(d);
-    if (!m.find()) return 0;
+    if (!m.find()) return d.contains("until") ? -1 : 0;
     int n = Integer.parseInt(m.group(1));
     switch (m.group(2)) {
         case "round": return n;
@@ -4748,33 +5185,54 @@ static int roundsFor(String duration) {
     }
 }
 
-// ---------------- side panel & detail pieces ----------------
-// Slot pips (click to spend / restore), Concentration, Cast a Spell and ongoing spell actions for the active creature
+// ---------------- side panel ----------------
+// Targeting banner, slots, Concentration, Cast a Spell, spells in play, readied smite and ongoing spell actions
 private void addSpellSection(Tok t, boolean incap) {
-    boolean caster = PC.equals(t.kind) && t.source != null && (!CombatSpells.castable(t.source).isEmpty() || anySlots(t));
+    boolean caster = isCaster(t);
+    // a spell waiting for targets: what to do next, with Confirm / Cancel
+    if (spellTargeting != null && spellTargeting.caster == t) {
+        SpellCast sc = spellTargeting;
+        JPanel ban = new JPanel();
+        ban.setLayout(new BoxLayout(ban, BoxLayout.Y_AXIS));
+        ban.setBackground(new Color(0x24, 0x2E, 0x48));
+        ban.setBorder(BorderFactory.createCompoundBorder(new LineBorder(SPELL_COLOR, 1, true), new EmptyBorder(8, 10, 8, 10)));
+        ban.setMaximumSize(new Dimension(400, 220));
+        JLabel tl = new JLabel("<html><div style='width:270px'><b style='color:#b8d0ff'>✦ " + App.escapeHtml(sc.moveMark ? "Move " + sc.def.name : sc.def.name + sc.levelText())
+                + "</b><br><span style='color:#cfcac2'>" + App.escapeHtml(spellPrompt(sc)) + "</span>"
+                + (sc.picked.isEmpty() ? "" : "<br><span style='color:#d4af37'>Picked: " + App.escapeHtml(labels(sc.picked)) + "</span>") + "</div></html>");
+        tl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        tl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        ban.add(tl);
+        ban.add(Box.createRigidArea(new Dimension(0, 6)));
+        JPanel bb = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        bb.setOpaque(false);
+        bb.setAlignmentX(Component.LEFT_ALIGNMENT);
+        if (CombatSpells.MULTI.equals(sc.def.target) && !sc.picked.isEmpty() && !sc.moveMark) {
+            JButton go = economyButton("Cast on " + sc.picked.size(), SPELL_COLOR, "Cast " + sc.def.name + " on the creatures picked so far");
+            go.addActionListener(e -> resolveSpell(sc, new ArrayList<>(sc.picked)));
+            bb.add(go);
+        }
+        JButton cancel = Tokens.smallButton("Cancel", "Stop casting (nothing is spent until targets are confirmed)");
+        cancel.addActionListener(e -> {
+            if (sc.spent && sc.refund != null && !sc.moveMark && sc.blastNo == 1 && sc.leapFrom == null) sc.refund.run();
+            cancelModes();
+            refreshAll();
+        });
+        bb.add(cancel);
+        ban.add(bb);
+        addSide(ban);
+        gap(8);
+    }
     if (caster) {
         addSide(sectionCaption("SPELLS"));
-        JPanel pips = new JPanel(new FlowLayout(FlowLayout.LEFT, 2, 0));
-        pips.setOpaque(false);
-        int[] max = CombatSpells.maxSlots(t.source);
-        for (int i = 0; i < 10; i++) {
-            if (max[i] <= 0) continue;
-            final int idx = i;
-            String lbl = i < 9 ? SpellData.ordinal(i + 1).toUpperCase() : "PACT " + CombatSpells.pactLevel(t.source);
-            Pips p = new Pips(lbl, i < 9 ? App.GOLD : new Color(170, 120, 220), max[i], t.slots[i], t.slots[i] + " left");
-            p.setPreferredSize(new Dimension(Math.max(64, max[i] * 19 + 14), 48));
-            p.setToolTipText((i < 9 ? "Level " + (i + 1) + " slots" : "Pact Magic slots") + ": " + t.slots[i] + " of " + max[i] + " left this encounter. Click to adjust.");
-            App.clickable(p, () -> showSlotEditor(p, t, idx));
-            pips.add(p);
-        }
+        JPanel pips = slotPipsRow(t, true);
         if (pips.getComponentCount() > 0) addSide(pips);
         if (!t.freeCasts.isEmpty()) {
-            List<String> fc = new ArrayList<>();
-            for (Map.Entry<String, Integer> en : t.freeCasts.entrySet()) fc.add(en.getKey() + " ×" + en.getValue());
-            JLabel fl = muted("Without a slot: " + String.join(", ", fc));
+            JLabel fl = muted("Without a slot: " + freeCastsText(t));
             App.clickable(fl, () -> App.showInfoOverlay(fl, "Casting Without a Slot", t.label,
                     "Some features let you cast a spell without expending a slot a few times per Long Rest: species and feat spells (once each), "
-                            + "a Ranger's Favored Enemy (Hunter's Mark) and a Paladin's Smite (Divine Smite). Counts start from the full amount each combat.", null));
+                            + "a Ranger's Favored Enemy (Hunter's Mark), a Paladin's Smite (Divine Smite), Mystic Arcanum, and an NPC's per-day spells. "
+                            + "Counts start from the full amount each combat.", null));
             addSide(fl);
         }
         gap(4);
@@ -4788,25 +5246,62 @@ private void addSpellSection(Tok t, boolean incap) {
         addSide(cl);
         gap(4);
     }
+    // spells this creature has in play on others (Hunter's Mark → Goblin 7, Bless → ...)
+    Map<String, List<String>> inPlay = new LinkedHashMap<>();
+    Map<String, Object[]> firstOf = new LinkedHashMap<>();
+    for (Tok o : tokens) {
+        if (o == t) continue;
+        for (CombatSpells.Effect e : o.effects) {
+            if (!e.caster.equals(t.uid)) continue;
+            inPlay.computeIfAbsent(e.spell, k -> new ArrayList<>()).add(o.label + (o.down() ? " (down)" : ""));
+            firstOf.putIfAbsent(e.spell, new Object[]{o, e});
+        }
+    }
+    for (CombatSpells.Zone z : zones) if (z.caster.equals(t.uid)) inPlay.computeIfAbsent(z.spell, k -> new ArrayList<>()).add("area on the map");
+    if (!inPlay.isEmpty()) {
+        for (Map.Entry<String, List<String>> en : inPlay.entrySet()) {
+            Object[] fe = firstOf.get(en.getKey());
+            CombatSpells.Effect e = fe == null ? null : (CombatSpells.Effect) fe[1];
+            String extra = e != null && e.markDice > 0 ? "  ·  your hits +" + e.markDice + "d" + e.markSides + " " + e.markType : "";
+            JLabel l = new JLabel("<html><div style='width:280px'><span style='color:#b8d0ff'>✦ " + App.escapeHtml(en.getKey()) + "</span> → "
+                    + App.escapeHtml(String.join(", ", en.getValue())) + "<span style='color:#aaa5a0'>" + App.escapeHtml(extra) + "</span></div></html>");
+            l.setForeground(App.TEXT_LIGHT);
+            l.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            if (fe != null) App.clickable(l, () -> showEffectInfo(l, (Tok) fe[0], (CombatSpells.Effect) fe[1]));
+            addSide(l);
+        }
+        gap(4);
+    }
+    if (readySmite != null && readySmite.caster == t) {
+        JPanel rs = new JPanel(new BorderLayout(6, 0));
+        rs.setOpaque(false);
+        rs.setMaximumSize(new Dimension(400, 30));
+        JLabel rl = new JLabel("<html><span style='color:#e08a2e'>⚡ " + App.escapeHtml(readySmite.known.name) + " readied</span> <span style='color:#aaa5a0'>· next hit with "
+                + App.escapeHtml(smiteNeeds(readySmite.def)) + "</span></html>");
+        rl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        rs.add(rl, BorderLayout.CENTER);
+        JButton x = Tokens.smallButton("✕", "Don't smite (nothing was spent)");
+        x.addActionListener(e -> {
+            readySmite = null;
+            refreshSide();
+        });
+        rs.add(x, BorderLayout.EAST);
+        addSide(rs);
+        gap(4);
+    }
     if (caster) {
         JPanel row = new JPanel(new GridLayout(0, 1, 0, 6));
         row.setOpaque(false);
-        row.setMaximumSize(new Dimension(400, 200));
+        row.setMaximumSize(new Dimension(400, 220));
         JButton cast = economyButton(spellTargeting != null ? "Cancel Spell" : "✦ Cast a Spell", SPELL_COLOR,
-                incap ? "Can't cast while Incapacitated" : "Pick a level 1 spell, a slot and targets");
-        cast.setEnabled(spellTargeting != null || (!incap && inCombat));
+                incap ? "Can't cast while Incapacitated" : "Pick a spell, a slot and targets");
+        cast.setEnabled(spellTargeting != null || (!incap && inCombat && t == active));
         cast.addActionListener(e -> {
             if (spellTargeting != null) cancelModes();
-            else showSpellPicker(cast, t);
+            else showSpellPicker(t);
             refreshSide();
         });
         row.add(cast);
-        if (spellTargeting != null && spellTargeting.caster == t && CombatSpells.MULTI.equals(spellTargeting.def.target) && !spellTargeting.picked.isEmpty() && !"move".equals(spellTargeting.areaWhy)) {
-            SpellCast sc = spellTargeting;
-            JButton go = economyButton("Cast on " + sc.picked.size() + " selected", SPELL_COLOR, "Cast " + sc.def.name + " on the creatures picked so far");
-            go.addActionListener(e -> resolveSpell(sc, new ArrayList<>(sc.picked)));
-            row.add(go);
-        }
         if (canSustainWitchBolt(t)) {
             Tok wt = witchBoltTarget(t);
             JButton wb = economyButton("Witch Bolt → " + wt.label + " (1d12)", BONUS_COLOR, "Bonus Action: 1d12 Lightning damage to the target automatically");
@@ -4825,6 +5320,12 @@ private void addSpellSection(Tok t, boolean incap) {
                 refreshAll();
             });
             row.add(er);
+        }
+        if (CombatSpells.has(t.effects, "Produce Flame") && t == active) {
+            JButton pf = economyButton("Hurl Produce Flame", ACTION_COLOR, "Magic action: ranged spell attack (60 ft.) for the Fire damage; the flame is gone");
+            pf.setEnabled(!incap && !actionUsed);
+            pf.addActionListener(e -> hurlProduceFlame(t));
+            row.add(pf);
         }
         for (String mark : new String[]{"Hex", "Hunter's Mark"}) {
             if (!canMoveMark(t, mark)) continue;
@@ -4857,9 +5358,10 @@ private void addSpellSection(Tok t, boolean incap) {
     }
 }
 
-private boolean anySlots(Tok t) {
-    for (int v : CombatSpells.maxSlots(t.source)) if (v > 0) return true;
-    return false;
+private static String labels(List<Tok> toks) {
+    List<String> out = new ArrayList<>();
+    for (Tok t : toks) out.add(t.label);
+    return String.join(", ", out);
 }
 
 private JPanel effectChips(Tok t) {
@@ -4868,12 +5370,14 @@ private JPanel effectChips(Tok t) {
     p.setAlignmentX(Component.LEFT_ALIGNMENT);
     p.setMaximumSize(new Dimension(420, 200));
     for (CombatSpells.Effect e : new ArrayList<>(t.effects)) {
-        JLabel chip = new JLabel(CombatSpells.effectLabel(e));
+        Tok caster = byUid(e.caster);
+        JLabel chip = new JLabel(CombatSpells.effectLabel(e) + (caster != null && caster != t && e.markDice > 0 ? " · " + caster.label : ""));
         chip.setOpaque(true);
-        chip.setBackground(new Color(0x2B, 0x35, 0x52));
-        chip.setForeground(new Color(0xB8, 0xD0, 0xFF));
+        boolean mark = e.markDice > 0;
+        chip.setBackground(mark ? new Color(0x4A, 0x24, 0x28) : new Color(0x2B, 0x35, 0x52));
+        chip.setForeground(mark ? new Color(0xFF, 0xB0, 0xB0) : new Color(0xB8, 0xD0, 0xFF));
         chip.setFont(new Font("SansSerif", Font.BOLD, 11));
-        chip.setBorder(BorderFactory.createCompoundBorder(new LineBorder(SPELL_COLOR, 1, true), new EmptyBorder(2, 6, 2, 6)));
+        chip.setBorder(BorderFactory.createCompoundBorder(new LineBorder(mark ? new Color(0xE0, 0x50, 0x50) : SPELL_COLOR, 1, true), new EmptyBorder(2, 6, 2, 6)));
         chip.setToolTipText(e.spell + ": click for details");
         App.clickable(chip, () -> showEffectInfo(chip, t, e));
         p.add(chip);
@@ -4884,7 +5388,7 @@ private JPanel effectChips(Tok t) {
 private void showEffectInfo(Component anchor, Tok t, CombatSpells.Effect e) {
     Tok caster = byUid(e.caster);
     Spell sp = SpellData.lookup(e.spell);
-    CombatSpells.Def d = CombatSpells.def(e.spell);
+    CombatSpells.Def d = sp != null ? CombatSpells.defOrUtility(sp) : CombatSpells.def(e.spell);
     JPanel body = new JPanel();
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
@@ -4895,27 +5399,33 @@ private void showEffectInfo(Component anchor, Tok t, CombatSpells.Effect e) {
     body.add(l);
     body.add(Box.createRigidArea(new Dimension(0, 8)));
     List<String> facts = new ArrayList<>();
+    String cn = caster == null ? "the caster" : caster.label;
     facts.add("Cast by " + (caster == null ? "someone no longer on the map" : caster.label) + (e.slot > 1 ? " with a level " + e.slot + " slot" : "") + " in round " + e.castRound + ".");
-    if (e.conc) facts.add("Lasts while " + (caster == null ? "the caster" : caster.label) + " concentrates.");
-    if (e.casterStarts > 0) facts.add("Ends at the start of " + (caster == null ? "the caster" : caster.label) + "'s turn in " + e.casterStarts + (e.casterStarts == 1 ? " round." : " rounds."));
-    if (e.casterEnds > 0) facts.add("Ends at the end of " + (caster == null ? "the caster" : caster.label) + "'s " + (e.casterEnds == 1 ? "current / next turn." : "next turn."));
+    if (e.markDice > 0) facts.add(cn + "'s attack-roll hits against " + t.label + " deal +" + e.markDice + "d" + e.markSides + " " + e.markType + " damage.");
+    if (e.ac != 0) facts.add(signedInt(e.ac) + " AC.");
+    if (e.speed != 0) facts.add(signedInt(e.speed) + " ft. Speed.");
+    if (e.rollDie != 0) facts.add((e.rollDie > 0 ? "+" : "−") + "1d" + Math.abs(e.rollDie) + " to its attack rolls and saving throws.");
+    if (e.againstDie > 0) facts.add("Attack rolls against it subtract 1d" + e.againstDie + ".");
+    if (e.conc) facts.add("Lasts while " + cn + " concentrates.");
+    if (e.casterStarts > 0) facts.add("Ends at the start of " + cn + "'s turn in " + e.casterStarts + (e.casterStarts == 1 ? " round." : " rounds."));
+    if (e.casterEnds > 0) facts.add("Ends at the end of " + cn + "'s " + (e.casterEnds == 1 ? "current / next turn." : "next turn."));
     if (e.ownStarts > 0) facts.add("Ends at the start of " + t.label + "'s next turn.");
     if (e.ownEnds > 0) facts.add("Ends at the end of " + t.label + "'s next turn.");
     if (e.lasting() && !e.conc) facts.add("Lasts an hour or more (kept after combat).");
     if (!e.endSave.isEmpty()) facts.add(e.endSave + " save (DC " + e.dc + ") at the end of each of its turns ends it.");
     if (e.dotDice > 0) facts.add(e.dotDice + "d" + e.dotSides + " " + e.dotType + " at the start of each of its turns" + (e.startSave.isEmpty() ? "." : ", then a " + e.startSave + " save (DC " + e.dc + ") ends it."));
     if (!e.conds.isEmpty()) facts.add("Conditions: " + String.join(", ", e.conds) + ".");
-    body.add(muted("<html><div style='width:420px'>" + App.escapeHtml(String.join(" ", facts)) + "</div></html>"));
+    body.add(mutedHtml("<html><div style='width:420px'>" + App.escapeHtml(String.join(" ", facts)) + "</div></html>"));
     body.add(Box.createRigidArea(new Dimension(0, 12)));
     JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
     btns.setOpaque(false);
     btns.setAlignmentX(Component.LEFT_ALIGNMENT);
     Runnable[] close = new Runnable[1];
-    if ("Entangle".equals(e.spell) || "Ensnaring Strike".equals(e.spell)) {
+    if (e.conds.contains("Restrained") && ("Entangle".equals(e.spell) || "Ensnaring Strike".equals(e.spell) || e.dc > 0)) {
         JButton esc = economyButton("Escape check (action)", ACTION_COLOR, "STR (Athletics) check against DC " + e.dc + " to break free");
         esc.addActionListener(ev -> {
             close[0].run();
-            escapeCheck(anchor, t, e);
+            escapeCheck(t, e);
         });
         btns.add(esc);
     }
@@ -4949,7 +5459,7 @@ private void showEffectInfo(Component anchor, Tok t, CombatSpells.Effect e) {
         btns.add(info);
     }
     body.add(btns);
-    close[0] = App.showSheetOverlay(anchor, CombatSpells.effectLabel(e) + ": " + t.label, body, null);
+    close[0] = App.showSheetOverlay(board, CombatSpells.effectLabel(e) + ": " + t.label, body, null);
 }
 
 private void showConcentrationInfo(Component anchor, Tok t) {
@@ -4959,7 +5469,7 @@ private void showConcentrationInfo(Component anchor, Tok t) {
     JPanel body = new JPanel();
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
-    body.add(muted("<html><div style='width:400px'>" + App.escapeHtml(t.label + " is concentrating on " + spell
+    body.add(mutedHtml("<html><div style='width:400px'>" + App.escapeHtml(t.label + " is concentrating on " + spell
             + (on.isEmpty() ? "." : " (affecting " + String.join(", ", on) + ").")
             + " It ends if " + t.label + " casts another Concentration spell, is Incapacitated or drops to 0 HP, or fails the CON save "
             + "(DC 10 or half the damage, max 30) after taking damage.") + "</div></html>"));
@@ -4974,18 +5484,18 @@ private void showConcentrationInfo(Component anchor, Tok t) {
     });
     end.setAlignmentX(Component.LEFT_ALIGNMENT);
     body.add(end);
-    close[0] = App.showSheetOverlay(anchor, "Concentration: " + spell, body, null);
+    close[0] = App.showSheetOverlay(board, "Concentration: " + spell, body, null);
 }
 
 // Adjust one level's slots left this encounter (index 9 = Pact Magic)
 private void showSlotEditor(Component anchor, Tok t, int idx) {
-    int[] max = CombatSpells.maxSlots(t.source);
+    int[] max = maxSlotsOf(t);
     JPanel body = new JPanel();
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
-    body.add(muted("<html><div style='width:380px'>" + (idx < 9 ? "Level " + (idx + 1) + " spell slots" : "Pact Magic slots (level " + CombatSpells.pactLevel(t.source) + ")")
-            + " left in this encounter. They start from what the character sheet has left when the token is placed and when combat starts; "
-            + "spending them here doesn't change the sheet.</div></html>"));
+    body.add(mutedHtml("<html><div style='width:380px'>" + (idx < 9 ? "Level " + (idx + 1) + " spell slots" : "Pact Magic slots (level " + CombatSpells.pactLevel(t.source) + ")")
+            + " left in this encounter. They start from what " + (PC.equals(t.kind) ? "the character sheet has left" : "the NPC's stat block lists")
+            + " when the token is placed and when combat starts; spending them here doesn't change the source.</div></html>"));
     body.add(Box.createRigidArea(new Dimension(0, 10)));
     JSpinner sp = new JSpinner(new SpinnerNumberModel(t.slots[idx], 0, Math.max(max[idx], t.slots[idx]), 1));
     sp.setPreferredSize(new Dimension(64, 28));
@@ -4998,7 +5508,7 @@ private void showSlotEditor(Component anchor, Tok t, int idx) {
         refreshSide();
     });
     body.add(sp);
-    App.showSheetOverlay(anchor, t.label + ": Spell Slots", body, null);
+    App.showSheetOverlay(board, t.label + ": Spell Slots", body, null);
 }
 
 // ===============================================================
@@ -5817,8 +6327,8 @@ private void showTokenDetail(Component anchor, Tok t) {
     body.add(Box.createRigidArea(new Dimension(0, 10)));
 
     // spells: Temporary Hit Points, slots left, Concentration and effects (combat-only)
-    boolean slotsShown = PC.equals(t.kind) && t.source != null && anySlots(t);
-    if (slotsShown || !t.effects.isEmpty() || !t.concentration.isEmpty() || t.tempHp > 0 || PC.equals(t.kind)) {
+    boolean slotsShown = isCaster(t);
+    if (slotsShown || !t.effects.isEmpty() || !t.concentration.isEmpty() || t.tempHp > 0 || !OBJ.equals(t.kind)) {
         body.add(sectionCaption("SPELLS & TEMPORARY HIT POINTS"));
         JPanel tr = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         tr.setOpaque(false);
@@ -6783,6 +7293,15 @@ private static JLabel muted(String text) {
     return l;
 }
 
+// Like muted, for text that's already HTML (escape the parts that need it yourself)
+private static JLabel mutedHtml(String html) {
+    JLabel l = new JLabel(html);
+    l.setForeground(App.TEXT_MUTED);
+    l.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    l.setAlignmentX(Component.LEFT_ALIGNMENT);
+    return l;
+}
+
 private static JLabel swatch(Color c, int size, String tip) {
     JLabel l = new JLabel() {
         @Override
@@ -7223,6 +7742,8 @@ private class Board extends JComponent {
             }
             WeaponRules.Attack atk = targeting;
             targeting = null;
+            tc.cast = targetingCast; // True Strike: the spell is already paid for
+            targetingCast = null;
             showAttackRoll(this, active, target, atk, tc, false);
             repaint();
             return;
@@ -7573,7 +8094,55 @@ private class Board extends JComponent {
             g.draw(new Line2D.Double(cx - k, cy - k, cx + k, cy + k));
             g.draw(new Line2D.Double(cx + k, cy - k, cx - k, cy + k));
         }
+        if (alpha >= 1f && !OBJ.equals(t.kind)) paintSpellBadges(g, t, cx, cy, r, ow);
         g.dispose();
+    }
+
+    // Spell markers on a token: a red crosshair when it's marked (Hunter's Mark, Hex), a blue badge with the number
+    // of spell effects on it, and a gold diamond while it concentrates
+    private void paintSpellBadges(Graphics2D g, Tok t, double cx, double cy, double r, float ow) {
+        if (scale < 14) return;
+        boolean marked = CombatSpells.any(t.effects, e -> e.markDice > 0);
+        if (marked) {
+            g.setColor(new Color(235, 70, 70, 220));
+            g.setStroke(new BasicStroke(Math.max(1.5f, ow * 0.5f)));
+            double rr = r + ow * 1.1;
+            g.draw(new Ellipse2D.Double(cx - rr, cy - rr, rr * 2, rr * 2));
+            double a = rr * 0.35;
+            g.draw(new Line2D.Double(cx, cy - rr - a, cx, cy - rr + a));
+            g.draw(new Line2D.Double(cx, cy + rr - a, cx, cy + rr + a));
+            g.draw(new Line2D.Double(cx - rr - a, cy, cx - rr + a, cy));
+            g.draw(new Line2D.Double(cx + rr - a, cy, cx + rr + a, cy));
+        }
+        int n = t.effects.size();
+        double b = Math.max(9, Math.min(16, r * 0.42));
+        if (n > 0) {
+            double bx = cx + r * 0.72, by = cy - r * 0.72;
+            g.setColor(new Color(0x2B, 0x35, 0x52));
+            g.fill(new Ellipse2D.Double(bx - b / 2, by - b / 2, b, b));
+            g.setColor(SPELL_COLOR);
+            g.setStroke(new BasicStroke(1.3f));
+            g.draw(new Ellipse2D.Double(bx - b / 2, by - b / 2, b, b));
+            g.setFont(new Font("SansSerif", Font.BOLD, (int) Math.max(8, b * 0.7)));
+            FontMetrics fm = g.getFontMetrics();
+            String s = n > 9 ? "9+" : String.valueOf(n);
+            g.setColor(Color.WHITE);
+            g.drawString(s, (float) (bx - fm.stringWidth(s) / 2.0), (float) (by + fm.getAscent() / 2.0 - 1));
+        }
+        if (!t.concentration.isEmpty()) {
+            double dx = cx - r * 0.72, dy = cy + r * 0.72, h = b * 0.55;
+            Path2D dia = new Path2D.Double();
+            dia.moveTo(dx, dy - h);
+            dia.lineTo(dx + h, dy);
+            dia.lineTo(dx, dy + h);
+            dia.lineTo(dx - h, dy);
+            dia.closePath();
+            g.setColor(App.GOLD);
+            g.fill(dia);
+            g.setColor(new Color(40, 30, 10));
+            g.setStroke(new BasicStroke(1f));
+            g.draw(dia);
+        }
     }
 
     // Name and HP bar above the token

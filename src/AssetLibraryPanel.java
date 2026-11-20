@@ -1408,6 +1408,12 @@ static void showDetail(Component anchor, String cat, Map<String, Object> a, Deta
                 table.add(val, c);
                 break;
             }
+            case CustomAssets.SPELL_LIST: {
+                List<String> vals = CustomAssets.list(a, f.key);
+                if (vals.isEmpty()) break;
+                sections.add(chipSection(f, vals));
+                break;
+            }
             case CustomAssets.MULTI: {
                 List<String> vals = CustomAssets.list(a, f.key);
                 if (vals.isEmpty()) break;
@@ -1570,7 +1576,27 @@ private static void add(JPanel body, JComponent c) {
     body.add(c);
 }
 
+// Spell Combat fields (shown only when the spell has a Combat mode) and NPC spellcasting numbers (only for casters)
+private static final Set<String> SPELL_COMBAT_KEYS = new HashSet<>(Arrays.asList("combatTarget", "areaSize", "targetCount", "targetsPerLevel",
+        "attackType", "saveAbility", "halfOnSave", "damageDice", "damagePerLevel", "damageType", "addModifier", "smiteWith", "effectDuration",
+        "hostileEffect", "repeatSave", "ongoingDice", "ongoingType", "ongoingSave", "acBonus", "speedBonus", "rollDie", "againstDie", "markDice",
+        "markType", "advantageAgainst", "revealInvisible", "noReactions", "tempHp"));
+private static final Set<String> NPC_SPELL_KEYS = new HashSet<>(Arrays.asList("spellcastingAbility", "spellSaveDC", "spellAttackBonus", "spellcasterLevel"));
+
 private static String displayValue(String cat, CustomAssets.Field f, Map<String, Object> a) {
+    if (CustomAssets.SPELLS.equals(cat)) {
+        String mode = CustomAssets.str(a, "combatMode");
+        if ("combatMode".equals(f.key) && (mode.isEmpty() || "None".equals(mode))) return "";
+        if (SPELL_COMBAT_KEYS.contains(f.key)) {
+            if (mode.isEmpty() || "None".equals(mode)) return "";
+            String v = CustomAssets.str(a, f.key).trim();
+            if ("None".equals(v) || "0".equals(v)) return "";
+        }
+    }
+    if (CustomAssets.NPCS.equals(cat) && NPC_SPELL_KEYS.contains(f.key)) {
+        if (!CombatSpells.npcCaster(a)) return "";
+        if (CustomAssets.INT.equals(f.type) && CustomAssets.intVal(a, f.key, 0) == 0) return "auto";
+    }
     switch (f.type) {
         case CustomAssets.BOOL:
             return CustomAssets.bool(a, f.key) ? "Yes" : "";
@@ -1672,6 +1698,9 @@ static void openLink(Component anchor, String link, String value) {
             break;
         case CustomAssets.LINK_CONDITION:
             App.showConditionOverlay(anchor, value);
+            break;
+        case CustomAssets.LINK_SPELL:
+            App.showSpellOverlay(anchor, SpellData.lookup(value), value, null, false);
             break;
         case CustomAssets.LINK_TAG:
             showTagInfo(anchor, value);
@@ -2051,6 +2080,8 @@ private FieldUI buildFieldUI(CustomAssets.Field f, Object current) {
                 return out;
             });
         }
+        case CustomAssets.SPELL_LIST:
+            return spellListUI(f, CustomAssets.list(holder, "v"));
         case CustomAssets.LIST: {
             JTextArea ta = textArea(String.join("\n", CustomAssets.list(holder, "v")), 3);
             return ui(areaScroll(ta, 560), () -> {
@@ -2112,6 +2143,94 @@ private FieldUI buildFieldUI(CustomAssets.Field f, Object current) {
             JTextField tf = textField(CustomAssets.str(holder, "v"), "");
             return ui(tf, tf::getText);
     }
+}
+
+// Spell list picker: chips of the picked spells (✕ removes), and a search box + list to add more
+private static FieldUI spellListUI(CustomAssets.Field f, List<String> current) {
+    List<String> picked = new ArrayList<>(current);
+    List<String> all = f.optionList();
+    JPanel box = new JPanel();
+    box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
+    box.setOpaque(false);
+    JPanel chips = new JPanel(new GridLayout(0, 3, 4, 4));
+    chips.setOpaque(false);
+    chips.setAlignmentX(Component.LEFT_ALIGNMENT);
+    Runnable[] paint = new Runnable[1];
+    paint[0] = () -> {
+        chips.removeAll();
+        if (picked.isEmpty()) {
+            JLabel none = new JLabel("None yet.");
+            none.setForeground(App.TEXT_MUTED);
+            chips.add(none);
+        }
+        for (String s : picked) {
+            Spell sp = SpellData.lookup(s);
+            JLabel chip = new JLabel("✕  " + s + (sp != null ? (sp.level == 0 ? " · cantrip" : " · " + sp.level) : ""));
+            chip.setForeground(App.GOLD);
+            chip.setFont(new Font("SansSerif", Font.BOLD, 12));
+            chip.setOpaque(true);
+            chip.setBackground(App.SHEET_ROW_ALT);
+            chip.setBorder(BorderFactory.createCompoundBorder(new LineBorder(App.SHEET_BORDER, 1, true), new EmptyBorder(4, 6, 4, 6)));
+            chip.setToolTipText("Remove " + s);
+            App.clickable(chip, () -> {
+                picked.remove(s);
+                paint[0].run();
+            });
+            chips.add(chip);
+        }
+        chips.revalidate();
+        chips.repaint();
+    };
+    paint[0].run();
+    JPanel add = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+    add.setOpaque(false);
+    add.setAlignmentX(Component.LEFT_ALIGNMENT);
+    JTextField search = new JTextField(12);
+    App.styleTextField(search);
+    search.setToolTipText("Type to filter the spell list");
+    DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
+    JComboBox<String> combo = new JComboBox<>(model);
+    App.styleCombo(combo);
+    combo.setPreferredSize(new Dimension(240, 30));
+    Runnable filter = () -> {
+        String q = search.getText().trim().toLowerCase();
+        model.removeAllElements();
+        for (String s : all) {
+            if (picked.contains(s) || (!q.isEmpty() && !s.toLowerCase().contains(q))) continue;
+            Spell sp = SpellData.lookup(s);
+            model.addElement(s + (sp != null ? (sp.level == 0 ? "  (cantrip)" : "  (level " + sp.level + ")") : ""));
+        }
+    };
+    filter.run();
+    search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        public void insertUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
+        public void removeUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
+        public void changedUpdate(javax.swing.event.DocumentEvent e) { filter.run(); }
+    });
+    JButton addB = new JButton("Add");
+    App.styleSecondaryButton(addB);
+    Runnable doAdd = () -> {
+        Object v = combo.getSelectedItem();
+        if (v == null) return;
+        String name = String.valueOf(v).replaceAll(" +\\((cantrip|level [0-9]+)\\)$", "");
+        if (!picked.contains(name)) picked.add(name);
+        paint[0].run();
+        filter.run();
+    };
+    addB.addActionListener(e -> doAdd.run());
+    search.addActionListener(e -> doAdd.run()); // Enter adds the first match
+    JLabel sl = new JLabel("Search");
+    sl.setForeground(App.TEXT_MUTED);
+    add.add(sl);
+    add.add(search);
+    add.add(combo);
+    add.add(addB);
+    box.add(chips);
+    box.add(add);
+    JPanel wrap = new JPanel(new BorderLayout()) { @Override public Dimension getMaximumSize() { return new Dimension(760, getPreferredSize().height); } };
+    wrap.setOpaque(false);
+    wrap.add(box, BorderLayout.WEST);
+    return ui(wrap, () -> new ArrayList<Object>(picked));
 }
 
 private static JComponent toggleChip(String option, Set<String> selected) {
