@@ -130,6 +130,11 @@ public class App {
         backupRow.setBackground(BG_DARK);
         backupRow.add(btnBackup);
 
+        JButton btnPatchNotes = overlayButton("Patch Notes", false);
+        btnPatchNotes.setToolTipText("What's new in each update");
+        btnPatchNotes.addActionListener(e -> PatchNotes.showOverlay(btnPatchNotes));
+        backupRow.add(btnPatchNotes);
+
         JPanel lower = new JPanel();
         lower.setLayout(new BoxLayout(lower, BoxLayout.Y_AXIS));
         lower.setBackground(BG_DARK);
