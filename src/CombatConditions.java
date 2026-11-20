@@ -99,6 +99,29 @@ static boolean consumable(String item) {
     return false;
 }
 
+// Magic items (used with the Magic action; potions with a Bonus Action): healing potions, homebrew items with a
+// rarity other than Mundane, items whose description gives a rarity ("Potion (Common)"), and well-known names
+private static final String[] MAGIC_WORDS = {"potion", "scroll", "wand", "staff of", "rod of", "ring of", "amulet", "cloak of", "boots of",
+        "bag of", "elixir", "philter", "oil of", "dust of", "bead of", "figurine", "horn of", "ioun", "necklace of", "gem of", "goodberry",
+        "+1", "+2", "+3", "periapt", "brooch", "gloves of", "helm of", "bracers of", "belt of", "circlet", "talisman", "orb of", "crystal ball",
+        "decanter", "immovable rod", "lantern of revealing", "feather token", "quiver of", "pearl of", "stone of", "deck of", "carpet of", "broom of"};
+private static final java.util.regex.Pattern RARITY_TEXT = java.util.regex.Pattern.compile("\\((Common|Uncommon|Rare|Very Rare|Legendary|Artifact)\\b");
+
+static boolean magic(String item) {
+    if (potion(item) != null) return true;
+    String base = GameData.stripEquipmentCount(item);
+    Map<String, Object> hb = CustomAssets.findByName(CustomAssets.ITEMS, base);
+    if (hb != null) {
+        String r = CustomAssets.str(hb, "rarity");
+        return !r.isEmpty() && !"Mundane".equals(r);
+    }
+    String desc = App.itemDescription(base);
+    if (desc != null && RARITY_TEXT.matcher(desc).find()) return true;
+    String l = base.toLowerCase();
+    for (String w : MAGIC_WORDS) if (l.contains(w)) return true;
+    return false;
+}
+
 // Equipment entries that are usable items in Combat (weapons, armor, shields and ammunition are handled elsewhere)
 static Map<String, Integer> fromEquipment(List<String> equipment) {
     Map<String, Integer> out = new LinkedHashMap<>();

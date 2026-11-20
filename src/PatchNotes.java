@@ -7,6 +7,11 @@ import java.awt.*;
 class PatchNotes {
 
 static final String[][] NOTES = {
+    {"2026-11-20", "Death saves & more actions",
+        "Combat: characters at 0 HP fall Unconscious and Prone and make death saving throws at the start of their turns. Damage at 0 HP adds failures (two on a Critical Hit), three successes make them Stable, and three failures kill them.",
+        "Combat: massive damage kills outright when the damage left over at 0 HP equals the character's Hit Point maximum. Dying characters keep their turns, healing wakes them, and dead characters can be revived from their details.",
+        "Combat: new actions Grapple and Shove (each replaces one attack), Help (assist an attack, assist a check, or first aid), Hide, Search, Study, Influence and Ready.",
+        "Combat: casting a spell and using a magic item are now both under the Magic action. Use Item covers nonmagical items and what each hand holds."},
     {"2026-11-20", "Testing tools & cantrips",
         "Characters: new Level Down button (−) removes the last level from a class: its HP roll, any feat gained at that level (with its ability increases), and spells past the new level's limits.",
         "Characters: new Duplicate button (📋) copies a character as \"<name> (Copy)\".",

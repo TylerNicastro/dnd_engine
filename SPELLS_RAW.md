@@ -98,7 +98,7 @@ Done since the last version: NPCs can cast spells, cantrips are castable, and ho
 
 | Rule | Status | What Combat does |
 |---|---|---|
-| Casting time "Bonus Action, immediately after you hit" | App feature | Two ways in. You can **ready** a smite from Cast a Spell before attacking: nothing is spent until a hit lands, and then pressing Done on the hit casts it. Or you can click a smite button in the attack roll after a hit. Either way it uses the Bonus Action and a slot (or a free cast) at the moment of the hit, as written. A readied smite that hasn't fired ends with the turn. |
+| Casting time "Bonus Action, immediately after you hit" | App feature | Two ways in. You can **ready** a smite from Magic → Cast a Spell before attacking: nothing is spent until a hit lands, and then pressing Done on the hit casts it. Or you can click a smite button in the attack roll after a hit. Either way it uses the Bonus Action and a slot (or a free cast) at the moment of the hit, as written. A readied smite that hasn't fired ends with the turn. |
 | Why a smite can't be used | App feature | The attack roll lists every smite with the reason it's unavailable: wrong weapon type, Bonus Action already used (for example, by Hunter's Mark that turn), no slot, or a slot already spent this turn. |
 
 ---

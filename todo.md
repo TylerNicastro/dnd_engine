@@ -4,8 +4,8 @@ A high-level overview of what's still missing for a complete D&D session. Rough 
 
 ## Combat
 - **Spells of level 2 to 9**: combat casting only covers cantrips and level 1. The Test Archmage can already cast everything, so it's a good test bed.
-- **Death & dying**: death saving throws, stabilizing, dropping to 0 HP vs. instant death, and "Unconscious until healed".
-- **Remaining actions**: Grapple / Shove as full flows, plus Help, Hide, Search, Ready, Influence, Study and Magic.
+- **Ready with spells**: a readied spell is only tracked as text. Casting it with the Reaction when the trigger happens (slot spent on readying, held with Concentration) isn't automated yet.
+- **Expertise**: skill checks in combat (Hide, Search, Influence...) add proficiency, but Expertise isn't recorded on characters yet.
 - **Ability checks & saving throws on demand**: contested checks and DM-called saves during combat.
 - **NPC automation (optional)**: suggested or automatic NPC turns (move, then attack the nearest target).
 - **Encounter tools**: encounter difficulty / XP budget, quick-add groups of NPCs, reinforcements mid-fight.

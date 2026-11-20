@@ -18,7 +18,8 @@ import java.util.List;
 //                 ammo {Arrow: 19, ...}, items {"Potion of Healing": 2, ...}, conditions [...], damageMods {Fire: mask, ...},
 //                 dodging, reactionsPerRound, reactionsUsed, hands {main, off, twoHanded} (characters), torch (NPC carries one),
 //                 tempHp, effects [CombatSpells.Effect...], concentration (spell name), slots [levels 1-9 left, pact left],
-//                 freeCasts {"Favored Enemy": 2, ...}, slotTurn (round:uid of the turn it last expended a slot)}]
+//                 freeCasts {"Favored Enemy": 2, ...}, slotTurn (round:uid of the turn it last expended a slot),
+//                 deathSaves [successes, failures], dead (characters), ready {kind, trigger, attack} (Ready action)}]
 //               (x, y) is the token's top-left square. Size, max HP, speed, AC, initiative bonus, attacks and the
 //               token's look are read from the character (by its "id", see CharacterStorage.loadWithIds) or the NPC
 //               asset every time, so edits made elsewhere show up. Tokens whose character / NPC was deleted are dropped.
@@ -40,9 +41,17 @@ import java.util.List;
 // Mounted torches can be attacked like creatures (a stand-in Tok of kind OBJ); their HP is written back to the grid.
 // Characters' damage modifiers start from their species' resistances (SpeciesTraits.damageMods).
 //
-// Turn economy: one action (Attack, Dash, Disengage or Dodge), one Bonus Action (the Light-weapon extra attack, or a
-// Rogue's Cunning Action Dash / Disengage) and one Reaction per round (opportunity attacks). Leaving an enemy's
-// reach with a Move provokes an opportunity attack unless the mover Disengaged; dragging a token never does.
+// Turn economy: one action (Attack, Magic, Dash, Disengage, Dodge, Help, Hide, Influence, Ready, Search, Study or Utilize),
+// one Bonus Action (the Light-weapon extra attack, a potion, a Bonus Action spell, or a Rogue's Cunning Action Dash /
+// Disengage / Hide) and one Reaction per round (opportunity attacks, reaction spells, readied actions). Grapple and Shove
+// replace one attack of the Attack action. Leaving an enemy's reach with a Move provokes an opportunity attack unless
+// the mover Disengaged; dragging a token never does. The other actions' rules are in CombatActions.java and their
+// lasting results (Grappled, Hidden, Help) are CombatSpells.Effects on the tokens.
+//
+// Death & dying: a character dropping to 0 HP falls Unconscious and Prone (dropping held weapons) unless the damage
+// left over equals its HP maximum (instant death). Dying characters keep their turns and roll a death save at the start
+// of each; damage at 0 HP adds failures (two on a Critical Hit). Stable / dead characters and NPCs at 0 HP are skipped
+// ("Skip defeated" setting). Healing ends Unconscious and resets the tallies; dead characters need Revive.
 //
 // Movement: 5 ft. per square (diagonals too), Water squares cost double, walls / closed doors / windows block,
 // open doors don't, and corners can't be cut. Clear (no floor) and Pit squares can't be entered. Creatures can
@@ -121,6 +130,11 @@ static class Tok {
     Map<String, Integer> freeCasts = new LinkedHashMap<>(); // casts without a slot left (species, Favored Enemy, Paladin's Smite)
     String slotTurn = "";       // turn key (round:active uid) on which it last expended a spell slot
     int baseSpeed = 30, baseAc = 10; // before spell effects (Longstrider, Mage Armor, Shield...)
+    // death & dying (characters only; NPCs die at 0 HP)
+    int deathSuccesses, deathFailures;
+    boolean dead;
+    // Ready action: response kind ("Attack", "Move", "Other"; "" = nothing readied), its trigger, the attack's name
+    String readyKind = "", readyTrigger = "", readyAttack = "";
     // animation only (not saved)
     double drawX = Double.NaN, drawY = Double.NaN; // drawn position while sliding (in squares)
     double shakeDx;             // sideways shake offset in pixels
@@ -147,6 +161,28 @@ static class Tok {
 
     boolean down() {
         return hp <= 0;
+    }
+
+    boolean stable() {
+        for (String c : conditions) if ("Stable".equalsIgnoreCase(c)) return true;
+        return false;
+    }
+
+    // A character at 0 HP who still makes death saving throws
+    boolean dying() {
+        return PC.equals(kind) && hp <= 0 && !dead && !stable();
+    }
+
+    // Out of the fight: an NPC at 0 HP, or a character who is dead or Stable (dying characters still take turns)
+    boolean out() {
+        return hp <= 0 && (!PC.equals(kind) || dead || stable());
+    }
+
+    // "dead", "dying", "stable" or "down" (for lists); "" while above 0 HP
+    String downWord() {
+        if (hp > 0) return "";
+        if (!PC.equals(kind) || dead) return PC.equals(kind) ? "dead" : "down";
+        return stable() ? "stable" : "dying";
     }
 
     boolean covers(int cx, int cy) {
@@ -516,6 +552,18 @@ private void loadState() {
             }
             t.freeCasts = intMap(m.get("freeCasts"));
             t.slotTurn = CustomAssets.str(m, "slotTurn");
+            if (m.get("deathSaves") instanceof List) {
+                List<?> ds = (List<?>) m.get("deathSaves");
+                t.deathSuccesses = ds.size() > 0 && ds.get(0) instanceof Number ? Math.max(0, Math.min(3, ((Number) ds.get(0)).intValue())) : 0;
+                t.deathFailures = ds.size() > 1 && ds.get(1) instanceof Number ? Math.max(0, Math.min(3, ((Number) ds.get(1)).intValue())) : 0;
+            }
+            t.dead = CustomAssets.bool(m, "dead");
+            if (m.get("ready") instanceof Map) {
+                Map<?, ?> r = (Map<?, ?>) m.get("ready");
+                t.readyKind = CustomAssets.str(r, "kind");
+                t.readyTrigger = CustomAssets.str(r, "trigger");
+                t.readyAttack = CustomAssets.str(r, "attack");
+            }
             tokens.add(t);
         }
     }
@@ -728,6 +776,15 @@ private void persistNow() {
             m.put("freeCasts", new LinkedHashMap<String, Object>(t.freeCasts));
         }
         if (!t.slotTurn.isEmpty()) m.put("slotTurn", t.slotTurn);
+        if (t.deathSuccesses > 0 || t.deathFailures > 0) m.put("deathSaves", new ArrayList<Object>(Arrays.asList(t.deathSuccesses, t.deathFailures)));
+        if (t.dead) m.put("dead", true);
+        if (!t.readyKind.isEmpty()) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kind", t.readyKind);
+            r.put("trigger", t.readyTrigger);
+            r.put("attack", t.readyAttack);
+            m.put("ready", r);
+        }
         tl.add(m);
     }
     asset.put("tokens", tl);
@@ -763,6 +820,7 @@ private void persistNow() {
 // Refresh helpers
 // ===============================================================
 private void refreshAll() {
+    checkGrapples();
     startButton.setVisible(!inCombat);
     combatBadge.setVisible(inCombat);
     combatBadge.setText("Round " + round + (active != null ? "  •  " + active.label + "'s turn" : ""));
@@ -1172,12 +1230,13 @@ private void beginCombat() {
         t.reactionsUsed = 0;
         loadSlots(t); // spell slots and free casts copied from the sheet again
         t.slotTurn = "";
+        clearReady(t);
     }
     sortOrder();
     round = 1;
     active = null;
     for (Tok t : order) {
-        if (!skipDefeated || !t.down()) {
+        if (!skipDefeated || !t.out()) {
             active = t;
             break;
         }
@@ -1204,7 +1263,7 @@ private void endTurn() {
         i = (i + 1) % n;
         if (i == 0) round++;
         next = order.get(i);
-        if (!skipDefeated || !next.down()) break;
+        if (!skipDefeated || !next.out()) break;
     }
     active = next;
     moveLeft = active.speed;
@@ -1223,6 +1282,9 @@ private void endCombat() {
     for (Tok t : tokens) {
         t.dodging = false;
         t.reactionsUsed = 0;
+        clearReady(t);
+        // grapples, hiding and Help end with the fight
+        for (CombatSpells.Effect e : new ArrayList<>(t.effects)) if (CombatActions.isActionEffect(e.spell)) removeEffect(t, e);
     }
     endShortSpellEffects(); // effects timed in rounds end with the fight; hour-long ones (Mage Armor, Longstrider...) stay
     setStatus("Combat ended. Back to placement: drag tokens freely, or Start Combat again. "
@@ -1313,6 +1375,7 @@ private void computeReach() {
     Arrays.fill(reachPrev, -1);
     int start = active.y * w + active.x;
     if (start < 0 || start >= dist.length) return;
+    int drag = draggingExtra(active) ? 2 : 1; // dragging a grappled creature: each foot costs 1 extra foot
     dist[start] = 0;
     PriorityQueue<int[]> pq = new PriorityQueue<>((a, b) -> a[0] != b[0] ? a[0] - b[0] : a[2] - b[2]);
     pq.add(new int[]{0, start, 0});
@@ -1326,7 +1389,7 @@ private void computeReach() {
                 int nx = x + dx, ny = y + dy;
                 if (nx < 0 || ny < 0 || nx + size > w || ny + size > h) continue;
                 if (!canStep(active, x, y, dx, dy)) continue;
-                int nc = cur[0] + (difficultAt(nx, ny, size) ? 10 : 5);
+                int nc = cur[0] + (difficultAt(nx, ny, size) ? 10 : 5) * drag;
                 int nd = cur[2] + (dx != 0 && dy != 0 ? 1 : 0);
                 int nk = ny * w + nx;
                 if (nc > moveLeft || nc > dist[nk] || (nc == dist[nk] && nd >= diag[nk])) continue;
@@ -1438,6 +1501,7 @@ private void animateStep(Tok mover, List<int[]> path, int i, int cost, Set<Tok> 
         boolean wasGreased = greaseUnder(mover) != null;
         mover.x = to[0];
         mover.y = to[1];
+        dragGrappled(mover, to[0] - from[0], to[1] - from[1]);
         CombatSpells.Zone g = greaseUnder(mover);
         if (g != null && !wasGreased && !asked.contains(mover)) {
             asked.add(mover); // one Grease save per move
@@ -1639,7 +1703,12 @@ private void startTurnActions() {
     if (active != null) {
         active.reactionsUsed = 0; // Reactions come back at the start of your turn
         active.dodging = false;      // Dodge lasts until the start of your next turn
+        if (!active.readyKind.isEmpty()) {
+            note(active.label + "'s readied action (" + active.readyTrigger + ") lapses.");
+            clearReady(active);      // a readied action lasts until the start of your next turn
+        }
         onTurnStart(active);         // spell effects: durations, start-of-turn damage, Heroism...
+        startOfTurnDying(active);    // dying characters roll a death saving throw
     }
 }
 
@@ -2378,7 +2447,9 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
             String why = DamageRules.explain(Math.max(0, p.total), p.type, targetMods);
             bits.add(t + (p.type.isEmpty() ? "" : " " + p.type.toLowerCase()) + (why.isEmpty() ? "" : " [" + why + "]"));
         }
+        critDamage = isCrit.getAsBoolean(); // a Critical Hit on a dying character is two death save failures
         int lost = dealDamage(target, taken, att, atk.melee && !tc.ranged);
+        critDamage = false;
         applied[0] = true;
         setStatus(att.label + " hits " + target.label + " for " + String.join(" + ", bits) + " damage"
                 + (lost < taken ? " (" + (taken - lost) + " absorbed by Temporary Hit Points)" : "")
@@ -2660,7 +2731,7 @@ private static JLabel muted2(String text) {
 
 // ===============================================================
 // Spellcasting (mechanics in CombatSpells.java, deviations from the rules in SPELLS_RAW.md)
-//   Cast a Spell (Current Turn tab, characters and NPCs with spells) -> pick a spell -> pick a slot -> pick targets /
+//   Magic → Cast a Spell (Current Turn tab, characters and NPCs with spells) -> pick a spell -> pick a slot -> pick targets /
 //   aim the area on the board -> attack roll, saving throws, healing or an effect. Smites can be readied from the
 //   picker (cast automatically on the next weapon hit) or cast from the attack roll's buttons.
 //   Slots are a per-token copy (characters: what the sheet has left; NPCs: their stat block's slots and per-day uses),
@@ -2900,6 +2971,7 @@ private void chooseSlot(Tok t, CombatSpells.Known k, java.util.function.Consumer
 // Spends what casting costs: the action / Bonus Action / Reaction, the slot (or free cast), starts Concentration,
 // and ends the caster's Sanctuary (casting a spell ends it). Returns the refund for Undo.
 private Runnable spendSpell(Tok t, CombatSpells.Known k, SlotPick pick) {
+    endHidden(t, "cast a spell");
     String time = k.spell.castingTime;
     boolean myTurn = inCombat && t == active;
     boolean usedAction = false, usedBonus = false, usedReaction = false;
@@ -3176,13 +3248,42 @@ private void spellAttackEffects(Tok att, Tok target, TargetCheck tc) {
         tc.notes.add("Compelled Duel: Disadvantage on attacks against anyone but " + (c == null ? "its challenger" : c.label) + ".");
     }
     if (CombatSpells.has(target.effects, "Sanctuary")) tc.notes.add(target.label + " is warded by Sanctuary: the attacker makes a WIS save first.");
+    // Help (assist an attack): the helper's allies get Advantage on their next attack roll against the target
+    CombatSpells.Effect help = helpFor(att, target);
+    if (help != null) {
+        tc.advantage = true;
+        Tok h = byUid(help.caster);
+        tc.notes.add((h == null ? "An ally" : h.label) + " is Helping: Advantage on this attack roll (used up by it).");
+    }
+    // Grappled: Disadvantage on attacks against anyone but the grappler
+    for (CombatSpells.Effect e : att.effects) {
+        if (CombatActions.GRAPPLED.equals(e.spell) && !e.caster.equals(target.uid)) {
+            tc.disadvantage = true;
+            Tok g = byUid(e.caster);
+            tc.notes.add(att.label + " is Grappled: Disadvantage on attacks against anyone but " + (g == null ? "the grappler" : g.label) + ".");
+            break;
+        }
+    }
+}
+
+// The Help effect on `target` that `att` can use (from one of its allies, not itself), or null
+private CombatSpells.Effect helpFor(Tok att, Tok target) {
+    for (CombatSpells.Effect e : target.effects) {
+        if (!CombatActions.HELP.equals(e.spell) || e.caster.equals(att.uid)) continue;
+        Tok h = byUid(e.caster);
+        if (h != null && h.team >= 0 && h.team == att.team) return e;
+    }
+    return null;
 }
 
 // What making an attack does to spells: it ends the attacker's Sanctuary, Compelled Duel's caster attacking someone
 // else ends the duel, and single-use effects (Guiding Bolt, Vicious Mockery) are used up
 private void afterAttackMade(Tok att, Tok target, SpellCast cast) {
     for (CombatSpells.Effect e : new ArrayList<>(att.effects)) if (e.nextAttackDis) removeEffect(att, e);
+    endHidden(att, "attacked");
     if (OBJ.equals(target.kind)) return;
+    CombatSpells.Effect help = helpFor(att, target);
+    if (help != null) removeEffect(target, help);
     CombatSpells.Effect s = CombatSpells.find(att.effects, "Sanctuary");
     if (s != null && cast == null) removeEffect(att, s);
     if (att.concentration.equals("Compelled Duel")) {
@@ -3295,7 +3396,10 @@ private int dealDamage(Tok target, int amount, Tok source, boolean meleeHit) {
     int absorbed = Math.min(target.tempHp, amount);
     target.tempHp -= absorbed;
     int lost = amount - absorbed;
+    int hpBefore = target.hp;
     target.hp = Math.max(0, target.hp - lost);
+    if (lost > 0) damageAtZero(target, hpBefore, lost);
+    if (lost > 0 && target.hp <= 0) clearReady(target);
 
     CombatSpells.Effect aoa = CombatSpells.find(target.effects, "Armor of Agathys");
     if (aoa != null && hadTemp && meleeHit && source != null && source != target && !OBJ.equals(source.kind) && !source.down()) {
@@ -3336,6 +3440,10 @@ private int dealDamage(Tok target, int amount, Tok source, boolean meleeHit) {
 
 // Heals unless a spell stops it (Chill Touch). Returns the HP regained.
 private int healTok(Tok t, int amount) {
+    if (t.dead) {
+        note(t.label + " is dead: healing doesn't help. A spell like Revivify is needed (Revive in its details).");
+        return 0;
+    }
     for (CombatSpells.Effect e : t.effects) {
         if (e.noHeal) {
             note(t.label + " can't regain Hit Points (" + e.spell + ").");
@@ -3344,7 +3452,12 @@ private int healTok(Tok t, int amount) {
     }
     int before = t.hp;
     t.hp = Math.min(t.maxHp, t.hp + Math.max(0, amount));
-    if (before <= 0 && t.hp > 0) t.conditions.removeIf(c -> "Unconscious".equalsIgnoreCase(c) || "Stable".equalsIgnoreCase(c));
+    if (before <= 0 && t.hp > 0) {
+        // Unconscious until healed: any healing wakes it (it stays Prone) and resets the death save tallies
+        t.conditions.removeIf(c -> "Unconscious".equalsIgnoreCase(c) || "Stable".equalsIgnoreCase(c));
+        t.deathSuccesses = 0;
+        t.deathFailures = 0;
+    }
     return t.hp - before;
 }
 
@@ -5186,7 +5299,7 @@ static int roundsFor(String duration) {
 }
 
 // ---------------- side panel ----------------
-// Targeting banner, slots, Concentration, Cast a Spell, spells in play, readied smite and ongoing spell actions
+// Targeting banner, slots, Concentration, spells in play, readied smite and ongoing spell actions
 private void addSpellSection(Tok t, boolean incap) {
     boolean caster = isCaster(t);
     // a spell waiting for targets: what to do next, with Confirm / Cancel
@@ -5293,15 +5406,7 @@ private void addSpellSection(Tok t, boolean incap) {
         JPanel row = new JPanel(new GridLayout(0, 1, 0, 6));
         row.setOpaque(false);
         row.setMaximumSize(new Dimension(400, 220));
-        JButton cast = economyButton(spellTargeting != null ? "Cancel Spell" : "✦ Cast a Spell", SPELL_COLOR,
-                incap ? "Can't cast while Incapacitated" : "Pick a spell, a slot and targets");
-        cast.setEnabled(spellTargeting != null || (!incap && inCombat && t == active));
-        cast.addActionListener(e -> {
-            if (spellTargeting != null) cancelModes();
-            else showSpellPicker(t);
-            refreshSide();
-        });
-        row.add(cast);
+        // casting itself is under the Magic action (Current Turn's action buttons); these are ongoing spell actions
         if (canSustainWitchBolt(t)) {
             Tok wt = witchBoltTarget(t);
             JButton wb = economyButton("Witch Bolt → " + wt.label + " (1d12)", BONUS_COLOR, "Bonus Action: 1d12 Lightning damage to the target automatically");
@@ -5333,8 +5438,10 @@ private void addSpellSection(Tok t, boolean incap) {
             mm.addActionListener(e -> startMoveMark(t, mark));
             row.add(mm);
         }
-        addSide(row);
-        gap(6);
+        if (row.getComponentCount() > 0) {
+            addSide(row);
+            gap(6);
+        }
     }
     if (t.tempHp > 0) {
         JLabel th = new JLabel("Temporary Hit Points: " + t.tempHp);
@@ -5387,12 +5494,14 @@ private JPanel effectChips(Tok t) {
 
 private void showEffectInfo(Component anchor, Tok t, CombatSpells.Effect e) {
     Tok caster = byUid(e.caster);
-    Spell sp = SpellData.lookup(e.spell);
-    CombatSpells.Def d = sp != null ? CombatSpells.defOrUtility(sp) : CombatSpells.def(e.spell);
+    boolean actionFx = CombatActions.isActionEffect(e.spell); // Grappled, Hidden, Help: not spells
+    Spell sp = actionFx ? null : SpellData.lookup(e.spell);
+    CombatSpells.Def d = actionFx ? null : sp != null ? CombatSpells.defOrUtility(sp) : CombatSpells.def(e.spell);
     JPanel body = new JPanel();
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
-    JLabel l = new JLabel("<html><div style='width:420px'>" + App.escapeHtml(d != null ? d.how : sp != null ? sp.description : "") + "</div></html>");
+    JLabel l = new JLabel("<html><div style='width:420px'>" + App.escapeHtml(actionFx ? CombatActions.effectHow(e.spell)
+            : d != null ? d.how : sp != null ? sp.description : "") + "</div></html>");
     l.setForeground(App.TEXT_LIGHT);
     l.setFont(new Font("SansSerif", Font.PLAIN, 13));
     l.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -5400,7 +5509,9 @@ private void showEffectInfo(Component anchor, Tok t, CombatSpells.Effect e) {
     body.add(Box.createRigidArea(new Dimension(0, 8)));
     List<String> facts = new ArrayList<>();
     String cn = caster == null ? "the caster" : caster.label;
-    facts.add("Cast by " + (caster == null ? "someone no longer on the map" : caster.label) + (e.slot > 1 ? " with a level " + e.slot + " slot" : "") + " in round " + e.castRound + ".");
+    if (actionFx) facts.add((CombatActions.HIDDEN.equals(e.spell) ? "Hid" : CombatActions.GRAPPLED.equals(e.spell) ? "Grappled by " + cn : "From " + cn)
+            + " in round " + e.castRound + ".");
+    else facts.add("Cast by " + (caster == null ? "someone no longer on the map" : caster.label) + (e.slot > 1 ? " with a level " + e.slot + " slot" : "") + " in round " + e.castRound + ".");
     if (e.markDice > 0) facts.add(cn + "'s attack-roll hits against " + t.label + " deal +" + e.markDice + "d" + e.markSides + " " + e.markType + " damage.");
     if (e.ac != 0) facts.add(signedInt(e.ac) + " AC.");
     if (e.speed != 0) facts.add(signedInt(e.speed) + " ft. Speed.");
@@ -5421,6 +5532,15 @@ private void showEffectInfo(Component anchor, Tok t, CombatSpells.Effect e) {
     btns.setOpaque(false);
     btns.setAlignmentX(Component.LEFT_ALIGNMENT);
     Runnable[] close = new Runnable[1];
+    if (CombatActions.GRAPPLED.equals(e.spell)) {
+        JButton esc = economyButton("Escape (action)", ACTION_COLOR, "STR (Athletics) or DEX (Acrobatics) check against DC " + e.dc);
+        esc.setEnabled(!(inCombat && t == active && actionUsed) && !CombatConditions.incapacitated(t.conditions) && !t.down());
+        esc.addActionListener(ev -> {
+            close[0].run();
+            escapeGrapple(t, e);
+        });
+        btns.add(esc);
+    }
     if (e.conds.contains("Restrained") && ("Entangle".equals(e.spell) || "Ensnaring Strike".equals(e.spell) || e.dc > 0)) {
         JButton esc = economyButton("Escape check (action)", ACTION_COLOR, "STR (Athletics) check against DC " + e.dc + " to break free");
         esc.addActionListener(ev -> {
@@ -5621,11 +5741,11 @@ private JComponent economyLegend(Tok t) {
 
 private void showEconomyInfo(Tok t) {
     App.showInfoOverlay(sideContent, "Your Turn", t.label,
-            "On your turn you can move up to your Speed and take one action (green): Attack, Dash (extra movement equal to your Speed), "
-                    + "Disengage (your movement doesn't provoke opportunity attacks this turn), Dodge (until your next turn, attacks against you "
-                    + "have Disadvantage and you have Advantage on Dexterity saving throws) or Utilize an item.\n\n"
-                    + "Bonus Action (orange): only when something gives you one, like the Light-weapon extra attack, drinking a healing potion "
-                    + "or a Rogue's Cunning Action.\n\n"
+            "On your turn you can move up to your Speed and take one action (green): Attack (Grapple and Shove replace one of its attacks), "
+                    + "Magic (cast a spell or use a magic item), Dash, Disengage, Dodge, Help, Hide, Influence, Ready, Search, Study, "
+                    + "or Utilize an item (Use Item). Hover over a button for its rules.\n\n"
+                    + "Bonus Action (orange): only when something gives you one, like the Light-weapon extra attack, drinking a healing potion, "
+                    + "a Bonus Action spell or a Rogue's Cunning Action (Dash, Disengage or Hide).\n\n"
                     + "Reaction (purple): an instant response, like an opportunity attack, usable even on other creatures' turns. "
                     + "It comes back at the start of your turn.\n\n"
                     + "Filled circles are still available; empty circles are used.",
@@ -5776,7 +5896,7 @@ private void showConditionPicker(Component anchor, Tok t, Runnable after) {
     close[0] = App.showSheetOverlay(anchor, "Add Condition: " + t.label, grid, null);
 }
 
-// Use Item: a healing potion is a Bonus Action (roll to heal); anything else takes the action (Utilize)
+// Use Item: hands, and nonmagical items (the Utilize action). Magic items (potions included) are under Magic (showMagic).
 private void showUseItem(Component anchor, Tok t) {
     JPanel list = new JPanel();
     list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
@@ -5784,7 +5904,8 @@ private void showUseItem(Component anchor, Tok t) {
     Runnable[] close = new Runnable[1];
     boolean myTurn = inCombat && t == active;
     JLabel intro = new JLabel("<html><div style='width:440px'>Items " + App.escapeHtml(t.label) + " can use in this encounter"
-            + (PC.equals(t.kind) ? " (copied from Equipment; using one here doesn't change the character sheet)" : "") + ".</div></html>");
+            + (PC.equals(t.kind) ? " (copied from Equipment; using one here doesn't change the character sheet)" : "")
+            + ". Nonmagical items take the Utilize action; magic items are used through Magic.</div></html>");
     intro.setForeground(App.TEXT_MUTED);
     intro.setFont(new Font("SansSerif", Font.PLAIN, 12));
     intro.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -5794,9 +5915,26 @@ private void showUseItem(Component anchor, Tok t) {
         addHandsSection(list, anchor, t, close);
         list.add(sectionCaption("OTHER ITEMS"));
     }
-    if (t.items.isEmpty()) list.add(muted("No usable items. Add one below (e.g. a Potion of Healing the DM hands out)."));
+    int mundane = 0, magicCount = 0;
+    for (String item : t.items.keySet()) {
+        if (CombatItems.magic(item)) magicCount++;
+        else mundane++;
+    }
+    if (mundane == 0) list.add(muted("No nonmagical items to use. Add one below (e.g. a Healer's Kit or Caltrops)."));
+    if (magicCount > 0) {
+        JButton toMagic = Tokens.smallButton(magicCount + " magic item" + (magicCount == 1 ? "" : "s") + " (potions, scrolls...) → Magic",
+                "Magic items are used with the Magic action (potions with a Bonus Action)");
+        toMagic.setAlignmentX(Component.LEFT_ALIGNMENT);
+        toMagic.addActionListener(e -> {
+            close[0].run();
+            showMagic(board, t);
+        });
+        list.add(toMagic);
+        list.add(Box.createRigidArea(new Dimension(0, 6)));
+    }
     for (Map.Entry<String, Integer> en : new ArrayList<>(t.items.entrySet())) {
         String item = en.getKey();
+        if (CombatItems.magic(item)) continue; // used through Magic
         int[] potion = CombatItems.potion(item);
         boolean bonus = potion != null;
         boolean free = !myTurn || (bonus ? !bonusAttackUsed : !actionUsed);
@@ -6123,6 +6261,1162 @@ private void showPotion(Component anchor, Tok user, String item, int[] dice) {
 }
 
 // ===============================================================
+// Death & dying (characters; rules text in CombatActions.DEATH_INFO)
+// ===============================================================
+private boolean critDamage; // the damage being dealt is from a Critical Hit (two death save failures)
+
+// Damage that takes a character to 0 HP, or lands while it's at 0 HP. NPCs simply die at 0 HP.
+private void damageAtZero(Tok t, int hpBefore, int lost) {
+    if (!PC.equals(t.kind) || t.dead || OBJ.equals(t.kind)) return;
+    if (hpBefore > 0) {
+        if (t.hp > 0) return;
+        int over = lost - hpBefore;
+        if (over >= t.maxHp) die(t, "the " + over + " damage left over at 0 HP equals or exceeds its Hit Point maximum (" + t.maxHp + ")");
+        else fallUnconscious(t);
+        return;
+    }
+    // already at 0 HP
+    if (lost >= t.maxHp) {
+        die(t, "it took " + lost + " damage at 0 HP, at least its Hit Point maximum");
+        return;
+    }
+    boolean wasStable = t.stable();
+    t.conditions.removeIf("Stable"::equalsIgnoreCase);
+    int f = critDamage ? 2 : 1;
+    t.deathFailures = Math.min(3, t.deathFailures + f);
+    if (t.deathFailures >= 3) die(t, "three death save failures");
+    else note(t.label + " takes damage at 0 HP: " + f + " death save failure" + (f == 1 ? "" : "s") + (critDamage ? " (Critical Hit)" : "")
+            + " (" + t.deathFailures + " / 3)" + (wasStable ? "; it's no longer Stable." : "."));
+}
+
+private void fallUnconscious(Tok t) {
+    t.deathSuccesses = 0;
+    t.deathFailures = 0;
+    t.conditions.removeIf("Stable"::equalsIgnoreCase);
+    if (!hasCond(t, "Unconscious")) t.conditions.add("Unconscious");
+    if (!hasCond(t, "Prone")) t.conditions.add("Prone");
+    String dropped = dropHeld(t);
+    endHidden(t, "");
+    note(t.label + " drops to 0 HP and falls Unconscious and Prone" + (dropped.isEmpty() ? "" : ", dropping " + dropped)
+            + ". It makes death saving throws at the start of its turns.");
+}
+
+// Unconscious: drop whatever it holds (weapons and lights; a shield stays on the arm). Returns what was dropped.
+private String dropHeld(Tok t) {
+    if (!PC.equals(t.kind) || t.source == null) return "";
+    WeaponRules.Hands h = WeaponRules.hands(combatRec(t));
+    List<String> out = new ArrayList<>();
+    if (!h.main.isEmpty() && !WeaponRules.isShield(h.main)) {
+        out.add(h.main);
+        h.main = "";
+        h.twoHanded = false;
+    }
+    if (!h.off.isEmpty() && !WeaponRules.isShield(h.off)) {
+        out.add(h.off);
+        h.off = "";
+    }
+    if (out.isEmpty()) return "";
+    t.hands = WeaponRules.handsJson(h);
+    t.ac = WeaponRules.armorClass(combatRec(t));
+    t.baseAc = t.ac;
+    applySpellStats(t);
+    rebuildAttacks(t);
+    return String.join(" and ", out);
+}
+
+private void die(Tok t, String why) {
+    t.dead = true;
+    t.deathFailures = 3;
+    t.conditions.removeIf("Stable"::equalsIgnoreCase);
+    if (!hasCond(t, "Unconscious")) t.conditions.add("Unconscious");
+    if (!t.concentration.isEmpty()) endConcentration(t, "died");
+    clearReady(t);
+    note(t.label + " dies: " + why + ".");
+}
+
+private void stabilize(Tok t, String how) {
+    if (!t.dying()) return;
+    if (!hasCond(t, "Stable")) t.conditions.add("Stable");
+    t.deathSuccesses = 0;
+    t.deathFailures = 0;
+    note(t.label + " is Stable (" + how + "): no more death saves, still Unconscious at 0 HP until healed.");
+}
+
+// Start of a turn at 0 HP: dying characters roll a death save; Unconscious stays until healed
+private void startOfTurnDying(Tok t) {
+    if (!PC.equals(t.kind) || t.hp > 0 || t.dead) return;
+    if (!hasCond(t, "Unconscious")) t.conditions.add("Unconscious");
+    if (!t.dying()) return;
+    prompts.add(() -> showDeathSave(t));
+    SwingUtilities.invokeLater(this::flushPrompts);
+}
+
+// Death saving throw: a plain d20 (reroll or type your own roll), applied when the overlay closes
+private void showDeathSave(Tok t) {
+    if (!t.dying()) return;
+    int[] d = {rollD20()};
+    boolean[] own = {false}, done = {false};
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    JLabel intro = new JLabel("<html><div style='width:420px'><b>" + App.escapeHtml(t.label) + "</b> is dying at 0 Hit Points. "
+            + "Roll a d20: 10 or higher is a success, 9 or lower a failure. A natural 1 is two failures; a natural 20 regains 1 Hit Point.</div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+    App.clickable(intro, () -> App.showInfoOverlay(intro, "Death Saving Throws", "At 0 Hit Points", CombatActions.DEATH_INFO, null));
+    body.add(intro);
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    body.add(deathPips(t));
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    JLabel res = new JLabel();
+    res.setFont(new Font("SansSerif", Font.BOLD, 16));
+    res.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(res);
+    Runnable render = () -> {
+        int v = d[0];
+        String what = v == 20 ? "Natural 20: regains 1 Hit Point!" : v == 1 ? "Natural 1: two failures" : v >= 10 ? "Success" : "Failure";
+        res.setText("d20 " + v + (own[0] ? " (your roll)" : "") + "  →  " + what);
+        res.setForeground(v >= 10 ? FREE_COLOR : App.ACCENT_HOVER);
+    };
+    render.run();
+    JPanel rr = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
+    rr.setOpaque(false);
+    rr.setAlignmentX(Component.LEFT_ALIGNMENT);
+    JButton reroll = Tokens.smallButton("Reroll", "Roll the d20 again");
+    reroll.addActionListener(e -> {
+        d[0] = rollD20();
+        own[0] = false;
+        render.run();
+    });
+    JSpinner sp = new JSpinner(new SpinnerNumberModel(10, 1, 20, 1));
+    sp.setPreferredSize(new Dimension(56, 28));
+    styleSpinner(sp);
+    JButton use = Tokens.smallButton("Use my roll", "Use the d20 you rolled at the table");
+    use.addActionListener(e -> {
+        commit(sp);
+        d[0] = (Integer) sp.getValue();
+        own[0] = true;
+        render.run();
+    });
+    rr.add(reroll);
+    rr.add(muted2("or my d20:"));
+    rr.add(sp);
+    rr.add(use);
+    body.add(rr);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+    JButton ok = App.overlayButton("Done", true);
+    Runnable[] close = new Runnable[1];
+    ok.addActionListener(e -> close[0].run());
+    JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+    foot.setOpaque(false);
+    foot.setAlignmentX(Component.LEFT_ALIGNMENT);
+    foot.add(ok);
+    body.add(foot);
+    close[0] = App.showSheetOverlay(board, "Death Saving Throw: " + t.label, body, ok, () -> {
+        if (done[0]) return;
+        done[0] = true;
+        applyDeathSave(t, d[0]); // closing any way keeps the shown roll
+        flushPrompts();
+    });
+}
+
+private void applyDeathSave(Tok t, int d20) {
+    if (!t.dying()) return;
+    if (d20 >= 20) {
+        healTok(t, 1);
+        note(t.label + " rolls a natural 20 on its death save: it regains 1 Hit Point and wakes (still Prone).");
+        return;
+    }
+    if (d20 >= 10) {
+        t.deathSuccesses++;
+        if (t.deathSuccesses >= 3) stabilize(t, "three death save successes");
+        else note(t.label + "'s death save: " + d20 + ", a success (" + t.deathSuccesses + " / 3).");
+        return;
+    }
+    t.deathFailures = Math.min(3, t.deathFailures + (d20 <= 1 ? 2 : 1));
+    if (t.deathFailures >= 3) die(t, "three death save failures");
+    else note(t.label + "'s death save: " + d20 + (d20 <= 1 ? ", a natural 1: two failures" : ", a failure") + " (" + t.deathFailures + " / 3).");
+}
+
+// Successes / failures circles (filled = marked)
+private JPanel deathPips(Tok t) {
+    JPanel p = new JPanel(new GridLayout(1, 2, 6, 0));
+    p.setOpaque(false);
+    p.setAlignmentX(Component.LEFT_ALIGNMENT);
+    p.setMaximumSize(new Dimension(300, 50));
+    p.add(new Pips("SUCCESSES", FREE_COLOR, 3, t.deathSuccesses, t.stable() ? "Stable" : t.deathSuccesses + " / 3"));
+    p.add(new Pips("FAILURES", App.ACCENT_HOVER, 3, t.deathFailures, t.dead ? "Dead" : t.deathFailures + " / 3"));
+    return p;
+}
+
+// Death saves block for the Current Turn tab and the token's details: tallies, status and what can be done
+private JPanel deathSavePanel(Tok t, Runnable after) {
+    JPanel box = new JPanel();
+    box.setLayout(new BoxLayout(box, BoxLayout.Y_AXIS));
+    box.setOpaque(false);
+    box.setAlignmentX(Component.LEFT_ALIGNMENT);
+    box.add(sectionCaption("DEATH SAVES"));
+    JPanel pips = deathPips(t);
+    App.clickable(pips, () -> showDeathSaveEditor(pips, t, after));
+    pips.setToolTipText("Click to adjust, stabilize or revive");
+    box.add(pips);
+    String status = t.dead ? t.label + " is dead."
+            : t.stable() ? t.label + " is Stable: Unconscious at 0 HP until healed, no death saves."
+            : t.label + " is dying: a death saving throw at the start of each of its turns. Damage adds failures; any healing wakes it.";
+    JLabel sl = new JLabel("<html><div style='width:280px'>" + App.escapeHtml(status) + "</div></html>");
+    sl.setForeground(t.dead ? App.ACCENT_HOVER : t.stable() ? FREE_COLOR : new Color(0xE0, 0xA0, 0x30));
+    sl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    sl.setAlignmentX(Component.LEFT_ALIGNMENT);
+    App.clickable(sl, () -> App.showInfoOverlay(sl, "Death Saving Throws", "At 0 Hit Points", CombatActions.DEATH_INFO, null));
+    box.add(sl);
+    JPanel btns = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+    btns.setOpaque(false);
+    btns.setAlignmentX(Component.LEFT_ALIGNMENT);
+    if (t.dying()) {
+        JButton roll = Tokens.smallButton("Roll death save", "Roll a death saving throw now (it's rolled automatically at the start of its turn)");
+        roll.addActionListener(e -> showDeathSave(t));
+        btns.add(roll);
+    }
+    JButton edit = Tokens.smallButton(t.dead ? "Revive…" : "Adjust…", "Change the tallies, stabilize, or revive");
+    edit.addActionListener(e -> showDeathSaveEditor(edit, t, after));
+    btns.add(edit);
+    box.add(btns);
+    return box;
+}
+
+private void showDeathSaveEditor(Component anchor, Tok t, Runnable after) {
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    JPanel holder = new JPanel(new BorderLayout());
+    holder.setOpaque(false);
+    holder.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(holder);
+    Runnable[] render = new Runnable[1];
+    Runnable changed = () -> {
+        persistSoon();
+        refreshAll();
+        if (after != null) after.run();
+        render[0].run();
+    };
+    render[0] = () -> {
+        holder.removeAll();
+        JPanel col = new JPanel();
+        col.setLayout(new BoxLayout(col, BoxLayout.Y_AXIS));
+        col.setOpaque(false);
+        JLabel intro = new JLabel("<html><div style='width:400px'>" + App.escapeHtml(t.label + ": " + t.hp + " / " + t.maxHp + " HP"
+                + (t.dead ? ", dead." : t.hp > 0 ? ", conscious." : t.stable() ? ", Stable." : ", dying.")) + "</div></html>");
+        intro.setForeground(App.TEXT_LIGHT);
+        intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+        col.add(intro);
+        col.add(Box.createRigidArea(new Dimension(0, 8)));
+        col.add(deathPips(t));
+        col.add(Box.createRigidArea(new Dimension(0, 6)));
+        JPanel adj = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        adj.setOpaque(false);
+        adj.setAlignmentX(Component.LEFT_ALIGNMENT);
+        String[][] spec = {{"Success +", "s", "1"}, {"Success −", "s", "-1"}, {"Failure +", "f", "1"}, {"Failure −", "f", "-1"}};
+        for (String[] sp : spec) {
+            JButton b = Tokens.smallButton(sp[0], "Adjust the tally");
+            b.setEnabled(t.hp <= 0 && !t.dead);
+            b.addActionListener(e -> {
+                int dv = Integer.parseInt(sp[2]);
+                if ("s".equals(sp[1])) t.deathSuccesses = Math.max(0, Math.min(3, t.deathSuccesses + dv));
+                else t.deathFailures = Math.max(0, Math.min(3, t.deathFailures + dv));
+                if (t.deathSuccesses >= 3) stabilize(t, "three successes");
+                if (t.deathFailures >= 3) die(t, "three death save failures");
+                changed.run();
+            });
+            adj.add(b);
+        }
+        col.add(adj);
+        col.add(Box.createRigidArea(new Dimension(0, 8)));
+        JPanel acts = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        acts.setOpaque(false);
+        acts.setAlignmentX(Component.LEFT_ALIGNMENT);
+        if (t.dying()) {
+            JButton st = Tokens.smallButton("Stabilize", "Mark it Stable (first aid, a Healer's Kit, Spare the Dying)");
+            st.addActionListener(e -> {
+                stabilize(t, "marked by the DM");
+                changed.run();
+            });
+            acts.add(st);
+            JButton kill = Tokens.smallButton("Mark dead", "It dies");
+            kill.addActionListener(e -> {
+                die(t, "marked by the DM");
+                changed.run();
+            });
+            acts.add(kill);
+        }
+        if (t.dead) {
+            JButton rev = Tokens.smallButton("Revive (1 HP)", "Brought back by a spell like Revivify: alive with 1 Hit Point");
+            rev.addActionListener(e -> {
+                t.dead = false;
+                t.deathSuccesses = 0;
+                t.deathFailures = 0;
+                healTok(t, 1);
+                note(t.label + " is revived with 1 Hit Point.");
+                changed.run();
+            });
+            acts.add(rev);
+        }
+        col.add(acts);
+        holder.add(col, BorderLayout.CENTER);
+        holder.revalidate();
+        holder.repaint();
+    };
+    render[0].run();
+    App.showSheetOverlay(anchor, "Death Saves: " + t.label, body, null, this::flushPrompts);
+}
+
+// ===============================================================
+// Other actions: Grapple, Shove, Help, Hide, Search, Study, Influence, Ready, Magic (rules in CombatActions.java)
+// ===============================================================
+private void clearReady(Tok t) {
+    t.readyKind = "";
+    t.readyTrigger = "";
+    t.readyAttack = "";
+}
+
+// Hiding ends when it attacks, casts a spell or is found
+private void endHidden(Tok t, String why) {
+    CombatSpells.Effect h = CombatSpells.find(t.effects, CombatActions.HIDDEN);
+    if (h == null) return;
+    removeEffect(t, h);
+    if (!why.isEmpty()) note(t.label + " " + why + " and is no longer hidden.");
+}
+
+private List<Tok> grappledBy(Tok grappler) {
+    List<Tok> out = new ArrayList<>();
+    for (Tok o : tokens) {
+        for (CombatSpells.Effect e : o.effects) {
+            if (CombatActions.GRAPPLED.equals(e.spell) && e.caster.equals(grappler.uid)) {
+                out.add(o);
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+private boolean draggingExtra(Tok t) {
+    for (Tok o : grappledBy(t)) if (CombatActions.dragCostsExtra(t.sizeName, o.sizeName)) return true;
+    return false;
+}
+
+// The grappler moved one step: its grappled creatures come along (or the grapple breaks if one can't)
+private void dragGrappled(Tok mover, int dx, int dy) {
+    for (Tok o : grappledBy(mover)) {
+        int nx = o.x + dx, ny = o.y + dy;
+        boolean ok = fits(o, o.size, nx, ny, true);
+        for (int oy = 0; ok && oy < o.size; oy++) for (int ox = 0; ok && ox < o.size; ox++) if (!passable(nx + ox, ny + oy)) ok = false;
+        if (ok) {
+            o.x = nx;
+            o.y = ny;
+        }
+    }
+    checkGrapples();
+}
+
+// Grapples end when the grappler is gone, down or Incapacitated, or the two are more than 5 ft. apart
+private void checkGrapples() {
+    for (Tok o : tokens) {
+        for (CombatSpells.Effect e : new ArrayList<>(o.effects)) {
+            if (!CombatActions.GRAPPLED.equals(e.spell)) continue;
+            Tok g = byUid(e.caster);
+            String why = g == null ? "the grappler is gone" : g.down() ? g.label + " is down"
+                    : CombatConditions.incapacitated(g.conditions) ? g.label + " is Incapacitated"
+                    : distanceFt(g, o) > 5 ? "they're more than 5 ft. apart" : "";
+            if (why.isEmpty()) continue;
+            removeEffect(o, e);
+            String s = statusLabel.getText() == null ? "" : statusLabel.getText().trim();
+            setStatus((s.isEmpty() ? "" : s + "  ") + o.label + " is no longer Grappled (" + why + ").");
+            persistSoon();
+        }
+    }
+}
+
+// Grapple / Shove replace one attack of the Attack action
+private void spendManeuverAttack() {
+    attacksLeft = Math.max(0, attacksLeft - 1);
+    if (!attackAction) {
+        actionUsed = true;
+        attackAction = true;
+    }
+}
+
+private boolean hasFreeHand(Tok t) {
+    if (!PC.equals(t.kind) || t.source == null) return true; // NPCs: assumed
+    WeaponRules.Hands h = WeaponRules.hands(combatRec(t));
+    if (h.twoHanded && !h.main.isEmpty()) return false;
+    return h.main.isEmpty() || h.off.isEmpty();
+}
+
+// Pick a creature within 5 ft. to Grapple or Shove, then it saves (STR or DEX, whichever is better for it)
+private void showManeuver(Component anchor, Tok t, boolean grapple) {
+    String name = grapple ? "Grapple" : "Shove";
+    int dc = CombatActions.unarmedDc(t.source, PC.equals(t.kind));
+    JPanel list = new JPanel();
+    list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+    list.setOpaque(false);
+    Runnable[] close = new Runnable[1];
+    JLabel intro = new JLabel("<html><div style='width:460px'>" + App.escapeHtml(CombatActions.info(name)) + "<br><br><span style='color:#d4af37'>"
+            + App.escapeHtml(t.label) + "'s DC: " + dc + "</span> <span style='color:#aaa5a0'>(8 + STR " + signedInt(CombatSpells.abilityMod(t.source, PC.equals(t.kind), "STR"))
+            + " + proficiency " + CombatActions.profBonus(t.source, PC.equals(t.kind)) + ")</span></div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+    list.add(intro);
+    list.add(Box.createRigidArea(new Dimension(0, 10)));
+    boolean freeHand = hasFreeHand(t);
+    if (grapple && !freeHand) {
+        list.add(mutedHtml("<html><div style='width:460px'><span style='color:#dc3c3c'>" + App.escapeHtml(t.label)
+                + " needs a free hand to grapple. " + App.escapeHtml(handsText(t)) + ".</span></div></html>"));
+        JButton stow = Tokens.smallButton("Stow something (Use Item)", "Free a hand");
+        stow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        stow.addActionListener(e -> {
+            close[0].run();
+            showUseItem(board, t);
+        });
+        list.add(stow);
+        list.add(Box.createRigidArea(new Dimension(0, 8)));
+    }
+    boolean[] prone = {false};
+    if (!grapple) {
+        JPanel how = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        how.setOpaque(false);
+        how.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JComboBox<String> mode = new JComboBox<>(new String[]{"Push 5 ft. away", "Knock Prone"});
+        App.styleCombo(mode);
+        mode.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        mode.addActionListener(e -> prone[0] = mode.getSelectedIndex() == 1);
+        how.add(muted2("On a failed save:"));
+        how.add(mode);
+        list.add(how);
+        list.add(Box.createRigidArea(new Dimension(0, 8)));
+    }
+    int shown = 0;
+    for (Tok o : tokens) {
+        if (o == t || OBJ.equals(o.kind) || distanceFt(t, o) > 5) continue;
+        shown++;
+        boolean already = grapple && grappledBy(t).contains(o);
+        String why = !CombatActions.sizeAllows(t.sizeName, o.sizeName) ? o.sizeName + ": more than one size larger than " + t.label
+                : already ? "Already grappled by " + t.label : grapple && !freeHand ? "No free hand" : "";
+        String sBest = betterSave(o);
+        JButton b = economyButton("<html><b>" + App.escapeHtml(o.label) + "</b> <span style='color:#aaa5a0'>· " + o.sizeName + " · " + distanceFt(t, o) + " ft."
+                + (o.team == t.team && t.team >= 0 ? " · ally" : "") + " · saves with " + sBest + " " + signedInt(saveBonusOf(o, sBest)) + "</span>"
+                + (why.isEmpty() ? "" : "<br><span style='color:#dc3c3c'>" + App.escapeHtml(why) + "</span>") + "</html>", ACTION_COLOR,
+                name + " " + o.label + " (uses one attack)");
+        b.setHorizontalAlignment(SwingConstants.LEFT);
+        b.setAlignmentX(Component.LEFT_ALIGNMENT);
+        b.setMaximumSize(new Dimension(520, 56));
+        b.setEnabled(why.isEmpty());
+        b.addActionListener(e -> {
+            close[0].run();
+            doManeuver(t, o, grapple, prone[0], dc);
+        });
+        list.add(b);
+        list.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    if (shown == 0) list.add(muted("No creature within 5 ft. Move next to one first."));
+    close[0] = App.showSheetOverlay(anchor, t.label + ": " + name, list, null);
+}
+
+// The save a creature picks against Grapple / Shove: Strength or Dexterity, whichever bonus is higher
+private String betterSave(Tok o) {
+    return saveBonusOf(o, "DEX") > saveBonusOf(o, "STR") ? "DEX" : "STR";
+}
+
+private void doManeuver(Tok t, Tok o, boolean grapple, boolean prone, int dc) {
+    if (!canMainAttack()) return;
+    spendManeuverAttack();
+    endHidden(t, grapple ? "grappled" : "shoved");
+    String ab = betterSave(o);
+    SaveRoll r = rollSave(o, ab, dc, 0, false, false);
+    String name = grapple ? "Grapple" : "Shove";
+    persistSoon();
+    refreshAll();
+    showSaveList(name + ": " + o.label, t.label + (grapple ? " tries to grab " : " tries to shove ") + o.label + ". " + o.label + " makes a "
+            + ab + " saving throw (its better of Strength and Dexterity) against DC " + dc + ". "
+            + (grapple ? "On a failure it's Grappled." : prone ? "On a failure it falls Prone." : "On a failure it's pushed 5 ft. away."),
+            Collections.singletonList(r), rows -> {
+                if (rows.get(0).success) {
+                    note(o.label + " resists " + t.label + "'s " + name.toLowerCase() + ".");
+                    return;
+                }
+                if (grapple) {
+                    CombatSpells.Effect e = new CombatSpells.Effect();
+                    e.spell = CombatActions.GRAPPLED;
+                    e.caster = t.uid;
+                    e.dc = dc;
+                    e.castRound = round;
+                    e.conds = new ArrayList<>(Collections.singletonList("Grappled"));
+                    addEffect(o, e);
+                    note(o.label + " is Grappled by " + t.label + " (escape DC " + dc + ").");
+                } else if (prone) {
+                    if (!hasCond(o, "Prone")) o.conditions.add("Prone");
+                    note(t.label + " knocks " + o.label + " Prone.");
+                } else {
+                    int moved = pushAway(t, o, 5, false);
+                    note(moved > 0 ? t.label + " shoves " + o.label + " 5 ft. away." : o.label + " can't be pushed back (something is in the way).");
+                }
+            });
+}
+
+// Escape a grapple (an action): Strength (Athletics) or Dexterity (Acrobatics) against the escape DC
+private void escapeGrapple(Tok t, CombatSpells.Effect e) {
+    if (inCombat && t == active) {
+        if (actionUsed) return;
+        actionUsed = true;
+        attackAction = false;
+    }
+    boolean pc = PC.equals(t.kind);
+    String best = CombatActions.skillBonus(t.source, pc, "Acrobatics") > CombatActions.skillBonus(t.source, pc, "Athletics") ? "Acrobatics" : "Athletics";
+    Tok g = byUid(e.caster);
+    showCheck("Escape Grapple: " + t.label, t.label + " tries to break free of " + (g == null ? "the grapple" : g.label + "'s grapple") + ".",
+            t, new String[]{"Athletics", "Acrobatics"}, best, e.dc, (skill, total) -> {
+                if (total >= e.dc && t.effects.contains(e)) {
+                    removeEffect(t, e);
+                    note(t.label + " escapes the grapple (" + skill + " " + total + " vs DC " + e.dc + ").");
+                } else note(t.label + " fails to escape (" + skill + " " + total + " vs DC " + e.dc + ").");
+            });
+}
+
+// An ability check with a skill picker, Advantage / Disadvantage, reroll or your own total; `onDone` gets the
+// skill and the total when the overlay closes (any way). dc < 0: no DC shown. Help (check) gives Advantage and is used up.
+private void showCheck(String title, String intro, Tok who, String[] skills, String skill0, int dc,
+                       java.util.function.BiConsumer<String, Integer> onDone) {
+    boolean pc = PC.equals(who.kind);
+    CombatSpells.Effect help = CombatSpells.find(who.effects, CombatActions.HELP_CHECK);
+    List<String> why = new ArrayList<>();
+    boolean adv = help != null, dis = false;
+    if (help != null) {
+        Tok h = byUid(help.caster);
+        why.add((h == null ? "Help" : h.label + "'s Help") + ": Advantage (used up by this check)");
+    }
+    if (hasCond(who, "Poisoned")) { dis = true; why.add("Poisoned: Disadvantage on ability checks"); }
+    if (hasCond(who, "Frightened")) { dis = true; why.add("Frightened: Disadvantage while the source of its fear is in sight"); }
+    if (hasCond(who, "Exhaustion")) why.add("Exhaustion: subtract 2 × its Exhaustion level");
+    int[] mode = {adv && !dis ? 1 : dis && !adv ? 2 : 0};
+    String[] skill = {skill0};
+    int[][] d20 = {new int[0]};
+    int[] natural = {0}, own = {Integer.MIN_VALUE};
+    boolean[] done = {false};
+    rollD20s(d20, natural, mode[0]);
+
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    JLabel il = new JLabel("<html><div style='width:440px'>" + App.escapeHtml(intro) + "</div></html>");
+    il.setForeground(App.TEXT_LIGHT);
+    il.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    il.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(il);
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    JLabel res = new JLabel();
+    res.setFont(new Font("SansSerif", Font.BOLD, 15));
+    res.setAlignmentX(Component.LEFT_ALIGNMENT);
+    java.util.function.IntSupplier total = () -> own[0] != Integer.MIN_VALUE ? own[0] : natural[0] + CombatActions.skillBonus(who.source, pc, skill[0]);
+    Runnable render = () -> {
+        int bonus = CombatActions.skillBonus(who.source, pc, skill[0]);
+        StringBuilder dice = new StringBuilder();
+        for (int v : d20[0]) dice.append(dice.length() == 0 ? "" : " ").append(v == natural[0] ? "[" + v + "]" : "(" + v + ")");
+        int tot = total.getAsInt();
+        boolean ok = dc < 0 || tot >= dc;
+        res.setText(own[0] != Integer.MIN_VALUE ? skill[0] + ": " + tot + " (your roll)" + (dc < 0 ? "" : " vs DC " + dc + "  →  " + (ok ? "Success" : "Failure"))
+                : skill[0] + ": d20 " + dice + " " + signedInt(bonus) + " = " + tot + (dc < 0 ? "" : " vs DC " + dc + "  →  " + (ok ? "Success" : "Failure")));
+        res.setForeground(dc < 0 ? App.TEXT_LIGHT : ok ? FREE_COLOR : App.ACCENT_HOVER);
+    };
+    if (skills.length > 1) {
+        JPanel sr = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        sr.setOpaque(false);
+        sr.setAlignmentX(Component.LEFT_ALIGNMENT);
+        String[] labels = new String[skills.length];
+        for (int i = 0; i < skills.length; i++) {
+            labels[i] = skills[i] + " (" + CombatActions.abilityOf(skills[i]) + ") " + signedInt(CombatActions.skillBonus(who.source, pc, skills[i]));
+        }
+        JComboBox<String> pick = new JComboBox<>(labels);
+        App.styleCombo(pick);
+        pick.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        pick.setSelectedIndex(Math.max(0, Arrays.asList(skills).indexOf(skill0)));
+        pick.addActionListener(e -> {
+            skill[0] = skills[Math.max(0, pick.getSelectedIndex())];
+            render.run();
+        });
+        sr.add(muted2("Skill:"));
+        sr.add(pick);
+        JLabel si = new JLabel("ⓘ");
+        si.setForeground(App.GOLD);
+        App.clickable(si, () -> App.showInfoOverlay(si, skill[0], CombatActions.abilityOf(skill[0]) + " skill",
+                GameData.SKILL_INFO.getOrDefault(skill[0], ""), null));
+        sr.add(si);
+        body.add(sr);
+        body.add(Box.createRigidArea(new Dimension(0, 6)));
+    }
+    for (String w : why) body.add(muted(w));
+    JPanel modeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+    modeRow.setOpaque(false);
+    modeRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+    String[] modeNames = {"Normal", "Advantage", "Disadvantage"};
+    for (int i = 0; i < 3; i++) {
+        final int m = i;
+        JButton b = Tokens.smallButton(modeNames[i], i == 0 ? "Roll one d20" : i == 1 ? "Roll two d20s, keep the higher" : "Roll two d20s, keep the lower");
+        b.addActionListener(e -> {
+            mode[0] = m;
+            own[0] = Integer.MIN_VALUE;
+            rollD20s(d20, natural, mode[0]);
+            render.run();
+        });
+        modeRow.add(b);
+    }
+    JButton reroll = Tokens.smallButton("Reroll", "Roll again");
+    reroll.addActionListener(e -> {
+        own[0] = Integer.MIN_VALUE;
+        rollD20s(d20, natural, mode[0]);
+        render.run();
+    });
+    modeRow.add(reroll);
+    body.add(modeRow);
+    body.add(res);
+    JPanel ownRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+    ownRow.setOpaque(false);
+    ownRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+    JSpinner sp = new JSpinner(new SpinnerNumberModel(10, -10, 60, 1));
+    sp.setPreferredSize(new Dimension(60, 28));
+    styleSpinner(sp);
+    JButton use = Tokens.smallButton("Use my total", "Use the total you rolled at the table");
+    use.addActionListener(e -> {
+        commit(sp);
+        own[0] = (Integer) sp.getValue();
+        render.run();
+    });
+    ownRow.add(muted2("or my total:"));
+    ownRow.add(sp);
+    ownRow.add(use);
+    body.add(ownRow);
+    render.run();
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+    JButton ok = App.overlayButton("Done", true);
+    Runnable[] close = new Runnable[1];
+    ok.addActionListener(e -> close[0].run());
+    JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+    foot.setOpaque(false);
+    foot.setAlignmentX(Component.LEFT_ALIGNMENT);
+    foot.add(ok);
+    body.add(foot);
+    close[0] = App.showSheetOverlay(board, title, body, ok, () -> {
+        if (done[0]) return;
+        done[0] = true;
+        if (help != null) removeEffect(who, help);
+        onDone.accept(skill[0], total.getAsInt());
+        persistSoon();
+        refreshAll();
+        flushPrompts();
+    });
+}
+
+// Enemies (not out of the fight) who can see `t` right now
+private List<Tok> seenBy(Tok t) {
+    List<Tok> out = new ArrayList<>();
+    for (Tok o : tokens) {
+        if (o == t || OBJ.equals(o.kind) || o.down() || (t.team >= 0 && o.team == t.team)) continue;
+        if (CombatConditions.incapacitated(o.conditions) || hasCond(o, "Blinded")) continue;
+        if (canSee(o, t)) out.add(o);
+    }
+    return out;
+}
+
+// Hide: an action (a Rogue's Cunning Action can use the Bonus Action), Dexterity (Stealth) against DC 15
+private void doHide(Tok t) {
+    String used = spendForAction(t, true);
+    if (used == null) return;
+    List<Tok> seers = seenBy(t);
+    String intro = t.label + " tries to hide (" + used + "). It needs to be Heavily Obscured or behind Three-Quarters or Total Cover, "
+            + "out of every enemy's line of sight." + (seers.isEmpty() ? " No enemy can see it right now."
+            : " Seen by: " + labels(seers) + ". Hiding in plain sight normally fails; the DM decides.");
+    showCheck("Hide: " + t.label, intro, t, new String[]{"Stealth"}, "Stealth", CombatActions.HIDE_DC, (skill, total) -> {
+        if (total < CombatActions.HIDE_DC) {
+            note(t.label + " fails to hide (Stealth " + total + " vs DC " + CombatActions.HIDE_DC + ").");
+            return;
+        }
+        CombatSpells.Effect old = CombatSpells.find(t.effects, CombatActions.HIDDEN);
+        if (old != null) removeEffect(t, old);
+        CombatSpells.Effect e = new CombatSpells.Effect();
+        e.spell = CombatActions.HIDDEN;
+        e.caster = t.uid;
+        e.value = total;
+        e.castRound = round;
+        e.conds = new ArrayList<>(Collections.singletonList("Invisible"));
+        addEffect(t, e);
+        note(t.label + " is hidden (Stealth " + total + "): Invisible until it attacks, casts a spell or is found.");
+    });
+    persistSoon();
+    refreshAll();
+}
+
+// Search: a Wisdom check; Perception finds hidden creatures in line of sight whose Stealth total it meets
+private void doSearch(Tok t) {
+    if (spendForAction(t, false) == null) return;
+    showCheck("Search: " + t.label, t.label + " searches. Perception finds hidden creatures (in line of sight) whose Stealth total it equals or beats; "
+            + "the other skills are for the DM to interpret.", t, CombatActions.SEARCH_SKILLS, "Perception", -1, (skill, total) -> {
+        if (!"Perception".equals(skill)) {
+            note(t.label + " searches (" + skill + " " + total + "). The DM describes what it learns.");
+            return;
+        }
+        List<String> found = new ArrayList<>();
+        for (Tok o : tokens) {
+            if (o == t) continue;
+            CombatSpells.Effect h = CombatSpells.find(o.effects, CombatActions.HIDDEN);
+            if (h == null || lineOfSight(t, o)[0] == 1 || h.value > total) continue;
+            removeEffect(o, h);
+            found.add(o.label);
+        }
+        note(t.label + " searches (Perception " + total + "): " + (found.isEmpty() ? "finds no hidden creature." : "finds " + String.join(", ", found) + "."));
+    });
+    persistSoon();
+    refreshAll();
+}
+
+// Study: an Intelligence check to recall lore or work something out
+private void doStudy(Tok t) {
+    if (spendForAction(t, false) == null) return;
+    showCheck("Study: " + t.label, t.label + " studies something: a creature, a spell, an object or a clue. The DM sets the DC and says what it learns.",
+            t, CombatActions.STUDY_SKILLS, "Arcana", -1,
+            (skill, total) -> note(t.label + " studies (" + skill + " " + total + "). The DM describes what it recalls or works out."));
+    persistSoon();
+    refreshAll();
+}
+
+// Influence: pick a creature, then a Charisma (or Animal Handling) check against 15 or its Intelligence score
+private void showInfluence(Component anchor, Tok t) {
+    JPanel list = new JPanel();
+    list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+    list.setOpaque(false);
+    Runnable[] close = new Runnable[1];
+    JLabel intro = new JLabel("<html><div style='width:460px'>" + App.escapeHtml(CombatActions.info("Influence")) + "</div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+    list.add(intro);
+    list.add(Box.createRigidArea(new Dimension(0, 10)));
+    int shown = 0;
+    for (Tok o : tokens) {
+        if (o == t || OBJ.equals(o.kind) || o.down()) continue;
+        shown++;
+        int dc = CombatActions.influenceDc(o.source, PC.equals(o.kind));
+        JButton b = economyButton("<html><b>" + App.escapeHtml(o.label) + "</b> <span style='color:#aaa5a0'>· " + distanceFt(t, o) + " ft. · DC " + dc
+                + (o.team == t.team && t.team >= 0 ? " · ally" : "") + "</span></html>", ACTION_COLOR, "Influence " + o.label + " (action)");
+        b.setHorizontalAlignment(SwingConstants.LEFT);
+        b.setAlignmentX(Component.LEFT_ALIGNMENT);
+        b.setMaximumSize(new Dimension(520, 40));
+        b.addActionListener(e -> {
+            close[0].run();
+            if (spendForAction(t, false) == null) return;
+            persistSoon();
+            refreshAll();
+            showCheck("Influence: " + o.label, t.label + " tries to influence " + o.label + ". Pick how: Persuasion, Deception, Intimidation, "
+                    + "Performance, or Animal Handling for a beast.", t, CombatActions.INFLUENCE_SKILLS, "Persuasion", dc, (skill, total) ->
+                    note(total >= dc ? t.label + " influences " + o.label + " (" + skill + " " + total + " vs DC " + dc + "): it's willing; the DM decides how it acts."
+                            : o.label + " isn't swayed (" + skill + " " + total + " vs DC " + dc + ")."));
+        });
+        list.add(b);
+        list.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    if (shown == 0) list.add(muted("No other creature to influence."));
+    close[0] = App.showSheetOverlay(anchor, t.label + ": Influence", list, null);
+}
+
+// Help: assist an attack (enemy within 5 ft.), assist an ally's ability check, or first aid for a dying creature
+private void showHelp(Component anchor, Tok t) {
+    JPanel list = new JPanel();
+    list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+    list.setOpaque(false);
+    Runnable[] close = new Runnable[1];
+    JLabel intro = new JLabel("<html><div style='width:460px'>" + App.escapeHtml(CombatActions.info("Help")) + "</div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+    list.add(intro);
+    list.add(Box.createRigidArea(new Dimension(0, 10)));
+
+    list.add(sectionCaption("ASSIST AN ATTACK (an enemy within 5 ft. of " + t.label.toUpperCase() + ")"));
+    int n = 0;
+    for (Tok o : tokens) {
+        if (o == t || OBJ.equals(o.kind) || o.down() || (t.team >= 0 && o.team == t.team) || distanceFt(t, o) > 5) continue;
+        n++;
+        JButton b = economyButton(o.label, ACTION_COLOR, "Your allies' next attack roll against " + o.label + " has Advantage");
+        b.setAlignmentX(Component.LEFT_ALIGNMENT);
+        b.setEnabled(t.team >= 0);
+        b.addActionListener(e -> {
+            close[0].run();
+            if (spendForAction(t, false) == null) return;
+            addEffect(o, helpEffect(t, CombatActions.HELP));
+            setStatus(t.label + " Helps: the next attack roll an ally makes against " + o.label + " before " + t.label + "'s next turn has Advantage.");
+            persistSoon();
+            refreshAll();
+        });
+        list.add(b);
+        list.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    if (n == 0) list.add(muted("No enemy within 5 ft."));
+    else if (t.team < 0) list.add(muted(t.label + " has no team, so it has no allies to help."));
+    list.add(Box.createRigidArea(new Dimension(0, 8)));
+
+    list.add(sectionCaption("ASSIST AN ABILITY CHECK (an ally)"));
+    n = 0;
+    for (Tok o : tokens) {
+        if (o == t || OBJ.equals(o.kind) || o.down() || t.team < 0 || o.team != t.team) continue;
+        n++;
+        JButton b = economyButton(o.label, ACTION_COLOR, o.label + "'s next ability check before " + t.label + "'s next turn has Advantage");
+        b.setAlignmentX(Component.LEFT_ALIGNMENT);
+        b.addActionListener(e -> {
+            close[0].run();
+            if (spendForAction(t, false) == null) return;
+            CombatSpells.Effect old = CombatSpells.find(o.effects, CombatActions.HELP_CHECK);
+            if (old != null) removeEffect(o, old);
+            addEffect(o, helpEffect(t, CombatActions.HELP_CHECK));
+            setStatus(t.label + " Helps " + o.label + ": its next ability check has Advantage.");
+            persistSoon();
+            refreshAll();
+        });
+        list.add(b);
+        list.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    if (n == 0) list.add(muted("No ally on the map."));
+    list.add(Box.createRigidArea(new Dimension(0, 8)));
+
+    list.add(sectionCaption("FIRST AID (a dying creature within 5 ft.)"));
+    n = 0;
+    String kit = null;
+    for (String item : t.items.keySet()) if (item.toLowerCase().contains("healer's kit") && t.items.get(item) > 0) kit = item;
+    for (Tok o : tokens) {
+        if (!o.dying() || distanceFt(t, o) > 5) continue;
+        n++;
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JButton b = economyButton("Stabilize " + o.label + " (Medicine DC 10)", ACTION_COLOR, "Help action: a Wisdom (Medicine) check; success makes it Stable");
+        b.addActionListener(e -> {
+            close[0].run();
+            if (spendForAction(t, false) == null) return;
+            persistSoon();
+            refreshAll();
+            showCheck("First Aid: " + o.label, t.label + " tends to " + o.label + ", who is dying at 0 Hit Points.", t, new String[]{"Medicine"}, "Medicine",
+                    CombatActions.STABILIZE_DC, (skill, total) -> {
+                        if (total >= CombatActions.STABILIZE_DC) stabilize(o, t.label + "'s first aid");
+                        else note(t.label + "'s first aid fails (Medicine " + total + " vs DC 10).");
+                    });
+        });
+        row.add(b);
+        if (kit != null) {
+            String k = kit;
+            JButton kb = economyButton("Healer's Kit", ACTION_COLOR, "Utilize action: expend a use of the Healer's Kit to stabilize it, no check");
+            kb.addActionListener(e -> {
+                close[0].run();
+                if (spendForAction(t, false) == null) return;
+                int left = t.items.getOrDefault(k, 0) - 1;
+                if (left <= 0) t.items.remove(k);
+                else t.items.put(k, left);
+                stabilize(o, t.label + "'s Healer's Kit");
+                flushPrompts();
+            });
+            row.add(kb);
+        }
+        list.add(row);
+        list.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    if (n == 0) list.add(muted("No dying creature within 5 ft."));
+    JScrollPane sp = new JScrollPane(list);
+    App.applyDarkScrollBar(sp);
+    sp.setBorder(null);
+    sp.setOpaque(false);
+    sp.getViewport().setOpaque(false);
+    sp.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+    sp.setPreferredSize(new Dimension(520, Math.min(460, list.getPreferredSize().height + 12)));
+    close[0] = App.showSheetOverlay(anchor, t.label + ": Help", sp, null);
+}
+
+// A Help effect from `helper` (ends at the start of the helper's next turn)
+private CombatSpells.Effect helpEffect(Tok helper, String kind) {
+    CombatSpells.Effect e = new CombatSpells.Effect();
+    e.spell = kind;
+    e.caster = helper.uid;
+    e.castRound = round;
+    e.casterStarts = 1;
+    return e;
+}
+
+// Ready: a trigger and a response (an attack, a move, or something else) taken later with the Reaction
+private void showReady(Component anchor, Tok t) {
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    Runnable[] close = new Runnable[1];
+    JLabel intro = new JLabel("<html><div style='width:440px'>" + App.escapeHtml(CombatActions.info("Ready"))
+            + "<br><span style='color:#aaa5a0'>Readying a spell: choose Other and name the spell. Its slot is spent now and it needs Concentration "
+            + "until released; resolve it at the table when the trigger happens.</span></div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(intro);
+    body.add(Box.createRigidArea(new Dimension(0, 10)));
+    body.add(sectionCaption("TRIGGER"));
+    JTextField trig = App.overlayField("", 30);
+    trig.setToolTipText("e.g. \"when an enemy comes within reach\" or \"if the door opens\"");
+    trig.setAlignmentX(Component.LEFT_ALIGNMENT);
+    trig.setMaximumSize(new Dimension(460, 30));
+    body.add(trig);
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    body.add(sectionCaption("RESPONSE"));
+    JPanel rr = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+    rr.setOpaque(false);
+    rr.setAlignmentX(Component.LEFT_ALIGNMENT);
+    List<String> atkNames = new ArrayList<>();
+    for (WeaponRules.Attack a : t.attacks) if (!a.offHand && !atkNames.contains(a.name)) atkNames.add(a.name);
+    JComboBox<String> kind = new JComboBox<>(atkNames.isEmpty() ? new String[]{"Move", "Other"} : new String[]{"Attack", "Move", "Other"});
+    App.styleCombo(kind);
+    kind.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    JComboBox<String> atk = new JComboBox<>(atkNames.toArray(new String[0]));
+    App.styleCombo(atk);
+    atk.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    JTextField other = App.overlayField("", 18);
+    other.setToolTipText("What it does (e.g. \"cast Magic Missile\", \"pull the lever\")");
+    Runnable sync = () -> {
+        Object k = kind.getSelectedItem();
+        atk.setVisible("Attack".equals(k));
+        other.setVisible("Other".equals(k));
+        rr.revalidate();
+    };
+    kind.addActionListener(e -> sync.run());
+    rr.add(kind);
+    rr.add(atk);
+    rr.add(other);
+    sync.run();
+    body.add(rr);
+    body.add(Box.createRigidArea(new Dimension(0, 12)));
+    JLabel err = new JLabel(" ");
+    err.setForeground(App.ACCENT_HOVER);
+    err.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    err.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(err);
+    JButton ready = economyButton("Ready (action)", ACTION_COLOR, "Take the Ready action");
+    ready.addActionListener(e -> {
+        String tr = trig.getText().trim();
+        if (tr.isEmpty()) {
+            err.setText("Describe the trigger first.");
+            return;
+        }
+        String k = String.valueOf(kind.getSelectedItem());
+        if ("Other".equals(k) && other.getText().trim().isEmpty()) {
+            err.setText("Describe what it does when the trigger happens.");
+            return;
+        }
+        if (spendForAction(t, false) == null) return;
+        t.readyKind = k;
+        t.readyTrigger = tr;
+        t.readyAttack = "Attack".equals(k) ? String.valueOf(atk.getSelectedItem()) : "Other".equals(k) ? other.getText().trim() : "";
+        close[0].run();
+        setStatus(t.label + " readies " + readyText(t) + ": " + tr + ".");
+        persistSoon();
+        refreshAll();
+    });
+    JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+    foot.setOpaque(false);
+    foot.setAlignmentX(Component.LEFT_ALIGNMENT);
+    foot.add(ready);
+    body.add(foot);
+    close[0] = App.showSheetOverlay(anchor, t.label + ": Ready", body, trig);
+}
+
+private static String readyText(Tok t) {
+    switch (t.readyKind) {
+        case "Attack": return "an attack (" + t.readyAttack + ")";
+        case "Move": return "a move (up to " + t.speed + " ft.)";
+        default: return "\"" + t.readyAttack + "\"";
+    }
+}
+
+// Readied actions waiting for their trigger: take one (Reaction) or let it go
+private void addReadiedSection() {
+    List<Tok> rs = new ArrayList<>();
+    for (Tok o : tokens) if (!o.readyKind.isEmpty()) rs.add(o);
+    if (rs.isEmpty()) return;
+    addSide(sectionCaption("READIED ACTIONS"));
+    for (Tok o : rs) {
+        JPanel row = new JPanel(new BorderLayout(6, 0));
+        row.setOpaque(false);
+        row.setMaximumSize(new Dimension(400, 60));
+        JLabel l = new JLabel("<html><div style='width:180px'><b>" + App.escapeHtml(o.label) + "</b>: " + App.escapeHtml(readyText(o))
+                + "<br><span style='color:#aaa5a0'>when " + App.escapeHtml(o.readyTrigger) + "</span></div></html>");
+        l.setForeground(App.TEXT_LIGHT);
+        l.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        App.clickable(l, () -> App.showInfoOverlay(l, "Readied Action", o.label, CombatActions.info("Ready"),
+                Arrays.asList(App.row("Trigger", o.readyTrigger), App.row("Response", readyText(o)),
+                        App.row("Reaction", o.hasReaction() ? "available" : "used / unavailable"))));
+        row.add(l, BorderLayout.CENTER);
+        JPanel b = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 4));
+        b.setOpaque(false);
+        JButton go = economyButton("⚡ Take", REACTION_COLOR, "The trigger happened: " + o.label + " uses its Reaction");
+        go.setEnabled(o.hasReaction() && !animating);
+        go.addActionListener(e -> triggerReady(o));
+        JButton x = Tokens.smallButton("✕", "Let the readied action go");
+        x.addActionListener(e -> {
+            clearReady(o);
+            persistSoon();
+            refreshSide();
+        });
+        b.add(go);
+        b.add(x);
+        row.add(b, BorderLayout.EAST);
+        addSide(row);
+    }
+    gap(8);
+}
+
+private void triggerReady(Tok r) {
+    if (!r.hasReaction()) return;
+    if ("Attack".equals(r.readyKind)) {
+        WeaponRules.Attack a = null;
+        for (WeaponRules.Attack x : r.attacks) if (x.name.equals(r.readyAttack) && !x.offHand) a = x;
+        if (a == null && !r.attacks.isEmpty()) a = r.attacks.get(0);
+        if (a == null) return;
+        WeaponRules.Attack atk = a;
+        JPanel list = new JPanel();
+        list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+        list.setOpaque(false);
+        Runnable[] close = new Runnable[1];
+        list.add(muted(r.label + "'s readied " + atk.name + " (" + atk.reachText() + "): pick the target."));
+        list.add(Box.createRigidArea(new Dimension(0, 8)));
+        int n = 0;
+        for (Tok o : tokens) {
+            if (o == r || OBJ.equals(o.kind)) continue;
+            TargetCheck tc = checkTarget(r, o, atk);
+            if (!tc.ok) continue;
+            n++;
+            JButton b = economyButton(o.label + "  ·  " + tc.distance + " ft.", REACTION_COLOR, "Reaction: attack " + o.label);
+            b.setAlignmentX(Component.LEFT_ALIGNMENT);
+            b.addActionListener(e -> {
+                close[0].run();
+                r.reactionsUsed++;
+                clearReady(r);
+                tc.notes.add(0, "Readied attack (uses " + r.label + "'s Reaction).");
+                persistSoon();
+                showAttackRoll(board, r, o, atk, tc, true);
+            });
+            list.add(b);
+            list.add(Box.createRigidArea(new Dimension(0, 4)));
+        }
+        if (n == 0) list.add(muted("No target in range or line of sight."));
+        close[0] = App.showSheetOverlay(board, r.label + ": Readied Attack", list, null);
+        return;
+    }
+    r.reactionsUsed++;
+    String what = "Move".equals(r.readyKind) ? r.label + " takes its readied move: drag its token up to " + r.speed + " ft. (leaving reach can provoke)."
+            : r.label + " takes its readied action: " + r.readyAttack + ".";
+    clearReady(r);
+    setStatus(what);
+    persistSoon();
+    refreshAll();
+}
+
+// Magic: cast a spell or use a magic item (potions take a Bonus Action)
+private void showMagic(Component anchor, Tok t) {
+    JPanel list = new JPanel();
+    list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+    list.setOpaque(false);
+    Runnable[] close = new Runnable[1];
+    boolean myTurn = inCombat && t == active;
+    JLabel intro = new JLabel("<html><div style='width:460px'>" + App.escapeHtml(CombatActions.info("Magic")) + "</div></html>");
+    intro.setForeground(App.TEXT_LIGHT);
+    intro.setFont(new Font("SansSerif", Font.PLAIN, 13));
+    intro.setAlignmentX(Component.LEFT_ALIGNMENT);
+    list.add(intro);
+    list.add(Box.createRigidArea(new Dimension(0, 10)));
+    if (isCaster(t)) {
+        list.add(sectionCaption("SPELLS"));
+        JButton cast = economyButton("✦ Cast a Spell", SPELL_COLOR, "Pick a spell, a slot and targets (its casting time decides the cost)");
+        cast.setAlignmentX(Component.LEFT_ALIGNMENT);
+        cast.setEnabled(myTurn);
+        cast.addActionListener(e -> {
+            close[0].run();
+            showSpellPicker(t);
+        });
+        list.add(cast);
+        list.add(Box.createRigidArea(new Dimension(0, 10)));
+    }
+    list.add(sectionCaption("MAGIC ITEMS"));
+    int n = 0;
+    for (Map.Entry<String, Integer> en : new ArrayList<>(t.items.entrySet())) {
+        String item = en.getKey();
+        if (!CombatItems.magic(item)) continue;
+        n++;
+        int[] potion = CombatItems.potion(item);
+        boolean bonus = potion != null;
+        boolean free = !myTurn || (bonus ? !bonusAttackUsed : !actionUsed);
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        row.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row.setMaximumSize(new Dimension(520, 56));
+        String desc = App.itemDescription(item);
+        JLabel l = new JLabel("<html><b>" + App.escapeHtml(item) + "</b> ×" + en.getValue() + "<br><span style='color:#aaa5a0'>"
+                + App.escapeHtml(bonus ? "Bonus Action · heals " + WeaponData.diceText(potion[0], potion[1], potion[2]) : "Magic action"
+                + (CombatItems.consumable(item) ? " · used up" : "")) + "</span></html>");
+        l.setForeground(App.TEXT_LIGHT);
+        l.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        App.clickable(l, () -> App.showInfoOverlay(l, item, bonus ? "Potion · Bonus Action" : "Magic item · Magic action",
+                desc == null || desc.isEmpty() ? "No description." : desc, null));
+        row.add(l, BorderLayout.CENTER);
+        JButton use = economyButton(bonus ? "Drink / Give" : "Use", bonus ? BONUS_COLOR : ACTION_COLOR,
+                !free ? (bonus ? "Bonus Action already used this turn" : "Action already used this turn")
+                        : bonus ? "Bonus Action: drink it, or give it to a creature within 5 ft." : "Magic action");
+        use.setEnabled(free && en.getValue() > 0 && !CombatConditions.incapacitated(t.conditions) && !t.down());
+        use.addActionListener(e -> {
+            close[0].run();
+            if (bonus) showPotion(board, t, item, potion);
+            else useMagicItem(t, item);
+        });
+        JPanel b = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 6));
+        b.setOpaque(false);
+        b.add(use);
+        row.add(b, BorderLayout.EAST);
+        list.add(row);
+        list.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    if (n == 0) list.add(muted("No magic items. Potions, scrolls, wands and other magic items from Equipment show up here."));
+    list.add(Box.createRigidArea(new Dimension(0, 8)));
+    JButton items = Tokens.smallButton("Add or remove items (Use Item)", "This encounter's items and hands");
+    items.setAlignmentX(Component.LEFT_ALIGNMENT);
+    items.addActionListener(e -> {
+        close[0].run();
+        showUseItem(board, t);
+    });
+    list.add(items);
+    JScrollPane sp = new JScrollPane(list);
+    App.applyDarkScrollBar(sp);
+    sp.setBorder(null);
+    sp.setOpaque(false);
+    sp.getViewport().setOpaque(false);
+    sp.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+    sp.setPreferredSize(new Dimension(540, Math.min(460, list.getPreferredSize().height + 12)));
+    close[0] = App.showSheetOverlay(anchor, t.label + ": Magic", sp, null);
+}
+
+private void useMagicItem(Tok t, String item) {
+    if (inCombat && t == active && spendForAction(t, false) == null) return;
+    boolean usedUp = CombatItems.consumable(item);
+    if (usedUp) {
+        int n = t.items.getOrDefault(item, 0) - 1;
+        if (n <= 0) t.items.remove(item);
+        else t.items.put(item, n);
+    }
+    setStatus(t.label + " uses " + item + (inCombat && t == active ? " (Magic action)" : "") + (usedUp ? "; it's used up." : ". The DM resolves its effect."));
+    persistSoon();
+    refreshAll();
+}
+
+// ===============================================================
 // Detail overlays
 // ===============================================================
 private void showTokenDetail(Component anchor, Tok t) {
@@ -6152,7 +7446,7 @@ private void showTokenDetail(Component anchor, Tok t) {
     teamLbl.setFont(new Font("SansSerif", Font.BOLD, 13));
     headText.add(teamLbl);
     headText.add(Box.createRigidArea(new Dimension(0, 4)));
-    JLabel where = new JLabel("Square " + colName(t.x) + (t.y + 1) + (t.size > 1 ? " (top-left)" : "") + (t.down() ? "  •  DOWN (0 HP)" : ""));
+    JLabel where = new JLabel("Square " + colName(t.x) + (t.y + 1) + (t.size > 1 ? " (top-left)" : "") + (t.down() ? "  •  0 HP: " + t.downWord().toUpperCase() : ""));
     where.setForeground(t.down() ? App.ACCENT_HOVER : App.TEXT_MUTED);
     where.setFont(new Font("SansSerif", Font.PLAIN, 12));
     headText.add(where);
@@ -6403,22 +7697,42 @@ private void showTokenDetail(Component anchor, Tok t) {
         hpBar.set(t.maxHp <= 0 ? 0 : t.hp / (double) t.maxHp, t.hp + " / " + t.maxHp + " HP" + (t.tempHp > 0 ? "  (+" + t.tempHp + " temp)" : ""), hpColor(t));
         pv.dimmed = t.down();
         pv.repaint();
-        where.setText("Square " + colName(t.x) + (t.y + 1) + (t.size > 1 ? " (top-left)" : "") + (t.down() ? "  •  DOWN (0 HP)" : ""));
+        where.setText("Square " + colName(t.x) + (t.y + 1) + (t.size > 1 ? " (top-left)" : "") + (t.down() ? "  •  0 HP: " + t.downWord().toUpperCase() : ""));
         where.setForeground(t.down() ? App.ACCENT_HOVER : App.TEXT_MUTED);
     };
     hpRefresh.run();
     App.clickable(hpBar, () -> App.showInfoOverlay(hpBar, "Hit Points", t.label,
-            "Damage lowers hit points; at 0 the creature is down (Unconscious, or dead for most monsters). Healing can't go above the maximum. "
+            "Damage lowers hit points; at 0 a character falls Unconscious and makes death saving throws (or dies outright if the damage left over "
+                    + "equals its Hit Point maximum), and most monsters die. Healing can't go above the maximum. "
                     + "HP changes here are tracked for this map's encounter only.",
             Arrays.asList(App.row("Current", String.valueOf(t.hp)), App.row("Maximum", t.maxHp + (PC.equals(t.kind) ? " (character sheet)" : " (NPC stat block)")))));
     body.add(hpBar);
     body.add(Box.createRigidArea(new Dimension(0, 6)));
+    // death saves (characters at 0 HP), rebuilt whenever HP changes here
+    JPanel deathHolder = new JPanel(new BorderLayout());
+    deathHolder.setOpaque(false);
+    deathHolder.setAlignmentX(Component.LEFT_ALIGNMENT);
+    Runnable[] deathRefresh = new Runnable[1];
+    deathRefresh[0] = () -> {
+        deathHolder.removeAll();
+        if (PC.equals(t.kind) && t.down()) deathHolder.add(deathSavePanel(t, () -> {
+            hpRefresh.run();
+            deathRefresh[0].run();
+            refreshSide();
+            board.repaint();
+        }), BorderLayout.CENTER);
+        deathHolder.revalidate();
+        deathHolder.repaint();
+    };
+    deathRefresh[0].run();
     body.add(hpControls(t, () -> {
         hpRefresh.run();
+        deathRefresh[0].run();
         refreshSide();
         board.repaint();
         persistSoon();
     }));
+    body.add(deathHolder);
     body.add(Box.createRigidArea(new Dimension(0, 12)));
 
     // team / initiative
@@ -6547,9 +7861,10 @@ private JPanel hpControls(Tok t, Runnable after) {
     });
     heal.addActionListener(e -> {
         commit(amt);
-        healTok(t, (Integer) amt.getValue());
-        setStatus(t.label + " heals to " + t.hp + " / " + t.maxHp + " HP.");
+        int got = healTok(t, (Integer) amt.getValue());
+        setStatus(got > 0 ? t.label + " heals to " + t.hp + " / " + t.maxHp + " HP." : t.label + " regains no Hit Points.");
         after.run();
+        flushPrompts();
     });
     row.add(amt);
     row.add(type);
@@ -6797,9 +8112,15 @@ private void buildTurnTab() {
         board.repaint();
         persistSoon();
     }));
-    if (t.down()) {
+    if (t.down() && PC.equals(t.kind)) {
+        gap(8);
+        addSide(deathSavePanel(t, () -> {
+            refreshSide();
+            board.repaint();
+        }));
+    } else if (t.down()) {
         gap(4);
-        JLabel down = new JLabel("At 0 HP: " + t.label + " is down.");
+        JLabel down = new JLabel("At 0 HP: " + t.label + " is down (monsters usually die at 0 HP).");
         down.setForeground(App.ACCENT_HOVER);
         down.setFont(new Font("SansSerif", Font.BOLD, 12));
         addSide(down);
@@ -6829,7 +8150,7 @@ private void buildTurnTab() {
     } else {
         gap(4);
     }
-    // spells: slots, Concentration, Cast a Spell, ongoing spell actions and effects
+    // spells: slots, Concentration, ongoing spell actions and effects
     addSpellSection(t, t.down() || CombatConditions.incapacitated(t.conditions));
 
     // ---- turn economy: filled circle = still available, empty circle = used ----
@@ -6886,11 +8207,57 @@ private void buildTurnTab() {
     addSide(actions);
     gap(6);
 
-    // Dash / Disengage / Dodge / Use Item (actions; a Rogue's Cunning Action can Dash or Disengage as a Bonus Action)
+    // Grapple / Shove: Unarmed Strike options that replace one attack of the Attack action
+    JPanel unarmed = new JPanel(new GridLayout(1, 2, 8, 0));
+    unarmed.setOpaque(false);
+    unarmed.setMaximumSize(new Dimension(400, 36));
+    String unarmedWhy = incap ? "Can't act: " + incapWhy : !canMainAttack() ? (actionUsed && !attackAction ? "Action already used this turn" : "No attacks left this turn") : "";
+    for (String m : new String[]{"Grapple", "Shove"}) {
+        JButton b = economyButton(m, ACTION_COLOR, unarmedWhy.isEmpty() ? "Attack action (replaces one attack): " + CombatActions.info(m) : unarmedWhy);
+        b.setEnabled(unarmedWhy.isEmpty() && targeting == null);
+        b.addActionListener(e -> showManeuver(b, t, "Grapple".equals(m)));
+        unarmed.add(b);
+    }
+    addSide(unarmed);
+    gap(6);
+    // grapple state: escape (grappled) or let go (grappler)
+    CombatSpells.Effect grappledFx = CombatSpells.find(t.effects, CombatActions.GRAPPLED);
+    List<Tok> holding = grappledBy(t);
+    if (grappledFx != null || !holding.isEmpty()) {
+        JPanel gr = new JPanel(new GridLayout(0, 1, 0, 6));
+        gr.setOpaque(false);
+        gr.setMaximumSize(new Dimension(400, 36 * (holding.size() + 1)));
+        if (grappledFx != null) {
+            Tok g = byUid(grappledFx.caster);
+            JButton esc = economyButton("Escape Grapple (DC " + grappledFx.dc + ")", ACTION_COLOR,
+                    "Action: Strength (Athletics) or Dexterity (Acrobatics) check to break free" + (g == null ? "" : " of " + g.label));
+            esc.setEnabled(!incap && !actionUsed);
+            esc.addActionListener(e -> escapeGrapple(t, grappledFx));
+            gr.add(esc);
+        }
+        for (Tok o : holding) {
+            JButton rel = economyButton("Release " + o.label, MOVE_COLOR, "Let go (no action needed). Moving drags " + o.label
+                    + (CombatActions.dragCostsExtra(t.sizeName, o.sizeName) ? " at double movement cost." : " along at no extra cost."));
+            rel.addActionListener(e -> {
+                for (CombatSpells.Effect fx : new ArrayList<>(o.effects)) {
+                    if (CombatActions.GRAPPLED.equals(fx.spell) && fx.caster.equals(t.uid)) removeEffect(o, fx);
+                }
+                if (moveMode) computeReach();
+                setStatus(t.label + " releases " + o.label + ".");
+                persistSoon();
+                refreshAll();
+            });
+            gr.add(rel);
+        }
+        addSide(gr);
+        gap(6);
+    }
+
+    // the other actions (a Rogue's Cunning Action can Dash, Disengage or Hide as a Bonus Action)
     boolean cunning = cunningAction(t) && !bonusAttackUsed;
-    JPanel other = new JPanel(new GridLayout(2, 2, 6, 6));
+    JPanel other = new JPanel(new GridLayout(0, 2, 6, 6));
     other.setOpaque(false);
-    other.setMaximumSize(new Dimension(400, 72));
+    other.setMaximumSize(new Dimension(400, 6 * 42));
     boolean dashByBonus = actionUsed && cunning;
     JButton dash = economyButton("Dash", dashByBonus ? BONUS_COLOR : ACTION_COLOR, (dashByBonus ? "Bonus Action (Cunning Action)" : "Action")
             + ": gain extra movement equal to your Speed (" + t.speed + " ft.) this turn");
@@ -6904,16 +8271,54 @@ private void buildTurnTab() {
             "Action: until your next turn, attacks against you have Disadvantage and you have Advantage on DEX saves");
     dodge.setEnabled(!incap && !t.dodging && !actionUsed);
     dodge.addActionListener(e -> doDodge(t));
-    int itemCount = 0;
-    for (int n : t.items.values()) itemCount += n;
+    int itemCount = 0, magicItems = 0;
+    for (Map.Entry<String, Integer> en : t.items.entrySet()) {
+        if (CombatItems.magic(en.getKey())) magicItems += en.getValue();
+        else itemCount += en.getValue();
+    }
+    boolean canMagic = isCaster(t) || magicItems > 0;
+    JButton magic = economyButton(spellTargeting != null ? "Cancel Spell" : "✦ Magic" + (magicItems > 0 ? " (" + magicItems + ")" : ""), SPELL_COLOR,
+            spellTargeting != null ? "Stop casting (nothing is spent until targets are confirmed)" : incap ? "Can't act: " + incapWhy
+                    : !canMagic ? t.label + " has no spells or magic items" : "Magic action: " + CombatActions.info("Magic"));
+    magic.setEnabled(spellTargeting != null || (!incap && canMagic));
+    magic.addActionListener(e -> {
+        if (spellTargeting != null) {
+            cancelModes();
+            refreshAll();
+        } else showMagic(magic, t);
+    });
     JButton useItem = economyButton("Use Item" + (itemCount > 0 ? " (" + itemCount + ")" : ""), ACTION_COLOR,
-            "Use an item: most take your action (Utilize); a healing potion takes a Bonus Action");
+            "Utilize action: use a nonmagical item, or draw / stow weapons and shields. Magic items are under Magic.");
     useItem.setEnabled(!incap);
     useItem.addActionListener(e -> showUseItem(useItem, t));
+    boolean hideByBonus = actionUsed && cunning;
+    JButton hide = economyButton(CombatSpells.has(t.effects, CombatActions.HIDDEN) ? "Hide again" : "Hide", hideByBonus ? BONUS_COLOR : ACTION_COLOR,
+            (hideByBonus ? "Bonus Action (Cunning Action): " : "Action: ") + CombatActions.info("Hide"));
+    hide.setEnabled(!incap && (!actionUsed || cunning));
+    hide.addActionListener(e -> doHide(t));
+    String actWhy = incap ? "Can't act: " + incapWhy : actionUsed ? "Action already used this turn" : "";
+    JButton help = economyButton("Help", ACTION_COLOR, actWhy.isEmpty() ? "Action: " + CombatActions.info("Help") : actWhy);
+    help.addActionListener(e -> showHelp(help, t));
+    JButton search = economyButton("Search", ACTION_COLOR, actWhy.isEmpty() ? "Action: " + CombatActions.info("Search") : actWhy);
+    search.addActionListener(e -> doSearch(t));
+    JButton study = economyButton("Study", ACTION_COLOR, actWhy.isEmpty() ? "Action: " + CombatActions.info("Study") : actWhy);
+    study.addActionListener(e -> doStudy(t));
+    JButton influence = economyButton("Influence", ACTION_COLOR, actWhy.isEmpty() ? "Action: " + CombatActions.info("Influence") : actWhy);
+    influence.addActionListener(e -> showInfluence(influence, t));
+    JButton ready = economyButton(t.readyKind.isEmpty() ? "Ready" : "Readied", ACTION_COLOR, actWhy.isEmpty() ? "Action: " + CombatActions.info("Ready") : actWhy);
+    ready.addActionListener(e -> showReady(ready, t));
+    for (JButton b : new JButton[]{help, search, study, influence, ready}) b.setEnabled(actWhy.isEmpty());
+    other.add(magic);
+    other.add(useItem);
     other.add(dash);
     other.add(dis);
     other.add(dodge);
-    other.add(useItem);
+    other.add(hide);
+    other.add(help);
+    other.add(search);
+    other.add(study);
+    other.add(influence);
+    other.add(ready);
     addSide(other);
     gap(6);
     addSide(economyLegend(t));
@@ -6944,6 +8349,7 @@ private void buildTurnTab() {
         addSide(conditionChips(t, false));
         gap(8);
     }
+    addReadiedSection();
     JButton end = App.overlayButton("Skip / End Turn", false);
     end.setToolTipText("Pass to the next combatant in initiative order");
     end.addActionListener(e -> endTurn());
@@ -6972,7 +8378,7 @@ private Tok peekNext() {
     for (int step = 0; step < order.size(); step++) {
         i = (i + 1) % order.size();
         Tok c = order.get(i);
-        if (!skipDefeated || !c.down()) return c;
+        if (!skipDefeated || !c.out()) return c;
     }
     return null;
 }
@@ -7024,7 +8430,7 @@ private void buildOrderTab() {
         mid.add(new Tokens.Preview(t.style, t.label, 26, teamColor(t.team)), BorderLayout.WEST);
         JLabel nm = new JLabel("<html><b>" + App.escapeHtml(t.label) + "</b>" + (isActive ? " <span style='color:#d4af37'>◀ turn</span>" : "")
                 + "<br><span style='color:" + (t.down() ? "#dc3c3c" : "#aaa5a0") + "'>HP " + t.hp + " / " + t.maxHp
-                + (t.down() ? " · down" : "") + (t.dodging ? " · dodging" : "") + "</span>"
+                + (t.down() ? " · " + t.downWord() : "") + (t.readyKind.isEmpty() ? "" : " · readied") + (t.dodging ? " · dodging" : "") + "</span>"
                 + (t.conditions.isEmpty() ? "" : "<br><span style='color:#f0c060'>" + App.escapeHtml(String.join(", ", t.conditions)) + "</span>")
                 + "</html>");
         nm.setForeground(t.down() ? App.TEXT_MUTED : App.TEXT_LIGHT);
@@ -7157,7 +8563,7 @@ private void buildTeamsTab() {
             JPanel who = new JPanel(new BorderLayout(6, 0));
             who.setOpaque(false);
             who.add(new Tokens.Preview(t.style, t.label, 24, teamColor(t.team)), BorderLayout.WEST);
-            JLabel nm = new JLabel(t.label + (t.down() ? " (down)" : ""));
+            JLabel nm = new JLabel(t.label + (t.down() ? " (" + t.downWord() + ")" : ""));
             nm.setForeground(t.down() ? App.TEXT_MUTED : App.TEXT_LIGHT);
             nm.setFont(new Font("SansSerif", Font.PLAIN, 12));
             who.add(nm, BorderLayout.CENTER);
@@ -7240,7 +8646,7 @@ private void buildSettingsTab() {
     gap(10);
     addSide(sectionCaption("TURNS"));
     gap(4);
-    addSide(toggle("Skip defeated combatants", skipDefeated, v -> skipDefeated = v, "Creatures at 0 HP are skipped in the turn order."));
+    addSide(toggle("Skip defeated combatants", skipDefeated, v -> skipDefeated = v, "Creatures out of the fight (NPCs at 0 HP, dead or Stable characters) are skipped. Dying characters keep their turns for death saves."));
     gap(16);
     addSide(sectionCaption("ENCOUNTER"));
     gap(6);
@@ -8084,7 +9490,35 @@ private class Board extends JComponent {
             g.draw(Tokens.shape(CustomAssets.str(t.style, "shape"), cx, cy, r + ow * 1.6));
         }
         Tokens.paint(g, t.style, t.label, cx, cy, r, teamColor(t.team), ow);
-        if (t.down()) {
+        if (t.down() && PC.equals(t.kind) && !t.dead) {
+            // dying (amber) or Stable (green): dimmed, with the word across it
+            Shape sh = Tokens.shape(CustomAssets.str(t.style, "shape"), cx, cy, r);
+            g.setColor(new Color(15, 16, 22, 140));
+            g.fill(sh);
+            boolean st = t.stable();
+            Color c = st ? new Color(124, 211, 138) : new Color(224, 160, 48);
+            g.setColor(c);
+            g.setStroke(new BasicStroke((float) Math.max(1.5, r * 0.08), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND,
+                    10f, st ? null : new float[]{(float) (r * 0.25), (float) (r * 0.18)}, 0f));
+            g.draw(Tokens.shape(CustomAssets.str(t.style, "shape"), cx, cy, r + ow));
+            String w = st ? "STABLE" : "DYING";
+            g.setFont(new Font("SansSerif", Font.BOLD, (int) Math.max(8, r * 0.4)));
+            FontMetrics fm = g.getFontMetrics();
+            g.drawString(w, (float) (cx - fm.stringWidth(w) / 2.0), (float) (cy + (st ? fm.getAscent() / 2.5 : -r * 0.08)));
+            if (!st) {
+                // death save tallies: three green (successes) then three red (failures), filled when marked
+                double d = Math.max(3, r * 0.2), gapD = d * 0.45, x0 = cx - (6 * d + 6 * gapD) / 2.0, y0 = cy + r * 0.18;
+                g.setStroke(new BasicStroke((float) Math.max(1, d * 0.2)));
+                for (int i = 0; i < 6; i++) {
+                    boolean fail = i >= 3;
+                    boolean on = fail ? i - 3 < t.deathFailures : i < t.deathSuccesses;
+                    g.setColor(fail ? new Color(220, 60, 60) : new Color(124, 211, 138));
+                    Ellipse2D.Double dot = new Ellipse2D.Double(x0 + i * (d + gapD) + (fail ? gapD : 0), y0, d, d);
+                    if (on) g.fill(dot);
+                    else g.draw(dot);
+                }
+            }
+        } else if (t.down()) {
             Shape sh = Tokens.shape(CustomAssets.str(t.style, "shape"), cx, cy, r);
             g.setColor(new Color(15, 16, 22, 150));
             g.fill(sh);

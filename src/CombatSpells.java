@@ -676,6 +676,10 @@ static String effectLabel(Effect e) {
         case "Ensnaring Strike": return "Ensnared";
         case "Armor of Agathys": return "Armor of Agathys (" + e.value + " Cold)";
         case "Wardaway": return "Wardaway (½ Speed, action or Bonus Action)";
+        case CombatActions.GRAPPLED: return "Grappled (escape DC " + e.dc + ")";
+        case CombatActions.HIDDEN: return "Hidden (Stealth " + e.value + ")";
+        case CombatActions.HELP: return "Help: next ally attack has Advantage";
+        case CombatActions.HELP_CHECK: return "Helped: next check has Advantage";
         default:
     }
     List<String> p = new ArrayList<>();
