@@ -78,6 +78,7 @@ static {
     POTIONS.put("Potion of Greater Healing", new int[]{4, 4, 4});
     POTIONS.put("Potion of Superior Healing", new int[]{8, 4, 8});
     POTIONS.put("Potion of Supreme Healing", new int[]{10, 4, 20});
+    POTIONS.put("Goodberry", new int[]{0, 1, 1}); // Goodberry spell: eating one (Bonus Action) restores 1 HP
 }
 
 static int[] potion(String item) {

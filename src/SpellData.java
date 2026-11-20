@@ -157,7 +157,7 @@ static {
             "Hurl a blast of raw spellfire. Make a ranged spell attack that ignores Half and Three-Quarters Cover; on a hit the target takes 2d10 Radiant damage.")
             .higher("Creates one additional blast for each slot level above 1; each blast can target a different creature.");
     add(1, "Wardaway", ABJ, A, "60 ft.", "V, S, M (a miniature clay hand)", INST, "Brd Clr Pal Wiz",
-            "A warding force strikes a creature. It makes a CON save, taking 2d4 Force damage on a failure or half on a success. On a failure its Speed is halved and it can take only an action or a Bonus Action (not both) on its next turn.")
+            "A warding force strikes a creature that isn't a Construct or Undead. It makes a CON save, taking 2d4 Force damage on a failure or half on a success. On a failure its Speed is halved and it can take only an action or a Bonus Action (not both) on its next turn.")
             .higher("Damage increases by 2d4 for each slot level above 1.");
     add(1, "Charm Person", ENC, A, "30 ft.", "V, S", "1 hour", "Brd Dru Sor Wlk Wiz",
             "A Humanoid must succeed on a WIS save (with Advantage if you or allies are fighting it) or have the Charmed condition until the spell ends or you or your allies damage it.")
@@ -268,7 +268,7 @@ static {
             "Make a ranged spell attack. On a hit the target takes 2d8 Poison damage and has the Poisoned condition until the end of your next turn.")
             .higher("Damage increases by 1d8 for each slot level above 1.");
     add(1, "Sanctuary", ABJ, BA, "30 ft.", "V, S, M (a shard of glass from a mirror)", "1 minute", "Art Clr",
-            "Ward a creature. Anyone who targets it with an attack or harmful spell must first succeed on a WIS save or choose a new target. The ward ends if the warded creature attacks or casts a harmful spell.");
+            "Ward a creature. Anyone who targets it with an attack roll or a damaging spell must first succeed on a WIS save or choose a new target or lose the attack or spell. It doesn't protect against areas of effect. The ward ends if the warded creature makes an attack roll, casts a spell, or deals damage.");
     add(1, "Searing Smite", EVO, BA, "Self", "V", "1 minute", "Pal",
             "Cast after hitting with a Melee weapon: the target takes an extra 1d6 Fire damage and burns, taking 1d6 Fire damage at the start of each of its turns until it succeeds on a CON save.")
             .higher("Both damage rolls increase by 1d6 for each slot level above 1.");
@@ -299,7 +299,7 @@ static {
             "Make a ranged spell attack; on a hit the target takes 2d12 Lightning damage. On later turns you can deal 1d12 Lightning damage to it automatically as a Bonus Action.")
             .higher("The initial damage increases by 1d12 for each slot level above 1.");
     add(1, "Wrathful Smite", NEC, BA, "Self", "V", "1 minute", "Pal",
-            "Cast after hitting with a Melee weapon: the target takes an extra 1d6 Necrotic damage and must succeed on a WIS save or have the Frightened condition for the duration.")
+            "Cast after hitting with a Melee weapon or an Unarmed Strike: the target takes an extra 1d6 Necrotic damage and must succeed on a WIS save or have the Frightened condition for the duration. It repeats the save at the end of each of its turns, ending the spell on a success.")
             .higher("Damage increases by 1d6 for each slot level above 1.");
 }
 
