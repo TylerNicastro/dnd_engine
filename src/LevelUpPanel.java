@@ -206,11 +206,15 @@ class LevelUpPanel {
         }
         if (SpellData.isCaster(cls)) add(content, bullet("Spells: see the Spells section below."));
 
-        // Homebrew class / subclass features gained at this level (Asset Library)
+        // Class features gained at this level: homebrew (Asset Library) or built-in 2024 (ClassFeatures)
         Map<String, Object> classAsset = CustomAssets.classAsset(cls);
         if (classAsset != null) {
             for (Map<String, Object> f : CustomAssets.featuresAt(classAsset, newClassLevel)) {
                 add(content, featureBullet(f, cls + " " + newClassLevel, infoTitle, infoText));
+            }
+        } else {
+            for (ClassFeatures.Feature f : ClassFeatures.builtin(cls)) {
+                if (f.level == newClassLevel) add(content, featureBullet(f.json, cls + " " + newClassLevel, infoTitle, infoText));
             }
         }
         String currentSub = CustomAssets.recSubclasses(rec).get(cls);
@@ -1423,7 +1427,10 @@ class LevelUpPanel {
         App.clickable(l, () -> {
             infoTitle.setText(name);
             String d = CustomAssets.str(f, "description");
-            infoText.setText(source + "\n\n" + (d.isEmpty() ? "No description." : d));
+            List<String> mech = ClassFeatures.mechanics(ClassFeatures.parse(f), null, CustomAssets.intVal(f, "level", 1), null, "");
+            infoText.setText(source + "\n\n" + (d.isEmpty() ? "No description." : d)
+                    + (mech.isEmpty() ? "" : "\n\n• " + String.join("\n• ", mech))
+                    + "\n\nUses, choices (like Expertise) and details are on the character sheet's Features & Traits.");
         });
         return l;
     }

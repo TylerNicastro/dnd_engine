@@ -62,6 +62,8 @@ The summaries are not a replacement for the books. If you play D&D, please buy t
 
 Parts of this work include material from the System Reference Document 5.2 ("SRD 5.2") by Wizards of the Coast LLC, available at https://www.dndbeyond.com/srd. The SRD 5.2 is licensed under the Creative Commons Attribution 4.0 International License, available at https://creativecommons.org/licenses/by/4.0/legalcode.
 
+The built-in beasts (`beasts.json`) are full stat blocks from the SRD 5.2. Five of them (Poisonous Snake, Giant Poisonous Snake, Quipper, Sea Horse and Giant Sea Horse) use their 2014 names and stat blocks from the System Reference Document 5.1 ("SRD 5.1") by Wizards of the Coast LLC, which is also licensed under the Creative Commons Attribution 4.0 International License. The markdown was converted into the app's NPC format; attack lines have their "Hit:" label restored and dinosaurs are stored as Beasts with the role "Dinosaur".
+
 ## License
 
 The source code is released under the [MIT License](LICENSE). The license covers the code only, not the Wizards of the Coast content described above.

@@ -524,6 +524,11 @@ static final class Effect {
     int ac, speed, rollDie, againstDie, markDice, markSides;
     String markType = "";
     boolean advAgainst, reveal, noReactions, noOA, nextAttackDis, nextSaveDie, noHeal;
+    // class features (ClassFeatures lasting-effect parts): `feature` marks an effect from a class feature, not a spell
+    boolean feature, sustain, endOnDamage, endOnIncap, noSpells, advStr, recklessAtk, advSpellAtk;
+    int meleeDmg, dcBonus, inspDie, inspCount; // + damage on Strength attacks; spell save DC; a die to add to a failed D20 Test
+    String form = "";       // Wild Shape: the NPC id of the creature form it has assumed (CustomAssets.find(NPCS, form))
+    List<String> resist = new ArrayList<>(), advSaves = new ArrayList<>();
 
     boolean lasting() {
         return casterStarts < 0 && casterEnds < 0 && ownStarts < 0 && ownEnds < 0;
@@ -588,6 +593,26 @@ static final class Effect {
         if (nextSaveDie) t.put("nextSaveDie", true);
         if (noHeal) t.put("noHeal", true);
         m.put("tpl", t);
+        if (feature) {
+            Map<String, Object> f = new LinkedHashMap<>();
+            if (sustain) f.put("sustain", true);
+            if (endOnDamage) f.put("endOnDamage", true);
+            if (endOnIncap) f.put("endOnIncap", true);
+            if (noSpells) f.put("noSpells", true);
+            if (advStr) f.put("advStr", true);
+            if (recklessAtk) f.put("recklessAtk", true);
+            if (advSpellAtk) f.put("advSpellAtk", true);
+            if (!form.isEmpty()) f.put("form", form);
+            if (meleeDmg != 0) f.put("meleeDmg", meleeDmg);
+            if (dcBonus != 0) f.put("dcBonus", dcBonus);
+            if (inspDie > 0) {
+                f.put("inspDie", inspDie);
+                f.put("inspCount", inspCount);
+            }
+            if (!resist.isEmpty()) f.put("resist", new ArrayList<Object>(resist));
+            if (!advSaves.isEmpty()) f.put("advSaves", new ArrayList<Object>(advSaves));
+            m.put("feature", f);
+        }
         return m;
     }
 
@@ -630,6 +655,24 @@ static final class Effect {
             e.noHeal = CustomAssets.bool(t, "noHeal");
         } else {
             e.copyTemplate(def(e.spell)); // saved before templates existed
+        }
+        if (m.get("feature") instanceof Map) {
+            Map<?, ?> f = (Map<?, ?>) m.get("feature");
+            e.feature = true;
+            e.sustain = CustomAssets.bool(f, "sustain");
+            e.endOnDamage = CustomAssets.bool(f, "endOnDamage");
+            e.endOnIncap = CustomAssets.bool(f, "endOnIncap");
+            e.noSpells = CustomAssets.bool(f, "noSpells");
+            e.advStr = CustomAssets.bool(f, "advStr");
+            e.recklessAtk = CustomAssets.bool(f, "recklessAtk");
+            e.advSpellAtk = CustomAssets.bool(f, "advSpellAtk");
+            e.form = CustomAssets.str(f, "form");
+            e.meleeDmg = CustomAssets.intVal(f, "meleeDmg", 0);
+            e.dcBonus = CustomAssets.intVal(f, "dcBonus", 0);
+            e.inspDie = CustomAssets.intVal(f, "inspDie", 0);
+            e.inspCount = CustomAssets.intVal(f, "inspCount", 1);
+            e.resist = CustomAssets.list(f, "resist");
+            e.advSaves = CustomAssets.list(f, "advSaves");
         }
         return e;
     }
@@ -686,6 +729,13 @@ static String effectLabel(Effect e) {
     if (e.ac != 0) p.add((e.ac > 0 ? "+" : "") + e.ac + " AC");
     if (e.speed != 0) p.add((e.speed > 0 ? "+" : "") + e.speed + " ft.");
     if (e.markDice > 0) p.add("+" + e.markDice + "d" + e.markSides + " " + e.markType);
+    if (e.meleeDmg != 0) p.add("+" + e.meleeDmg + " dmg");
+    if (e.inspDie > 0) p.add((e.inspCount > 1 ? e.inspCount : 1) + "d" + e.inspDie);
+    if (e.dcBonus != 0) p.add("+" + e.dcBonus + " DC");
+    if (!e.form.isEmpty()) {
+        Map<String, Object> fn = CustomAssets.find(CustomAssets.NPCS, e.form);
+        p.add(0, fn == null ? "unknown form" : CustomAssets.str(fn, "name"));
+    }
     return e.spell + (p.isEmpty() ? "" : " (" + String.join(", ", p) + ")");
 }
 

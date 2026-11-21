@@ -748,7 +748,7 @@ private void showPinEditor(Pin pin, boolean isNew) {
     List<String> npcNames = new ArrayList<>();
     Map<String, String> nameToId = new LinkedHashMap<>();
     Map<String, String> npcInfo = new LinkedHashMap<>();
-    for (Map<String, Object> n : CustomAssets.all(CustomAssets.NPCS)) {
+    for (Map<String, Object> n : CustomAssets.placeableNpcs()) { // homebrew + built-in beasts
         String nm = CustomAssets.str(n, "name");
         npcNames.add(nm);
         nameToId.put(nm, CustomAssets.str(n, "id"));

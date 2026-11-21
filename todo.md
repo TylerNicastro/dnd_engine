@@ -5,20 +5,21 @@ A high-level overview of what's still missing for a complete D&D session. Rough 
 ## Combat
 - **Spells of level 2 to 9**: combat casting only covers cantrips and level 1. The Test Archmage can already cast everything, so it's a good test bed.
 - **Ready with spells**: a readied spell is only tracked as text. Casting it with the Reaction when the trigger happens (slot spent on readying, held with Concentration) isn't automated yet.
-- **Expertise**: skill checks in combat (Hide, Search, Influence...) add proficiency, but Expertise isn't recorded on characters yet.
 - **Ability checks & saving throws on demand**: contested checks and DM-called saves during combat.
 - **NPC automation (optional)**: suggested or automatic NPC turns (move, then attack the nearest target).
 - **Encounter tools**: encounter difficulty / XP budget, quick-add groups of NPCs, reinforcements mid-fight.
+- **More built-in monsters**: only the 91 core beasts are built in (beasts.json). Add the rest of the SRD 5.2 monsters, including the animal swarms (Swarm of Bats, Swarm of Rats...).
+- **Wild Shape details**: a form's traits (Pack Tactics, Keen Smell...) and Bonus Actions / Reactions are shown but not automated; Circle of the Moon's bigger forms come with subclasses.
 - **Mounted & underwater combat, falling, and terrain hazards.**
 
 ## Class & Subclass Features
-- **Core class features in combat**: Rage, Sneak Attack, Action Surge, Second Wind, Channel Divinity, Wild Shape, Bardic Inspiration, Focus Points, Lay on Hands, Sorcery Points, Eldritch Invocations, etc.
-- **Resource tracking** for those features (uses per Short / Long Rest).
+- **Class features at levels 3-20**: levels 1 and 2 are built in (ClassFeatures). Add the rest (Extra Attack, Evasion, Stunning Strike, Font of Inspiration...), using the same parts.
+- **Deeper feature automation**: Metamagic changes the spell being cast (Quickened, Twinned...), Eldritch Invocations apply their effects (Agonizing Blast, Armor of Shadows), Interception / Protection reactions.
 - **Built-in subclasses**: only homebrew subclasses exist right now. Add the 2024 PHB subclasses with their features.
 - **Feat effects**: most feats are recorded but their mechanics aren't applied automatically.
 
 ## Characters & Progression
-- **Short & Long Rests**: spend Hit Dice, restore HP, slots and feature uses, and reset conditions.
+- **Short & Long Rests**: the sheet's rest buttons restore feature uses and spell slots. Still missing: spending Hit Dice, current HP outside combat, and resetting conditions / Exhaustion.
 - **Experience / milestone tracking**, with a prompt when a level is earned.
 - **Spell management on the sheet**: swap prepared spells after a Long Rest, and ritual casting.
 - **Inventory depth**: carrying capacity / encumbrance, attunement, containers, buying and selling.

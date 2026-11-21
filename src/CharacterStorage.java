@@ -292,6 +292,17 @@ static void carryOverProgression(Map<?, ?> oldRec, Map<String, Object> newRec) {
     // Sheet-only weapon choices (WeaponRules): Weapon Mastery picks and what each hand holds
     if (oldRec.get("weaponMasteries") != null) newRec.put("weaponMasteries", oldRec.get("weaponMasteries"));
     if (oldRec.get("hands") != null) newRec.put("hands", oldRec.get("hands"));
+    // Class feature trackers (ClassFeatures): uses spent and picks made on the sheet (Expertise, Fighting Style...)
+    if (oldRec.get("featureUses") != null) newRec.put("featureUses", oldRec.get("featureUses"));
+    if (oldRec.get("featureChoices") instanceof Map) {
+        Map<String, Object> picks = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> en : ((Map<?, ?>) oldRec.get("featureChoices")).entrySet()) {
+            String key = String.valueOf(en.getKey());
+            if (!oldClass.equals(newClass) && key.startsWith(oldClass + ":")) continue; // picks don't follow a class change
+            picks.put(key, en.getValue());
+        }
+        newRec.put("featureChoices", picks);
+    }
     // Homebrew subclass picks made on level up ({className: subclassName})
     if (oldRec.get("subclasses") instanceof Map) {
         Map<String, Object> subs = new LinkedHashMap<>();
@@ -482,6 +493,8 @@ static LinkedHashMap<String, String> recLanguageSources(Map<?, ?> rec) {
     if (homebrew != null) {
         for (String l : CustomAssets.speciesLanguageList(homebrew)) out.putIfAbsent(l, species + " species");
     }
+    // languages picked through class features (Thieves' Cant's extra language, Deft Explorer)
+    for (Map.Entry<String, String> en : ClassFeatures.pickSources(rec, ClassFeatures.C_LANGUAGE).entrySet()) out.putIfAbsent(en.getKey(), en.getValue());
     return out;
 }
 
@@ -502,6 +515,8 @@ static LinkedHashMap<String, String> recSkillSources(Map<?, ?> rec) {
             if (chosen != null) for (String s : chosen) out.putIfAbsent(s, characterClass + " class skill choice");
         }
     }
+    // skill proficiencies picked through class features (homebrew "Skill proficiency" choices)
+    for (Map.Entry<String, String> en : ClassFeatures.pickSources(rec, ClassFeatures.C_SKILL).entrySet()) out.putIfAbsent(en.getKey(), en.getValue());
     return out;
 }
 
@@ -518,6 +533,7 @@ static Set<String> recSkillProficiencies(Map<?, ?> rec) {
             }
         }
     }
+    profs.addAll(ClassFeatures.picksOfKind(rec, ClassFeatures.C_SKILL)); // class feature skill picks
     return profs;
 }
 

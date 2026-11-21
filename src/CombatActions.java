@@ -74,15 +74,12 @@ static int unarmedDc(Map<?, ?> source, boolean pc) {
     return 8 + CombatSpells.abilityMod(source, pc, "STR") + profBonus(source, pc);
 }
 
-// Skill check bonus: characters add their Proficiency Bonus for proficient skills (Expertise isn't tracked yet);
+// Skill check bonus: characters use ClassFeatures.skillBonus (proficiency, Expertise, Jack of All Trades);
 // NPCs use their stat block's "Skills" line ("Stealth +6"), or the plain ability modifier
 static int skillBonus(Map<?, ?> source, boolean pc, String skill) {
     if (source == null) return 0;
     String ability = GameData.SKILL_ABILITY.getOrDefault(skill, "WIS");
-    if (pc) {
-        int mod = CombatSpells.abilityMod(source, ability);
-        return mod + (CharacterStorage.recSkillProficiencies(source).contains(skill) ? CombatSpells.profBonus(source) : 0);
-    }
+    if (pc) return ClassFeatures.skillBonus(source, skill); // proficiency, Expertise, Jack of All Trades, Thaumaturge / Magician
     java.util.regex.Matcher m = java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(skill) + "\\s*([+-−]\\s*\\d+)",
             java.util.regex.Pattern.CASE_INSENSITIVE).matcher(CustomAssets.str(source, "skills"));
     if (m.find()) return Integer.parseInt(m.group(1).replace(" ", "").replace("+", "").replace("−", "-"));

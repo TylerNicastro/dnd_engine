@@ -21,7 +21,7 @@ jar --create --file (Join-Path $Web "dnd_engine.jar") --main-class App -C $Class
 if ($LASTEXITCODE -ne 0) { throw "jar failed" }
 
 Write-Host "Copying data files..."
-Copy-Item (Join-Path $Root "weapons.json"), (Join-Path $Root "spells.json") $Web
+Copy-Item (Join-Path $Root "weapons.json"), (Join-Path $Root "spells.json"), (Join-Path $Root "beasts.json") $Web
 $Art = Join-Path $Root "art"
 if (Test-Path $Art) {
     $WebArt = Join-Path $Web "art"
@@ -32,7 +32,7 @@ if (Test-Path $Art) {
 Write-Host "Packaging web/dnd_engine-desktop.zip..."
 if (Test-Path $DesktopRoot) { Remove-Item -Recurse -Force $DesktopRoot }
 New-Item -ItemType Directory -Force $Desktop | Out-Null
-Copy-Item (Join-Path $Web "dnd_engine.jar"), (Join-Path $Root "weapons.json"), (Join-Path $Root "spells.json"),
+Copy-Item (Join-Path $Web "dnd_engine.jar"), (Join-Path $Root "weapons.json"), (Join-Path $Root "spells.json"), (Join-Path $Root "beasts.json"),
           (Join-Path $Root "README.md"), (Join-Path $Root "LICENSE") $Desktop
 if (Test-Path $Art) { Copy-Item -Recurse $Art (Join-Path $Desktop "art") }
 $Zip = Join-Path $Web "dnd_engine-desktop.zip"

@@ -1,0 +1,3398 @@
+{
+  "format": "Built-in beasts (read-only NPCs). Each entry is an NPC asset (same fields as homebrew NPCs, see CustomAssets.SCHEMAS). Attack text keeps the stat block wording so Combat can read it (WeaponRules.parseNpcAction).",
+  "license": "Stat blocks from the System Reference Document 5.2 (2024) and, for the 2014 names Poisonous Snake, Giant Poisonous Snake, Quipper, Sea Horse and Giant Sea Horse, the System Reference Document 5.1, by Wizards of the Coast LLC, licensed under CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/legalcode).",
+  "beasts": [
+    {
+      "id": "srd-allosaurus",
+      "name": "Allosaurus",
+      "builtin": true,
+      "size": "Large",
+      "role": "Dinosaur",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "51 (6d10 + 18)",
+      "speed": "60 ft.",
+      "skills": "Perception +5",
+      "cr": "2",
+      "abilities": {
+        "STR": 19,
+        "DEX": 13,
+        "CON": 17,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 5
+      },
+      "senses": "Passive Perception 15",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +6, reach 5 ft. Hit: 15 (2d10 + 4) Piercing damage."
+        },
+        {
+          "name": "Claws",
+          "description": "Melee Attack Roll: +6, reach 5 ft. Hit: 8 (1d8 + 4) Slashing damage. If the target is a Large or smaller creature and the allosaurus moved 30+ feet straight toward it immediately before the hit, the target has the Prone condition, and the allosaurus can make one Bite attack against it."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-ankylosaurus",
+      "name": "Ankylosaurus",
+      "builtin": true,
+      "size": "Huge",
+      "role": "Dinosaur",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 15,
+      "hp": "68 (8d12 + 16)",
+      "speed": "30 ft.",
+      "cr": "3",
+      "abilities": {
+        "STR": 19,
+        "DEX": 11,
+        "CON": 15,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 5
+      },
+      "saves": "STR +6",
+      "senses": "Passive Perception 11",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The ankylosaurus makes two Tail attacks."
+        },
+        {
+          "name": "Tail",
+          "description": "Melee Attack Roll: +6, reach 10 ft. Hit: 9 (1d10 + 4) Bludgeoning damage. If the target is a Huge or smaller creature, it has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-ape",
+      "name": "Ape",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "19 (3d8 + 6)",
+      "speed": "30 ft., Climb 30 ft.",
+      "skills": "Athletics +5, Perception +3",
+      "cr": "1/2",
+      "abilities": {
+        "STR": 16,
+        "DEX": 14,
+        "CON": 14,
+        "INT": 6,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "senses": "Passive Perception 13",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The ape makes two Fist attacks."
+        },
+        {
+          "name": "Fist",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 5 (1d4 + 3) Bludgeoning damage."
+        },
+        {
+          "name": "Rock (Recharge 6)",
+          "description": "Ranged Attack Roll: +5, range 25/50 ft. Hit: 10 (2d6 + 3) Bludgeoning damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-archelon",
+      "name": "Archelon",
+      "builtin": true,
+      "size": "Huge",
+      "role": "Dinosaur",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 17,
+      "hp": "90 (12d12 + 12)",
+      "speed": "20 ft., Swim 80 ft.",
+      "skills": "Stealth +5",
+      "cr": "4",
+      "abilities": {
+        "STR": 18,
+        "DEX": 16,
+        "CON": 13,
+        "INT": 4,
+        "WIS": 14,
+        "CHA": 6
+      },
+      "senses": "Passive Perception 12",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Amphibious",
+          "description": "The archelon can breathe air and water."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The archelon makes two Bite attacks."
+        },
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +6, reach 5 ft. Hit: 14 (3d6 + 4) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-baboon",
+      "name": "Baboon",
+      "builtin": true,
+      "size": "Small",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "3 (1d6)",
+      "speed": "30 ft., Climb 30 ft.",
+      "cr": "0",
+      "abilities": {
+        "STR": 8,
+        "DEX": 14,
+        "CON": 11,
+        "INT": 4,
+        "WIS": 12,
+        "CHA": 6
+      },
+      "senses": "Passive Perception 11",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "description": "The baboon has Advantage on an attack roll against a creature if at least one of the baboon's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +1, reach 5 ft. Hit: 1 (1d4 - 1) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-badger",
+      "name": "Badger",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "5 (1d4 + 3)",
+      "speed": "20 ft., Burrow 5 ft.",
+      "skills": "Perception +3",
+      "darkvision": 30,
+      "cr": "0",
+      "abilities": {
+        "STR": 10,
+        "DEX": 11,
+        "CON": 16,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 5
+      },
+      "senses": "darkvision 30 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Poison Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Poison"
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +2, reach 5 ft. Hit: 1 Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-bat",
+      "name": "Bat",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "1 (1d4 - 1)",
+      "speed": "5 ft., Fly 30 ft.",
+      "cr": "0",
+      "abilities": {
+        "STR": 2,
+        "DEX": 15,
+        "CON": 8,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 4
+      },
+      "senses": "blindsight 60 ft.; Passive Perception 11",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 1 Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-black-bear",
+      "name": "Black Bear",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "19 (3d8 + 6)",
+      "speed": "30 ft., Climb 30 ft., Swim 30 ft.",
+      "skills": "Perception +5",
+      "darkvision": 60,
+      "cr": "1/2",
+      "abilities": {
+        "STR": 15,
+        "DEX": 12,
+        "CON": 14,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 15",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The bear makes two Rend attacks."
+        },
+        {
+          "name": "Rend",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 5 (1d6 + 2) Slashing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-blood-hawk",
+      "name": "Blood Hawk",
+      "builtin": true,
+      "size": "Small",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "7 (2d6)",
+      "speed": "10 ft., Fly 60 ft.",
+      "skills": "Perception +6",
+      "cr": "1/8",
+      "abilities": {
+        "STR": 6,
+        "DEX": 14,
+        "CON": 10,
+        "INT": 3,
+        "WIS": 14,
+        "CHA": 5
+      },
+      "senses": "Passive Perception 16",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "description": "The hawk has Advantage on an attack roll against a creature if at least one of the hawk's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Beak",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Piercing damage, or 6 (1d8 + 2) Piercing damage if the target is Bloodied."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-boar",
+      "name": "Boar",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "13 (2d8 + 4)",
+      "speed": "40 ft.",
+      "cr": "1/4",
+      "abilities": {
+        "STR": 13,
+        "DEX": 11,
+        "CON": 14,
+        "INT": 2,
+        "WIS": 9,
+        "CHA": 5
+      },
+      "senses": "Passive Perception 9",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Bloodied Fury",
+          "description": "While Bloodied, the boar has Advantage on attack rolls."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Gore",
+          "description": "Melee Attack Roll: +3, reach 5 ft. Hit: 4 (1d6 + 1) Piercing damage. If the target is a Medium or smaller creature and the boar moved 20+ feet straight toward it immediately before the hit, the target takes an extra 3 (1d6) Piercing damage and has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-brown-bear",
+      "name": "Brown Bear",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "22 (3d10 + 6)",
+      "speed": "40 ft., Climb 30 ft.",
+      "skills": "Perception +3",
+      "darkvision": 60,
+      "cr": "1",
+      "abilities": {
+        "STR": 17,
+        "DEX": 12,
+        "CON": 15,
+        "INT": 2,
+        "WIS": 13,
+        "CHA": 7
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The bear makes one Bite attack and one Claw attack."
+        },
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 7 (1d8 + 3) Piercing damage."
+        },
+        {
+          "name": "Claw",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 5 (1d4 + 3) Slashing damage. If the target is a Large or smaller creature, it has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-camel",
+      "name": "Camel",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 10,
+      "hp": "17 (2d10 + 6)",
+      "speed": "50 ft.",
+      "darkvision": 60,
+      "cr": "1/8",
+      "abilities": {
+        "STR": 15,
+        "DEX": 8,
+        "CON": 17,
+        "INT": 2,
+        "WIS": 11,
+        "CHA": 5
+      },
+      "saves": "CON +5",
+      "senses": "darkvision 60 ft.; Passive Perception 10",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Bludgeoning damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-cat",
+      "name": "Cat",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "2 (1d4)",
+      "speed": "40 ft., Climb 40 ft.",
+      "skills": "Perception +3, Stealth +4",
+      "darkvision": 60,
+      "cr": "0",
+      "abilities": {
+        "STR": 3,
+        "DEX": 15,
+        "CON": 10,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "saves": "DEX +4",
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Jumper",
+          "description": "The cat's jump distance is determined using its Dexterity rather than its Strength."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Scratch",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 1 Slashing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-constrictor-snake",
+      "name": "Constrictor Snake",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "13 (2d10 + 2)",
+      "speed": "30 ft., Swim 30 ft.",
+      "skills": "Perception +2, Stealth +4",
+      "cr": "1/4",
+      "abilities": {
+        "STR": 15,
+        "DEX": 14,
+        "CON": 12,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 3
+      },
+      "senses": "blindsight 10 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 6 (1d8 + 2) Piercing damage."
+        },
+        {
+          "name": "Constrict",
+          "description": "Strength Saving Throw: DC 12, one Medium or smaller creature the snake can see within 5 feet. Failure: 7 (3d4) Bludgeoning damage, and the target has the Grappled condition (escape DC 12)."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-crab",
+      "name": "Crab",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "3 (1d4 + 1)",
+      "speed": "20 ft., Swim 20 ft.",
+      "skills": "Stealth +2",
+      "cr": "0",
+      "abilities": {
+        "STR": 6,
+        "DEX": 11,
+        "CON": 12,
+        "INT": 1,
+        "WIS": 8,
+        "CHA": 2
+      },
+      "senses": "blindsight 30 ft.; Passive Perception 9",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Amphibious",
+          "description": "The crab can breathe air and water."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Claw",
+          "description": "Melee Attack Roll: +2, reach 5 ft. Hit: 1 Bludgeoning damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-crocodile",
+      "name": "Crocodile",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "13 (2d10 + 2)",
+      "speed": "20 ft., Swim 30 ft.",
+      "skills": "Stealth +2",
+      "cr": "1/2",
+      "abilities": {
+        "STR": 15,
+        "DEX": 10,
+        "CON": 13,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 5
+      },
+      "saves": "CON +3",
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Hold Breath",
+          "description": "The crocodile can hold its breath for 1 hour."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 6 (1d8 + 2) Piercing damage. If the target is a Medium or smaller creature, it has the Grappled condition (escape DC 12). While Grappled, the target has the Restrained condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-deer",
+      "name": "Deer",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "4 (1d8)",
+      "speed": "50 ft.",
+      "skills": "Perception +4",
+      "darkvision": 60,
+      "cr": "0",
+      "abilities": {
+        "STR": 11,
+        "DEX": 16,
+        "CON": 11,
+        "INT": 2,
+        "WIS": 14,
+        "CHA": 5
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 14",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Agile",
+          "description": "The deer doesn't provoke an Opportunity Attack when it moves out of an enemy's reach."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Ram",
+          "description": "Melee Attack Roll: +2, reach 5 ft. Hit: 2 (1d4) Bludgeoning damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-dire-wolf",
+      "name": "Dire Wolf",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 14,
+      "hp": "22 (3d10 + 6)",
+      "speed": "50 ft.",
+      "skills": "Perception +5, Stealth +4",
+      "darkvision": 60,
+      "cr": "1",
+      "abilities": {
+        "STR": 17,
+        "DEX": 15,
+        "CON": 15,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 15",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "description": "The wolf has Advantage on an attack roll against a creature if at least one of the wolf's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 8 (1d10 + 3) Piercing damage. If the target is a Large or smaller creature, it has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-draft-horse",
+      "name": "Draft Horse",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 10,
+      "hp": "15 (2d10 + 4)",
+      "speed": "40 ft.",
+      "cr": "1/4",
+      "abilities": {
+        "STR": 18,
+        "DEX": 10,
+        "CON": 15,
+        "INT": 2,
+        "WIS": 11,
+        "CHA": 7
+      },
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Hooves",
+          "description": "Melee Attack Roll: +6, reach 5 ft. Hit: 6 (1d4 + 4) Bludgeoning damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-eagle",
+      "name": "Eagle",
+      "builtin": true,
+      "size": "Small",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "4 (1d6 + 1)",
+      "speed": "10 ft., Fly 60 ft.",
+      "skills": "Perception +6",
+      "cr": "0",
+      "abilities": {
+        "STR": 6,
+        "DEX": 15,
+        "CON": 12,
+        "INT": 2,
+        "WIS": 14,
+        "CHA": 7
+      },
+      "senses": "Passive Perception 16",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Talons",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Slashing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-elephant",
+      "name": "Elephant",
+      "builtin": true,
+      "size": "Huge",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "76 (8d12 + 24)",
+      "speed": "40 ft.",
+      "cr": "4",
+      "abilities": {
+        "STR": 22,
+        "DEX": 9,
+        "CON": 17,
+        "INT": 3,
+        "WIS": 11,
+        "CHA": 6
+      },
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The elephant makes two Gore attacks."
+        },
+        {
+          "name": "Gore",
+          "description": "Melee Attack Roll: +8, reach 5 ft. Hit: 15 (2d8 + 6) Piercing damage. If the target is a Huge or smaller creature and the elephant moved 20+ feet straight toward it immediately before the hit, the target has the Prone condition."
+        }
+      ],
+      "bonusActions": [
+        {
+          "name": "Trample",
+          "description": "Dexterity Saving Throw: DC 16, one creature within 5 feet that has the Prone condition. Failure: 17 (2d10 + 6) Bludgeoning damage. Success: Half damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-elk",
+      "name": "Elk",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 10,
+      "hp": "11 (2d10)",
+      "speed": "50 ft.",
+      "skills": "Perception +2",
+      "darkvision": 60,
+      "cr": "1/4",
+      "abilities": {
+        "STR": 16,
+        "DEX": 10,
+        "CON": 11,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 6
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Ram",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 6 (1d6 + 3) Bludgeoning damage. If the target is a Large or smaller creature and the elk moved 20+ feet straight toward it immediately before the hit, the target takes an extra 3 (1d6) Bludgeoning damage and has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-flying-snake",
+      "name": "Flying Snake",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Monstrosity",
+      "alignment": "Unaligned",
+      "ac": 14,
+      "hp": "5 (2d4)",
+      "speed": "30 ft., Fly 60 ft., Swim 30 ft.",
+      "cr": "1/8",
+      "abilities": {
+        "STR": 4,
+        "DEX": 15,
+        "CON": 11,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 5
+      },
+      "senses": "blindsight 10 ft.; Passive Perception 11",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Flyby",
+          "description": "The snake doesn't provoke an Opportunity Attack when it flies out of an enemy's reach."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 1 Piercing damage plus 5 (2d4) Poison damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-frog",
+      "name": "Frog",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "1 (1d4 - 1)",
+      "speed": "20 ft., Swim 20 ft.",
+      "skills": "Perception +1, Stealth +3",
+      "darkvision": 30,
+      "cr": "0",
+      "abilities": {
+        "STR": 1,
+        "DEX": 13,
+        "CON": 8,
+        "INT": 1,
+        "WIS": 8,
+        "CHA": 3
+      },
+      "senses": "darkvision 30 ft.; Passive Perception 11",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Amphibious",
+          "description": "The frog can breathe air and water."
+        },
+        {
+          "name": "Standing Leap",
+          "description": "The frog's Long Jump is up to 10 feet and its High Jump is up to 5 feet with or without a running start."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +3, reach 5 ft. Hit: 1 Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-ape",
+      "name": "Giant Ape",
+      "builtin": true,
+      "size": "Huge",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "168 (16d12 + 64)",
+      "speed": "40 ft., Climb 40 ft.",
+      "skills": "Athletics +9, Perception +4, Survival +4",
+      "cr": "7",
+      "abilities": {
+        "STR": 23,
+        "DEX": 14,
+        "CON": 18,
+        "INT": 5,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "initiative": 5,
+      "senses": "Passive Perception 14",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The ape makes two Fist attacks."
+        },
+        {
+          "name": "Fist",
+          "description": "Melee Attack Roll: +9, reach 10 ft. Hit: 22 (3d10 + 6) Bludgeoning damage."
+        },
+        {
+          "name": "Boulder Toss (Recharge 6)",
+          "description": "The ape hurls a boulder at a point it can see within 90 feet. Dexterity Saving Throw: DC 17, each creature in a 5-foot-radius Sphere centered on that point. Failure: 24 (7d6) Bludgeoning damage. If the target is a Large or smaller creature, it has the Prone condition. Success: Half damage only."
+        }
+      ],
+      "bonusActions": [
+        {
+          "name": "Leap",
+          "description": "The ape jumps up to 30 feet by spending 10 feet of movement."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-badger",
+      "name": "Giant Badger",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "15 (2d8 + 6)",
+      "speed": "30 ft., Burrow 10 ft.",
+      "skills": "Perception +3",
+      "darkvision": 60,
+      "cr": "1/4",
+      "abilities": {
+        "STR": 13,
+        "DEX": 10,
+        "CON": 17,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 5
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Poison Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Poison"
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +3, reach 5 ft. Hit: 6 (2d4 + 1) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-bat",
+      "name": "Giant Bat",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "22 (4d10)",
+      "speed": "10 ft., Fly 60 ft.",
+      "cr": "1/4",
+      "abilities": {
+        "STR": 15,
+        "DEX": 16,
+        "CON": 11,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 6
+      },
+      "senses": "blindsight 120 ft.; Passive Perception 11",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 6 (1d6 + 3) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-boar",
+      "name": "Giant Boar",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "42 (5d10 + 15)",
+      "speed": "40 ft.",
+      "cr": "2",
+      "abilities": {
+        "STR": 17,
+        "DEX": 10,
+        "CON": 16,
+        "INT": 2,
+        "WIS": 7,
+        "CHA": 5
+      },
+      "saves": "STR +5",
+      "senses": "Passive Perception 8",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Bloodied Fury",
+          "description": "The boar has Advantage on melee attack rolls while it is Bloodied."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Gore",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 10 (2d6 + 3) Piercing damage. If the target is a Large or smaller creature and the boar moved 20+ feet straight toward it immediately before the hit, the target takes an extra 7 (2d6) Piercing damage and has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-centipede",
+      "name": "Giant Centipede",
+      "builtin": true,
+      "size": "Small",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 14,
+      "hp": "9 (2d6 + 2)",
+      "speed": "30 ft., Climb 30 ft.",
+      "cr": "1/4",
+      "abilities": {
+        "STR": 5,
+        "DEX": 14,
+        "CON": 12,
+        "INT": 1,
+        "WIS": 7,
+        "CHA": 3
+      },
+      "senses": "blindsight 30 ft.; Passive Perception 8",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Piercing damage, and the target has the Poisoned condition until the start of the centipede's next turn."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-constrictor-snake",
+      "name": "Giant Constrictor Snake",
+      "builtin": true,
+      "size": "Huge",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "60 (8d12 + 8)",
+      "speed": "30 ft., Swim 30 ft.",
+      "skills": "Perception +2",
+      "cr": "2",
+      "abilities": {
+        "STR": 19,
+        "DEX": 14,
+        "CON": 12,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 3
+      },
+      "senses": "blindsight 10 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The snake makes one Bite attack and uses Constrict."
+        },
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +6, reach 10 ft. Hit: 11 (2d6 + 4) Piercing damage."
+        },
+        {
+          "name": "Constrict",
+          "description": "Strength Saving Throw: DC 14, one Large or smaller creature the snake can see within 10 feet. Failure: 13 (2d8 + 4) Bludgeoning damage, and the target has the Grappled condition (escape DC 14)."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-crab",
+      "name": "Giant Crab",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 15,
+      "hp": "13 (3d8)",
+      "speed": "30 ft., Swim 30 ft.",
+      "skills": "Stealth +3",
+      "cr": "1/8",
+      "abilities": {
+        "STR": 13,
+        "DEX": 13,
+        "CON": 11,
+        "INT": 1,
+        "WIS": 9,
+        "CHA": 3
+      },
+      "senses": "blindsight 30 ft.; Passive Perception 9",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Amphibious",
+          "description": "The crab can breathe air and water."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Claw",
+          "description": "Melee Attack Roll: +3, reach 5 ft. Hit: 4 (1d6 + 1) Bludgeoning damage. If the target is a Medium or smaller creature, it has the Grappled condition (escape DC 11) from one of two claws."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-crocodile",
+      "name": "Giant Crocodile",
+      "builtin": true,
+      "size": "Huge",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 14,
+      "hp": "85 (9d12 + 27)",
+      "speed": "30 ft., Swim 50 ft.",
+      "skills": "Stealth +5",
+      "cr": "5",
+      "abilities": {
+        "STR": 21,
+        "DEX": 9,
+        "CON": 17,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 7
+      },
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Hold Breath",
+          "description": "The crocodile can hold its breath for 1 hour."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The crocodile makes one Bite attack and one Tail attack."
+        },
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +8, reach 5 ft. Hit: 21 (3d10 + 5) Piercing damage. If the target is a Large or smaller creature, it has the Grappled condition (escape DC 15). While Grappled, the target has the Restrained condition and can't be targeted by the crocodile's Tail."
+        },
+        {
+          "name": "Tail",
+          "description": "Melee Attack Roll: +8, reach 10 ft. Hit: 18 (3d8 + 5) Bludgeoning damage. If the target is a Large or smaller creature, it has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-eagle",
+      "name": "Giant Eagle",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Celestial",
+      "alignment": "Neutral Good",
+      "ac": 13,
+      "hp": "26 (4d10 + 4)",
+      "speed": "10 ft., Fly 80 ft.",
+      "skills": "Perception +6",
+      "cr": "1",
+      "abilities": {
+        "STR": 16,
+        "DEX": 17,
+        "CON": 13,
+        "INT": 8,
+        "WIS": 14,
+        "CHA": 10
+      },
+      "senses": "Passive Perception 16",
+      "languages": "Celestial; understands Common and Primordial (Auran) but can't speak them",
+      "traits": [
+        {
+          "name": "Necrotic Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Necrotic"
+        },
+        {
+          "name": "Radiant Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Radiant"
+        }
+      ],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The eagle makes two Rend attacks."
+        },
+        {
+          "name": "Rend",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 5 (1d4 + 3) Slashing damage plus 3 (1d6) Radiant damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-elk",
+      "name": "Giant Elk",
+      "builtin": true,
+      "size": "Huge",
+      "creatureType": "Celestial",
+      "alignment": "Neutral Good",
+      "ac": 14,
+      "hp": "42 (5d12 + 10)",
+      "speed": "60 ft.",
+      "skills": "Perception +4",
+      "darkvision": 90,
+      "cr": "2",
+      "abilities": {
+        "STR": 19,
+        "DEX": 18,
+        "CON": 14,
+        "INT": 7,
+        "WIS": 14,
+        "CHA": 10
+      },
+      "saves": "STR +6, DEX +6",
+      "initiative": 6,
+      "senses": "darkvision 90 ft.; Passive Perception 14",
+      "languages": "Celestial; understands Common, Elvish, and Sylvan but can't speak them",
+      "traits": [
+        {
+          "name": "Necrotic Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Necrotic"
+        },
+        {
+          "name": "Radiant Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Radiant"
+        }
+      ],
+      "actions": [
+        {
+          "name": "Ram",
+          "description": "Melee Attack Roll: +6, reach 10 ft. Hit: 11 (2d6 + 4) Bludgeoning damage plus 5 (2d4) Radiant damage. If the target is a Huge or smaller creature and the elk moved 20+ feet straight toward it immediately before the hit, the target takes an extra 5 (2d4) Bludgeoning damage and has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-fire-beetle",
+      "name": "Giant Fire Beetle",
+      "builtin": true,
+      "size": "Small",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "4 (1d6 + 1)",
+      "speed": "30 ft., Climb 30 ft.",
+      "cr": "0",
+      "abilities": {
+        "STR": 8,
+        "DEX": 10,
+        "CON": 12,
+        "INT": 1,
+        "WIS": 7,
+        "CHA": 3
+      },
+      "senses": "blindsight 30 ft.; Passive Perception 8",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Fire Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Fire"
+        },
+        {
+          "name": "Illumination",
+          "description": "The beetle sheds Bright Light in a 10-foot radius and Dim Light for an additional 10 feet."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +1, reach 5 ft. Hit: 1 Fire damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-frog",
+      "name": "Giant Frog",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "18 (4d8)",
+      "speed": "30 ft., Swim 30 ft.",
+      "skills": "Perception +2, Stealth +4",
+      "darkvision": 30,
+      "cr": "1/4",
+      "abilities": {
+        "STR": 12,
+        "DEX": 13,
+        "CON": 11,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 3
+      },
+      "senses": "darkvision 30 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Amphibious",
+          "description": "The frog can breathe air and water."
+        },
+        {
+          "name": "Standing Leap",
+          "description": "The frog's Long Jump is up to 20 feet and its High Jump is up to 10 feet with or without a running start."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +3, reach 5 ft. Hit: 5 (1d6 + 2) Piercing damage. If the target is a Medium or smaller creature, it has the Grappled condition (escape DC 11)."
+        },
+        {
+          "name": "Swallow",
+          "description": "The frog swallows a Small or smaller target it is grappling. While swallowed, the target isn't Grappled but has the Blinded and Restrained conditions, and it has Cover|XPHB|Total Cover against attacks and other effects outside the frog. While swallowing the target, the frog can't use Bite, and if the frog dies, the swallowed target is no longer Restrained and can escape from the corpse using 5 feet of movement, exiting with the Prone condition. At the end of the frog's next turn, the swallowed target takes 5 (2d4) Acid damage. If that damage doesn't kill it, the frog disgorges it, causing it to exit Prone."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-goat",
+      "name": "Giant Goat",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "19 (3d10 + 3)",
+      "speed": "40 ft., Climb 30 ft.",
+      "skills": "Perception +3",
+      "darkvision": 60,
+      "cr": "1/2",
+      "abilities": {
+        "STR": 17,
+        "DEX": 13,
+        "CON": 12,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 6
+      },
+      "saves": "STR +5",
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Ram",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 6 (1d6 + 3) Bludgeoning damage. If the target is a Large or smaller creature and the goat moved 20+ feet straight toward it immediately before the hit, the target takes an extra 5 (2d4) Bludgeoning damage and has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-hyena",
+      "name": "Giant Hyena",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "45 (6d10 + 12)",
+      "speed": "50 ft.",
+      "skills": "Perception +3",
+      "darkvision": 60,
+      "cr": "1",
+      "abilities": {
+        "STR": 16,
+        "DEX": 14,
+        "CON": 14,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 10 (2d6 + 3) Piercing damage."
+        }
+      ],
+      "bonusActions": [
+        {
+          "name": "Rampage (1/Day)",
+          "description": "Immediately after dealing damage to a creature that was already Bloodied, the hyena can move up to half its Speed, and it makes one Bite attack."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-lizard",
+      "name": "Giant Lizard",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "19 (3d10 + 3)",
+      "speed": "40 ft., Climb 40 ft.",
+      "darkvision": 60,
+      "cr": "1/4",
+      "abilities": {
+        "STR": 15,
+        "DEX": 12,
+        "CON": 13,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 5
+      },
+      "saves": "DEX +3",
+      "senses": "darkvision 60 ft.; Passive Perception 10",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Spider Climb",
+          "description": "The lizard can climb difficult surfaces, including along ceilings, without needing to make an ability check."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 6 (1d8 + 2) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-octopus",
+      "name": "Giant Octopus",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "45 (7d10 + 7)",
+      "speed": "10 ft., Swim 60 ft.",
+      "skills": "Perception +4, Stealth +5",
+      "darkvision": 60,
+      "cr": "1",
+      "abilities": {
+        "STR": 17,
+        "DEX": 13,
+        "CON": 13,
+        "INT": 5,
+        "WIS": 10,
+        "CHA": 4
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 14",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Water Breathing",
+          "description": "The octopus can breathe only underwater. It can hold its breath for 1 hour outside water."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Tentacles",
+          "description": "Melee Attack Roll: +5, reach 10 ft. Hit: 10 (2d6 + 3) Bludgeoning damage. If the target is a Medium or smaller creature, it has the Grappled condition (escape DC 13) from all eight tentacles. While Grappled, the target has the Restrained condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-owl",
+      "name": "Giant Owl",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Celestial",
+      "alignment": "Neutral",
+      "ac": 12,
+      "hp": "19 (3d10 + 3)",
+      "speed": "5 ft., Fly 60 ft.",
+      "skills": "Perception +6, Stealth +6",
+      "darkvision": 120,
+      "cr": "1/4",
+      "spellsAtWill": ["Detect Evil and Good","Detect Magic"],
+      "spellcastingAbility": "WIS",
+      "spells1PerDay": ["Clairvoyance"],
+      "abilities": {
+        "STR": 13,
+        "DEX": 15,
+        "CON": 12,
+        "INT": 10,
+        "WIS": 14,
+        "CHA": 10
+      },
+      "saves": "WIS +4",
+      "senses": "darkvision 120 ft.; Passive Perception 16",
+      "languages": "Celestial; understands Common, Elvish, and Sylvan but can't speak them",
+      "traits": [
+        {
+          "name": "Necrotic Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Necrotic"
+        },
+        {
+          "name": "Radiant Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Radiant"
+        },
+        {
+          "name": "Flyby",
+          "description": "The owl doesn't provoke an Opportunity Attack when it flies out of an enemy's reach."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Talons",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 7 (1d10 + 2) Slashing damage."
+        },
+        {
+          "name": "Spellcasting",
+          "description": "The owl casts one of the following spells, requiring no spell components and using Wisdom as the spellcasting ability: At Will: Detect Evil and Good, Detect Magic. 1/Day Each: Clairvoyance."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-poisonous-snake",
+      "name": "Giant Poisonous Snake",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 14,
+      "hp": "11 (2d8 + 2)",
+      "speed": "30 ft., Swim 30 ft.",
+      "skills": "Perception +2",
+      "cr": "1/4",
+      "abilities": {
+        "STR": 10,
+        "DEX": 18,
+        "CON": 13,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 3
+      },
+      "senses": "blindsight 10 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Weapon Attack: +6 to hit, reach 10 ft., one target. Hit: 6 (1d4 + 4) Piercing damage, and the target must make a DC 11 Constitution saving throw, taking 10 (3d6) Poison damage on a failed save, or half as much damage on a successful one."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.1 (2014 rules). The 2024 rules call it the Giant Venomous Snake. Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-rat",
+      "name": "Giant Rat",
+      "builtin": true,
+      "size": "Small",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "7 (2d6)",
+      "speed": "30 ft., Climb 30 ft.",
+      "skills": "Perception +2",
+      "darkvision": 60,
+      "cr": "1/8",
+      "abilities": {
+        "STR": 7,
+        "DEX": 16,
+        "CON": 11,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 4
+      },
+      "saves": "DEX +5",
+      "senses": "darkvision 60 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "description": "The rat has Advantage on an attack roll against a creature if at least one of the rat's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 5 (1d4 + 3) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-scorpion",
+      "name": "Giant Scorpion",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 15,
+      "hp": "52 (7d10 + 14)",
+      "speed": "40 ft.",
+      "cr": "3",
+      "abilities": {
+        "STR": 16,
+        "DEX": 13,
+        "CON": 15,
+        "INT": 1,
+        "WIS": 9,
+        "CHA": 3
+      },
+      "senses": "blindsight 60 ft.; Passive Perception 9",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The scorpion makes two Claw attacks and one Sting attack."
+        },
+        {
+          "name": "Claw",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 6 (1d6 + 3) Bludgeoning damage. If the target is a Large or smaller creature, it has the Grappled condition (escape DC 13) from one of two claws."
+        },
+        {
+          "name": "Sting",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 7 (1d8 + 3) Piercing damage plus 11 (2d10) Poison damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-sea-horse",
+      "name": "Giant Sea Horse",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "16 (3d10)",
+      "speed": "0 ft., Swim 40 ft.",
+      "cr": "1/2",
+      "abilities": {
+        "STR": 12,
+        "DEX": 15,
+        "CON": 11,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 5
+      },
+      "senses": "Passive Perception 11",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Charge",
+          "description": "If the sea horse moves at least 20 feet straight toward a target and then hits it with a ram attack on the same turn, the target takes an extra 7 (2d6) Bludgeoning damage. It the target is a creature, it must succeed on a DC 11 Strength saving throw or be knocked prone."
+        },
+        {
+          "name": "Water Breathing",
+          "description": "The sea horse can breathe only underwater."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Ram",
+          "description": "Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 4 (1d6 + 1) Bludgeoning damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.1 (2014 rules). The 2024 rules call it the Giant Seahorse. Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-shark",
+      "name": "Giant Shark",
+      "builtin": true,
+      "size": "Huge",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "92 (8d12 + 40)",
+      "speed": "5 ft., Swim 60 ft.",
+      "skills": "Perception +3",
+      "cr": "5",
+      "abilities": {
+        "STR": 23,
+        "DEX": 11,
+        "CON": 21,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 5
+      },
+      "initiative": 3,
+      "senses": "blindsight 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Water Breathing",
+          "description": "The shark can breathe only underwater."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The shark makes two Bite attacks."
+        },
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +9 (with Advantage if the target doesn't have all its Hit Points), reach 5 ft. Hit: 22 (3d10 + 6) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-spider",
+      "name": "Giant Spider",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 14,
+      "hp": "26 (4d10 + 4)",
+      "speed": "30 ft., Climb 30 ft.",
+      "skills": "Perception +4, Stealth +7",
+      "darkvision": 60,
+      "cr": "1",
+      "abilities": {
+        "STR": 14,
+        "DEX": 16,
+        "CON": 12,
+        "INT": 2,
+        "WIS": 11,
+        "CHA": 4
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 14",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Spider Climb",
+          "description": "The spider can climb difficult surfaces, including along ceilings, without needing to make an ability check."
+        },
+        {
+          "name": "Web Walker",
+          "description": "The spider ignores movement restrictions caused by webs, and it knows the location of any other creature in contact with the same web."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 7 (1d8 + 3) Piercing damage plus 7 (2d6) Poison damage."
+        },
+        {
+          "name": "Web (Recharge 5-6)",
+          "description": "Dexterity Saving Throw: DC 13, one creature the spider can see within 60 feet. Failure: The target has the Restrained condition until the web is destroyed (AC 10; HP 5; Vulnerability to Fire damage; Immunity to Poison and Psychic damage)."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-toad",
+      "name": "Giant Toad",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "39 (6d10 + 6)",
+      "speed": "30 ft., Swim 30 ft.",
+      "darkvision": 60,
+      "cr": "1",
+      "abilities": {
+        "STR": 15,
+        "DEX": 13,
+        "CON": 13,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 3
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 10",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Amphibious",
+          "description": "The toad can breathe air and water."
+        },
+        {
+          "name": "Standing Leap",
+          "description": "The toad's Long Jump is up to 20 feet and its High Jump is up to 10 feet with or without a running start."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 5 (1d6 + 2) Piercing damage plus 5 (2d4) Poison damage. If the target is a Medium or smaller creature, it has the Grappled condition (escape DC 12)."
+        },
+        {
+          "name": "Swallow",
+          "description": "The toad swallows a Medium or smaller target it is grappling. While swallowed, the target isn't Grappled but has the Blinded and Restrained conditions, and it has Cover|XPHB|Total Cover against attacks and other effects outside the toad. In addition, the target takes 10 (3d6) Acid damage at the end of each of the toad's turns. The toad can have only one target swallowed at a time, and it can't use Bite while it has a swallowed target. If the toad dies, a swallowed creature is no longer Restrained and can escape from the corpse using 5 feet of movement, exiting with the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-venomous-snake",
+      "name": "Giant Venomous Snake",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 14,
+      "hp": "11 (2d8 + 2)",
+      "speed": "40 ft., Swim 40 ft.",
+      "skills": "Perception +2",
+      "cr": "1/4",
+      "abilities": {
+        "STR": 10,
+        "DEX": 18,
+        "CON": 13,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 3
+      },
+      "senses": "blindsight 10 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +6, reach 10 ft. Hit: 6 (1d4 + 4) Piercing damage plus 4 (1d8) Poison damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-vulture",
+      "name": "Giant Vulture",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Monstrosity",
+      "alignment": "Neutral Evil",
+      "ac": 10,
+      "hp": "25 (3d10 + 9)",
+      "speed": "10 ft., Fly 60 ft.",
+      "skills": "Perception +3",
+      "darkvision": 60,
+      "cr": "1",
+      "abilities": {
+        "STR": 15,
+        "DEX": 10,
+        "CON": 16,
+        "INT": 6,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "Understands Common but can't speak",
+      "traits": [
+        {
+          "name": "Necrotic Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Necrotic"
+        },
+        {
+          "name": "Pack Tactics",
+          "description": "The vulture has Advantage on an attack roll against a creature if at least one of the vulture's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Gouge",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 9 (2d6 + 2) Piercing damage, and the target has the Poisoned condition until the end of its next turn."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-wasp",
+      "name": "Giant Wasp",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "22 (5d8)",
+      "speed": "10 ft., Fly 50 ft.",
+      "cr": "1/2",
+      "abilities": {
+        "STR": 10,
+        "DEX": 14,
+        "CON": 10,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 3
+      },
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Flyby",
+          "description": "The wasp doesn't provoke an Opportunity Attack when it flies out of an enemy's reach."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Sting",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 5 (1d6 + 2) Piercing damage plus 5 (2d4) Poison damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-weasel",
+      "name": "Giant Weasel",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "9 (2d8)",
+      "speed": "40 ft., Climb 30 ft.",
+      "skills": "Acrobatics +5, Perception +3, Stealth +5",
+      "darkvision": 60,
+      "cr": "1/8",
+      "abilities": {
+        "STR": 11,
+        "DEX": 17,
+        "CON": 10,
+        "INT": 4,
+        "WIS": 12,
+        "CHA": 5
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 5 (1d4 + 3) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-giant-wolf-spider",
+      "name": "Giant Wolf Spider",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "11 (2d8 + 2)",
+      "speed": "40 ft., Climb 40 ft.",
+      "skills": "Perception +3, Stealth +7",
+      "darkvision": 60,
+      "cr": "1/4",
+      "abilities": {
+        "STR": 12,
+        "DEX": 16,
+        "CON": 13,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 4
+      },
+      "senses": "blindsight 10 ft., darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Spider Climb",
+          "description": "The spider can climb difficult surfaces, including along ceilings, without needing to make an ability check."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 5 (1d4 + 3) Piercing damage plus 5 (2d4) Poison damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-goat",
+      "name": "Goat",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 10,
+      "hp": "4 (1d8)",
+      "speed": "40 ft., Climb 30 ft.",
+      "skills": "Perception +2",
+      "darkvision": 60,
+      "cr": "0",
+      "abilities": {
+        "STR": 11,
+        "DEX": 10,
+        "CON": 11,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 5
+      },
+      "saves": "STR +2",
+      "senses": "darkvision 60 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Ram",
+          "description": "Melee Attack Roll: +2, reach 5 ft. Hit: 1 Bludgeoning damage, or 2 (1d4) Bludgeoning damage if the goat moved 20+ feet straight toward the target immediately before the hit."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-hawk",
+      "name": "Hawk",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "1 (1d4 - 1)",
+      "speed": "10 ft., Fly 60 ft.",
+      "skills": "Perception +6",
+      "cr": "0",
+      "abilities": {
+        "STR": 5,
+        "DEX": 16,
+        "CON": 8,
+        "INT": 2,
+        "WIS": 14,
+        "CHA": 6
+      },
+      "senses": "Passive Perception 16",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Talons",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 1 Slashing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-hippopotamus",
+      "name": "Hippopotamus",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 14,
+      "hp": "82 (11d10 + 22)",
+      "speed": "30 ft., Swim 30 ft.",
+      "skills": "Perception +3",
+      "cr": "4",
+      "abilities": {
+        "STR": 21,
+        "DEX": 7,
+        "CON": 15,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 4
+      },
+      "saves": "STR +7",
+      "senses": "Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Hold Breath",
+          "description": "The hippopotamus can hold its breath for 10 minutes."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The hippopotamus makes two Bite attacks."
+        },
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +7, reach 5 ft. Hit: 16 (2d10 + 5) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-hunter-shark",
+      "name": "Hunter Shark",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "45 (6d10 + 12)",
+      "speed": "5 ft., Swim 40 ft.",
+      "skills": "Perception +2",
+      "cr": "2",
+      "abilities": {
+        "STR": 18,
+        "DEX": 14,
+        "CON": 15,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 4
+      },
+      "senses": "blindsight 60 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Water Breathing",
+          "description": "The shark can breathe only underwater."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +6 (with Advantage if the target doesn't have all its Hit Points), reach 5 ft. Hit: 14 (3d6 + 4) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-hyena",
+      "name": "Hyena",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "5 (1d8 + 1)",
+      "speed": "50 ft.",
+      "skills": "Perception +3",
+      "darkvision": 60,
+      "cr": "0",
+      "abilities": {
+        "STR": 11,
+        "DEX": 13,
+        "CON": 12,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 5
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "description": "The hyena has Advantage on an attack roll against a creature if at least one of the hyena's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +2, reach 5 ft. Hit: 3 (1d6) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-jackal",
+      "name": "Jackal",
+      "builtin": true,
+      "size": "Small",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "3 (1d6)",
+      "speed": "40 ft.",
+      "skills": "Perception +5, Stealth +4",
+      "darkvision": 90,
+      "cr": "0",
+      "abilities": {
+        "STR": 8,
+        "DEX": 15,
+        "CON": 11,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 6
+      },
+      "senses": "darkvision 90 ft.; Passive Perception 15",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +1, reach 5 ft. Hit: 1 (1d4 - 1) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-killer-whale",
+      "name": "Killer Whale",
+      "builtin": true,
+      "size": "Huge",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "90 (12d12 + 12)",
+      "speed": "5 ft., Swim 60 ft.",
+      "skills": "Perception +3, Stealth +4",
+      "cr": "3",
+      "abilities": {
+        "STR": 19,
+        "DEX": 14,
+        "CON": 13,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "senses": "blindsight 120 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Hold Breath",
+          "description": "The whale can hold its breath for 30 minutes."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +6, reach 5 ft. Hit: 21 (5d6 + 4) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-lion",
+      "name": "Lion",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "22 (4d10)",
+      "speed": "50 ft.",
+      "skills": "Perception +3, Stealth +4",
+      "darkvision": 60,
+      "cr": "1",
+      "abilities": {
+        "STR": 17,
+        "DEX": 15,
+        "CON": 11,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 8
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "description": "The lion has Advantage on an attack roll against a creature if at least one of the lion's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        },
+        {
+          "name": "Running Leap",
+          "description": "With a 10-foot running start, the lion can Long Jump up to 25 feet."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The lion makes two Rend attacks. It can replace one attack with a use of Roar."
+        },
+        {
+          "name": "Rend",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 7 (1d8 + 3) Slashing damage."
+        },
+        {
+          "name": "Roar",
+          "description": "Wisdom Saving Throw: DC 11, one creature within 15 feet. Failure: The target has the Frightened condition until the start of the lion's next turn."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-lizard",
+      "name": "Lizard",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 10,
+      "hp": "2 (1d4)",
+      "speed": "20 ft., Climb 20 ft.",
+      "darkvision": 30,
+      "cr": "0",
+      "abilities": {
+        "STR": 2,
+        "DEX": 11,
+        "CON": 10,
+        "INT": 1,
+        "WIS": 8,
+        "CHA": 3
+      },
+      "senses": "darkvision 30 ft.; Passive Perception 9",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Spider Climb",
+          "description": "The lizard can climb difficult surfaces, including along ceilings, without needing to make an ability check."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +2, reach 5 ft. Hit: 1 Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-mammoth",
+      "name": "Mammoth",
+      "builtin": true,
+      "size": "Huge",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "126 (11d12 + 55)",
+      "speed": "50 ft.",
+      "cr": "6",
+      "abilities": {
+        "STR": 24,
+        "DEX": 9,
+        "CON": 21,
+        "INT": 3,
+        "WIS": 11,
+        "CHA": 6
+      },
+      "saves": "STR +10, CON +8",
+      "initiative": 2,
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The mammoth makes two Gore attacks."
+        },
+        {
+          "name": "Gore",
+          "description": "Melee Attack Roll: +10, reach 10 ft. Hit: 18 (2d10 + 7) Piercing damage. If the target is a Huge or smaller creature and the mammoth moved 20+ feet straight toward it immediately before the hit, the target has the Prone condition."
+        }
+      ],
+      "bonusActions": [
+        {
+          "name": "Trample",
+          "description": "Dexterity Saving Throw: DC 18, one creature within 5 feet that has the Prone condition. Failure: 29 (4d10 + 7) Bludgeoning damage. Success: Half damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-mastiff",
+      "name": "Mastiff",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "5 (1d8 + 1)",
+      "speed": "40 ft.",
+      "skills": "Perception +5",
+      "darkvision": 60,
+      "cr": "1/8",
+      "abilities": {
+        "STR": 13,
+        "DEX": 14,
+        "CON": 12,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "saves": "WIS +3",
+      "senses": "darkvision 60 ft.; Passive Perception 15",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +3, reach 5 ft. Hit: 4 (1d6 + 1) Piercing damage. If the target is a Medium or smaller creature, it has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-mule",
+      "name": "Mule",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 10,
+      "hp": "11 (2d8 + 2)",
+      "speed": "40 ft.",
+      "cr": "1/8",
+      "abilities": {
+        "STR": 14,
+        "DEX": 10,
+        "CON": 13,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 5
+      },
+      "saves": "STR +4",
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Beast of Burden",
+          "description": "The mule counts as one size larger for the purpose of determining its carrying capacity."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Hooves",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Bludgeoning damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-octopus",
+      "name": "Octopus",
+      "builtin": true,
+      "size": "Small",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "3 (1d6)",
+      "speed": "5 ft., Swim 30 ft.",
+      "skills": "Perception +2, Stealth +6",
+      "darkvision": 30,
+      "cr": "0",
+      "abilities": {
+        "STR": 4,
+        "DEX": 15,
+        "CON": 11,
+        "INT": 3,
+        "WIS": 10,
+        "CHA": 4
+      },
+      "senses": "darkvision 30 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Compression",
+          "description": "The octopus can move through a space as narrow as 1 inch without expending extra movement to do so."
+        },
+        {
+          "name": "Water Breathing",
+          "description": "The octopus can breathe only underwater."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Tentacles",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 1 Bludgeoning damage."
+        }
+      ],
+      "reactions": [
+        {
+          "name": "Ink Cloud (1/Day)",
+          "description": "Trigger: A creature ends its turn within 5 feet of the octopus while underwater. Response: The octopus releases ink that fills a 5-foot Cube centered on itself, and the octopus moves up to its Swim Speed. The Cube is Heavily Obscured for 1 minute or until a strong current or similar effect disperses the ink."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-owl",
+      "name": "Owl",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "1 (1d4 - 1)",
+      "speed": "5 ft., Fly 60 ft.",
+      "skills": "Perception +5, Stealth +5",
+      "darkvision": 120,
+      "cr": "0",
+      "abilities": {
+        "STR": 3,
+        "DEX": 13,
+        "CON": 8,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "senses": "darkvision 120 ft.; Passive Perception 15",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Flyby",
+          "description": "The owl doesn't provoke Opportunity Attacks when it flies out of an enemy's reach."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Talons",
+          "description": "Melee Attack Roll: +3, reach 5 ft. Hit: 1 Slashing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-panther",
+      "name": "Panther",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "13 (3d8)",
+      "speed": "50 ft., Climb 40 ft.",
+      "skills": "Perception +4, Stealth +7",
+      "darkvision": 60,
+      "cr": "1/4",
+      "abilities": {
+        "STR": 14,
+        "DEX": 16,
+        "CON": 10,
+        "INT": 3,
+        "WIS": 14,
+        "CHA": 7
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 14",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Rend",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 6 (1d6 + 3) Slashing damage."
+        }
+      ],
+      "bonusActions": [
+        {
+          "name": "Nimble Escape",
+          "description": "The panther takes the Disengage or Hide action."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-piranha",
+      "name": "Piranha",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "1 (1d4 - 1)",
+      "speed": "5 ft., Swim 40 ft.",
+      "darkvision": 60,
+      "cr": "0",
+      "abilities": {
+        "STR": 2,
+        "DEX": 16,
+        "CON": 9,
+        "INT": 1,
+        "WIS": 7,
+        "CHA": 2
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 8",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Water Breathing",
+          "description": "The piranha can breathe only underwater."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5 (with Advantage if the target doesn't have all its Hit Points), reach 5 ft. Hit: 1 Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-plesiosaurus",
+      "name": "Plesiosaurus",
+      "builtin": true,
+      "size": "Large",
+      "role": "Dinosaur",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "68 (8d10 + 24)",
+      "speed": "20 ft., Swim 40 ft.",
+      "skills": "Perception +3, Stealth +4",
+      "cr": "2",
+      "abilities": {
+        "STR": 18,
+        "DEX": 15,
+        "CON": 16,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 5
+      },
+      "senses": "Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Hold Breath",
+          "description": "The plesiosaurus can hold its breath for 1 hour."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +6, reach 10 ft. Hit: 11 (2d6 + 4) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-poisonous-snake",
+      "name": "Poisonous Snake",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "2 (1d4)",
+      "speed": "30 ft., Swim 30 ft.",
+      "cr": "1/8",
+      "abilities": {
+        "STR": 2,
+        "DEX": 16,
+        "CON": 11,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 3
+      },
+      "senses": "blindsight 10 ft.; Passive Perception 10",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 1 Piercing damage, and the target must make a DC 10 Constitution saving throw, taking 5 (2d4) Poison damage on a failed save, or half as much damage on a successful one."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.1 (2014 rules). The 2024 rules call it the Venomous Snake. Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-polar-bear",
+      "name": "Polar Bear",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "42 (5d10 + 15)",
+      "speed": "40 ft., Swim 40 ft.",
+      "skills": "Perception +5, Stealth +4",
+      "darkvision": 60,
+      "cr": "2",
+      "abilities": {
+        "STR": 20,
+        "DEX": 14,
+        "CON": 16,
+        "INT": 2,
+        "WIS": 13,
+        "CHA": 7
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 15",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Cold Resistance",
+          "description": "",
+          "traitType": "Damage Resistance",
+          "damageType": "Cold"
+        }
+      ],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The bear makes two Rend attacks."
+        },
+        {
+          "name": "Rend",
+          "description": "Melee Attack Roll: +7, reach 5 ft. Hit: 9 (1d8 + 5) Slashing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-pony",
+      "name": "Pony",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 10,
+      "hp": "11 (2d8 + 2)",
+      "speed": "40 ft.",
+      "cr": "1/8",
+      "abilities": {
+        "STR": 15,
+        "DEX": 10,
+        "CON": 13,
+        "INT": 2,
+        "WIS": 11,
+        "CHA": 7
+      },
+      "saves": "STR +4",
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Hooves",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Bludgeoning damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-pteranodon",
+      "name": "Pteranodon",
+      "builtin": true,
+      "size": "Medium",
+      "role": "Dinosaur",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "13 (3d8)",
+      "speed": "10 ft., Fly 60 ft.",
+      "skills": "Perception +1",
+      "cr": "1/4",
+      "abilities": {
+        "STR": 12,
+        "DEX": 15,
+        "CON": 10,
+        "INT": 2,
+        "WIS": 9,
+        "CHA": 5
+      },
+      "senses": "Passive Perception 11",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Flyby",
+          "description": "The pteranodon doesn't provoke an Opportunity Attack when it flies out of an enemy's reach."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 6 (1d8 + 2) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-quipper",
+      "name": "Quipper",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "1 (1d4 - 1)",
+      "speed": "0 ft., Swim 40 ft.",
+      "darkvision": 60,
+      "cr": "0",
+      "abilities": {
+        "STR": 2,
+        "DEX": 16,
+        "CON": 9,
+        "INT": 1,
+        "WIS": 7,
+        "CHA": 2
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 8",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Blood Frenzy",
+          "description": "The quipper has advantage on melee attack rolls against any creature that doesn't have all its hit points."
+        },
+        {
+          "name": "Water Breathing",
+          "description": "The quipper can breathe only underwater."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 1 Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.1 (2014 rules). The 2024 rules call it the Piranha. Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-rat",
+      "name": "Rat",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 10,
+      "hp": "1 (1d4 - 1)",
+      "speed": "20 ft., Climb 20 ft.",
+      "skills": "Perception +2",
+      "darkvision": 30,
+      "cr": "0",
+      "abilities": {
+        "STR": 2,
+        "DEX": 11,
+        "CON": 9,
+        "INT": 2,
+        "WIS": 10,
+        "CHA": 4
+      },
+      "senses": "darkvision 30 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Agile",
+          "description": "The rat doesn't provoke Opportunity Attacks when it moves out of an enemy's reach."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +2, reach 5 ft. Hit: 1 Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-raven",
+      "name": "Raven",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "2 (1d4)",
+      "speed": "10 ft., Fly 50 ft.",
+      "skills": "Perception +3",
+      "cr": "0",
+      "abilities": {
+        "STR": 2,
+        "DEX": 14,
+        "CON": 10,
+        "INT": 5,
+        "WIS": 13,
+        "CHA": 6
+      },
+      "senses": "Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Mimicry",
+          "description": "The raven can mimic simple sounds it has heard, such as a whisper or chitter. A hearer can discern the sounds are imitations with a successful DC 10 Wisdom (Insight) check."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Beak",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 1 Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-reef-shark",
+      "name": "Reef Shark",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "22 (4d8 + 4)",
+      "speed": "5 ft., Swim 30 ft.",
+      "skills": "Perception +2",
+      "cr": "1/2",
+      "abilities": {
+        "STR": 14,
+        "DEX": 15,
+        "CON": 13,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 4
+      },
+      "senses": "blindsight 30 ft.; Passive Perception 12",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "description": "The shark has Advantage on an attack roll against a creature if at least one of the shark's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        },
+        {
+          "name": "Water Breathing",
+          "description": "The shark can breathe only underwater."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 7 (2d4 + 2) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-rhinoceros",
+      "name": "Rhinoceros",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "45 (6d10 + 12)",
+      "speed": "40 ft.",
+      "cr": "2",
+      "abilities": {
+        "STR": 21,
+        "DEX": 8,
+        "CON": 15,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 6
+      },
+      "senses": "Passive Perception 11",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Gore",
+          "description": "Melee Attack Roll: +7, reach 5 ft. Hit: 14 (2d8 + 5) Piercing damage. If target is a Large or smaller creature and the rhinoceros moved 20+ feet straight toward it immediately before the hit, the target takes an extra 9 (2d8) Piercing damage and has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-saber-toothed-tiger",
+      "name": "Saber-Toothed Tiger",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "52 (7d10 + 14)",
+      "speed": "40 ft.",
+      "skills": "Perception +5, Stealth +7",
+      "darkvision": 60,
+      "cr": "2",
+      "abilities": {
+        "STR": 18,
+        "DEX": 17,
+        "CON": 15,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 8
+      },
+      "saves": "STR +6, DEX +5",
+      "senses": "darkvision 60 ft.; Passive Perception 15",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Running Leap",
+          "description": "With a 10-foot running start, the tiger can Long Jump up to 25 feet."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The tiger makes two Rend attacks."
+        },
+        {
+          "name": "Rend",
+          "description": "Melee Attack Roll: +6, reach 5 ft. Hit: 11 (2d6 + 4) Slashing damage."
+        }
+      ],
+      "bonusActions": [
+        {
+          "name": "Nimble Escape",
+          "description": "The tiger takes the Disengage or Hide action."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-scorpion",
+      "name": "Scorpion",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "1 (1d4 - 1)",
+      "speed": "10 ft.",
+      "cr": "0",
+      "abilities": {
+        "STR": 2,
+        "DEX": 11,
+        "CON": 8,
+        "INT": 1,
+        "WIS": 8,
+        "CHA": 2
+      },
+      "senses": "blindsight 10 ft.; Passive Perception 9",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Sting",
+          "description": "Melee Attack Roll: +2, reach 5 ft. Hit: 1 Piercing damage plus 3 (1d6) Poison damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-sea-horse",
+      "name": "Sea Horse",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "1 (1d4 - 1)",
+      "speed": "0 ft., Swim 20 ft.",
+      "cr": "0",
+      "abilities": {
+        "STR": 1,
+        "DEX": 12,
+        "CON": 8,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 2
+      },
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Water Breathing",
+          "description": "The sea horse can breathe only underwater."
+        }
+      ],
+      "actions": [],
+      "bio": "Source: System Reference Document 5.1 (2014 rules). The 2024 rules call it the Seahorse. Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-spider",
+      "name": "Spider",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "1 (1d4 - 1)",
+      "speed": "20 ft., Climb 20 ft.",
+      "skills": "Stealth +4",
+      "darkvision": 30,
+      "cr": "0",
+      "abilities": {
+        "STR": 2,
+        "DEX": 14,
+        "CON": 8,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 2
+      },
+      "senses": "darkvision 30 ft.; Passive Perception 10",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Spider Climb",
+          "description": "The spider can climb difficult surfaces, including along ceilings, without needing to make an ability check."
+        },
+        {
+          "name": "Web Walker",
+          "description": "The spider ignores movement restrictions caused by webs, and the spider knows the location of any other creature in contact with the same web."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 1 Piercing damage plus 2 (1d4) Poison damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-tiger",
+      "name": "Tiger",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "30 (4d10 + 8)",
+      "speed": "40 ft.",
+      "skills": "Perception +3, Stealth +7",
+      "darkvision": 60,
+      "cr": "1",
+      "abilities": {
+        "STR": 17,
+        "DEX": 16,
+        "CON": 14,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 8
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Rend",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 10 (2d6 + 3) Slashing damage. If the target is a Large or smaller creature, it has the Prone condition."
+        }
+      ],
+      "bonusActions": [
+        {
+          "name": "Nimble Escape",
+          "description": "The tiger takes the Disengage or Hide action."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-triceratops",
+      "name": "Triceratops",
+      "builtin": true,
+      "size": "Huge",
+      "role": "Dinosaur",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 14,
+      "hp": "114 (12d12 + 36)",
+      "speed": "50 ft.",
+      "cr": "5",
+      "abilities": {
+        "STR": 22,
+        "DEX": 9,
+        "CON": 17,
+        "INT": 2,
+        "WIS": 11,
+        "CHA": 5
+      },
+      "senses": "Passive Perception 10",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The triceratops makes two Gore attacks."
+        },
+        {
+          "name": "Gore",
+          "description": "Melee Attack Roll: +9, reach 5 ft. Hit: 19 (2d12 + 6) Piercing damage. If the target is Huge or smaller and the triceratops moved 20+ feet straight toward it immediately before the hit, the target takes an extra 9 (2d8) Piercing damage and has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-tyrannosaurus-rex",
+      "name": "Tyrannosaurus Rex",
+      "builtin": true,
+      "size": "Huge",
+      "role": "Dinosaur",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "136 (13d12 + 52)",
+      "speed": "50 ft.",
+      "skills": "Perception +4",
+      "cr": "8",
+      "abilities": {
+        "STR": 25,
+        "DEX": 10,
+        "CON": 19,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 9
+      },
+      "saves": "STR +10, WIS +4",
+      "initiative": 3,
+      "senses": "Passive Perception 14",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Multiattack",
+          "description": "The tyrannosaurus makes one Bite attack and one Tail attack."
+        },
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +10, reach 10 ft. Hit: 33 (4d12 + 7) Piercing damage. If the target is a Large or smaller creature, it has the Grappled condition (escape DC 17). While Grappled, the target has the Restrained condition and can't be targeted by the tyrannosaurus's Tail."
+        },
+        {
+          "name": "Tail",
+          "description": "Melee Attack Roll: +10, reach 15 ft. Hit: 25 (4d8 + 7) Bludgeoning damage. If the target is a Huge or smaller creature, it has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-venomous-snake",
+      "name": "Venomous Snake",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "5 (2d4)",
+      "speed": "30 ft., Swim 30 ft.",
+      "cr": "1/8",
+      "abilities": {
+        "STR": 2,
+        "DEX": 15,
+        "CON": 11,
+        "INT": 1,
+        "WIS": 10,
+        "CHA": 3
+      },
+      "senses": "blindsight 10 ft.; Passive Perception 10",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Piercing damage plus 3 (1d6) Poison damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-vulture",
+      "name": "Vulture",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 10,
+      "hp": "5 (1d8 + 1)",
+      "speed": "10 ft., Fly 50 ft.",
+      "skills": "Perception +3",
+      "cr": "0",
+      "abilities": {
+        "STR": 7,
+        "DEX": 10,
+        "CON": 13,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 4
+      },
+      "senses": "Passive Perception 13",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "description": "The vulture has Advantage on an attack roll against a creature if at least one of the vulture's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Beak",
+          "description": "Melee Attack Roll: +2, reach 5 ft. Hit: 2 (1d4) Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-warhorse",
+      "name": "Warhorse",
+      "builtin": true,
+      "size": "Large",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 11,
+      "hp": "19 (3d10 + 3)",
+      "speed": "60 ft.",
+      "cr": "1/2",
+      "abilities": {
+        "STR": 18,
+        "DEX": 12,
+        "CON": 13,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 7
+      },
+      "saves": "WIS +3",
+      "senses": "Passive Perception 11",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Hooves",
+          "description": "Melee Attack Roll: +6, reach 5 ft. Hit: 9 (2d4 + 4) Bludgeoning damage. If the target is a Large or smaller creature and the horse moved 20+ feet straight toward it immediately before the hit, the target takes an extra 5 (2d4) Bludgeoning damage and has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-weasel",
+      "name": "Weasel",
+      "builtin": true,
+      "size": "Tiny",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 13,
+      "hp": "1 (1d4 - 1)",
+      "speed": "30 ft., Climb 30 ft.",
+      "skills": "Acrobatics +5, Perception +3, Stealth +5",
+      "darkvision": 60,
+      "cr": "0",
+      "abilities": {
+        "STR": 3,
+        "DEX": 16,
+        "CON": 8,
+        "INT": 2,
+        "WIS": 12,
+        "CHA": 3
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 13",
+      "languages": "None",
+      "traits": [],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +5, reach 5 ft. Hit: 1 Piercing damage."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    },
+    {
+      "id": "srd-wolf",
+      "name": "Wolf",
+      "builtin": true,
+      "size": "Medium",
+      "creatureType": "Beast",
+      "alignment": "Unaligned",
+      "ac": 12,
+      "hp": "11 (2d8 + 2)",
+      "speed": "40 ft.",
+      "skills": "Perception +5, Stealth +4",
+      "darkvision": 60,
+      "cr": "1/4",
+      "abilities": {
+        "STR": 14,
+        "DEX": 15,
+        "CON": 12,
+        "INT": 3,
+        "WIS": 12,
+        "CHA": 6
+      },
+      "senses": "darkvision 60 ft.; Passive Perception 15",
+      "languages": "None",
+      "traits": [
+        {
+          "name": "Pack Tactics",
+          "description": "The wolf has Advantage on attack rolls against a creature if at least one of the wolf's allies is within 5 feet of the creature and the ally doesn't have the Incapacitated condition."
+        }
+      ],
+      "actions": [
+        {
+          "name": "Bite",
+          "description": "Melee Attack Roll: +4, reach 5 ft. Hit: 5 (1d6 + 2) Piercing damage. If the target is a Medium or smaller creature, it has the Prone condition."
+        }
+      ],
+      "bio": "Source: System Reference Document 5.2 (2024 rules). Licensed under CC-BY-4.0."
+    }
+  ]
+}

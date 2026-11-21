@@ -60,11 +60,15 @@ static boolean hasStyle(Map<?, ?> rec, String style) {
     for (List<String> picks : CharacterStorage.recChoicesMap(rec).values()) {
         for (String p : picks) if (style.equalsIgnoreCase(p)) return true;
     }
+    for (String p : ClassFeatures.styles(rec)) if (style.equalsIgnoreCase(p)) return true; // Paladin / Ranger level 2, homebrew
     return featCount(rec, style) > 0;
 }
 
 static boolean proficient(Map<?, ?> rec, WeaponEntry w) {
     if (w == null) return false;
+    // training from class features: Divine Order (Protector), Primal Order (Warden), homebrew "Always on" parts
+    Set<String> training = ClassFeatures.weaponTraining(rec);
+    if (training.contains("Martial") || (w.simple && training.contains("Simple"))) return true;
     for (String cls : CharacterStorage.recClassLevels(rec).keySet()) {
         Map<String, Object> ca = CustomAssets.classAsset(cls);
         if (ca != null) {
@@ -85,6 +89,8 @@ static boolean proficient(Map<?, ?> rec, WeaponEntry w) {
 
 // Weapon Mastery count for one class at a level (2024 class tables)
 static int masteryForClass(String cls, int level) {
+    // the class's Weapon Mastery feature (built-in or homebrew) says how many
+    if (CustomAssets.classAsset(cls) != null || !ClassFeatures.builtin(cls).isEmpty()) return ClassFeatures.masteryCount(cls, level);
     switch (cls) {
         case "Fighter": return level >= 16 ? 6 : level >= 10 ? 5 : level >= 4 ? 4 : 3;
         case "Barbarian": return level >= 10 ? 4 : level >= 4 ? 3 : 2;
@@ -277,7 +283,23 @@ static int armorClass(Map<?, ?> rec) {
     equipment.removeIf(e -> isShield(e) && !GameData.stripEquipmentCount(e).equalsIgnoreCase(h.off)
             && !GameData.stripEquipmentCount(e).equalsIgnoreCase(h.main));
     int dexMod = GameData.abilityModifier(CharacterStorage.recStatsMap(rec).getOrDefault("DEX", 10));
-    return GameData.computeAC(equipment, dexMod) + SpeciesTraits.acBonus(rec); // + Warforged Integrated Protection
+    int ac = GameData.computeAC(equipment, dexMod);
+    // Unarmored Defense (Barbarian 10 + DEX + CON with a Shield allowed; Monk 10 + DEX + WIS without one)
+    int unarmored = ClassFeatures.unarmoredAc(rec);
+    if (unarmored > 0) ac = Math.max(ac, unarmored + shieldHeldBonus(rec, equipment));
+    // Defense fighting style: +1 while wearing armor
+    if (hasStyle(rec, "Defense") && ClassFeatures.wearsArmor(rec)) ac += 1;
+    return ac + SpeciesTraits.acBonus(rec); // + Warforged Integrated Protection
+}
+
+// AC from the shield in hand (0 if none)
+static int shieldHeldBonus(Map<?, ?> rec, List<String> heldEquipment) {
+    int best = 0;
+    for (String e : heldEquipment) {
+        GameData.ArmorInfo info = GameData.ARMOR_AC.get(GameData.stripEquipmentCount(e));
+        if (info != null && info.isShield) best = Math.max(best, GameData.shieldBonus(info));
+    }
+    return best;
 }
 
 // ===============================================================
@@ -347,8 +369,38 @@ static List<Attack> characterAttacks(Map<?, ?> rec) {
     u.damageBreakdown.add(new String[]{"Base", "1"});
     u.damageBreakdown.add(new String[]{"STR modifier", signed(str)});
     u.notes = "A punch, kick or headbutt. You can also Grapple or Shove instead of dealing damage.";
+    u.abilityMod = str;
+    int ma = ClassFeatures.martialArtsDie(rec);
+    boolean unarmedStyle = hasStyle(rec, "Unarmed Fighting");
+    if (ma > 0 || unarmedStyle) {
+        // Martial Arts: DEX instead of STR and the Martial Arts die; Unarmed Fighting: 1d6 (1d8 with no weapon or Shield held)
+        int dex = mod(stats, "DEX");
+        boolean useDex = ma > 0 && dex > str;
+        int abil = useDex ? dex : str;
+        boolean emptyHands = main == null && off == null && !isShield(h.main) && !isShield(h.off);
+        int styleDie = unarmedStyle ? (emptyHands ? 8 : 6) : 0;
+        int die = Math.max(ma, styleDie);
+        u.ability = useDex ? "DEX" : "STR";
+        u.abilityMod = abil;
+        u.toHit = abil + pb;
+        u.diceCount = 1;
+        u.diceSides = die;
+        u.damageBonus = abil;
+        u.hitBreakdown.clear();
+        u.hitBreakdown.add(new String[]{u.ability + " modifier" + (useDex ? " (Martial Arts)" : ""), signed(abil)});
+        u.hitBreakdown.add(new String[]{"Proficiency", signed(pb)});
+        u.damageBreakdown.clear();
+        u.damageBreakdown.add(new String[]{die == ma ? "Martial Arts die" : "Unarmed Fighting" + (emptyHands ? " (no weapon or Shield held)" : ""), "1d" + die});
+        u.damageBreakdown.add(new String[]{u.ability + " modifier", signed(abil)});
+        u.source = die == ma ? "Martial Arts" : "Unarmed Fighting style";
+    }
     out.add(u);
     return out;
+}
+
+// Monk weapons (Simple Melee weapons, and Martial Melee weapons with the Light property)
+static boolean monkWeapon(WeaponEntry w) {
+    return w != null && w.melee && (w.simple || w.light());
 }
 
 static Attack weaponAttack(Map<?, ?> rec, Map<String, Integer> stats, int pb, WeaponEntry w, boolean twoHands, boolean offHand, boolean dueling) {
@@ -377,6 +429,13 @@ static Attack weaponAttack(Map<?, ?> rec, Map<String, Integer> stats, int pb, We
         a.ability = "DEX";
     }
     a.proficient = proficient(rec, w);
+    // Martial Arts: Monk weapons can use DEX (the die is handled below)
+    int maDie = ClassFeatures.martialArtsDie(rec);
+    boolean martial = maDie > 0 && monkWeapon(w);
+    if (martial && dex > abil) {
+        abil = dex;
+        a.ability = "DEX";
+    }
     a.abilityMod = abil;
     a.toHit = abil + (a.proficient ? pb : 0);
     a.hitBreakdown.add(new String[]{a.ability + " modifier" + (w.finesse() ? " (Finesse: best of STR/DEX)" : ""), signed(abil)});
@@ -396,7 +455,15 @@ static Attack weaponAttack(Map<?, ?> rec, Map<String, Integer> stats, int pb, We
     a.diceCount = versatileGrip ? w.versCount : w.diceCount;
     a.diceSides = versatileGrip ? w.versSides : w.diceSides;
     int base = a.diceCount > 0 ? 0 : w.damageBonus;
-    a.damageBreakdown.add(new String[]{"Weapon dice" + (versatileGrip ? " (Versatile, two hands)" : ""), w.damageText(versatileGrip)});
+    if (martial && a.diceCount <= 1 && maDie > a.diceSides) {
+        // the Martial Arts die replaces a smaller weapon die
+        a.diceCount = 1;
+        a.diceSides = maDie;
+        base = 0;
+        a.damageBreakdown.add(new String[]{"Martial Arts die (replaces " + w.damageText(versatileGrip) + ")", "1d" + maDie});
+    } else {
+        a.damageBreakdown.add(new String[]{"Weapon dice" + (versatileGrip ? " (Versatile, two hands)" : ""), w.damageText(versatileGrip)});
+    }
     int dmgMod = abil;
     if (offHand && abil > 0 && !hasStyle(rec, "Two-Weapon Fighting")) {
         dmgMod = 0;

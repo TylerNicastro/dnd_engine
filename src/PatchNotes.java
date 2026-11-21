@@ -7,6 +7,20 @@ import java.awt.*;
 class PatchNotes {
 
 static final String[][] NOTES = {
+    {"2026-11-20", "Beasts & Wild Shape",
+        "Asset Library: 91 beasts from the core rules (Wolf, Brown Bear, Giant Eagle, Tyrannosaurus Rex...) are built-in NPCs with full stat blocks. Click one for its stats, or Copy to Homebrew to edit it.",
+        "Combat: place beasts from the Place Token picker, which now has a search box. Their attacks, Multiattack, initiative and Darkvision come from the stat block.",
+        "NPCs: new Initiative, Senses, Languages, Bonus Actions and Reactions fields.",
+        "Wild Shape: pick your known forms on the Wild Shape card (four Beasts of CR 1/4 at level 2, six of CR 1/2 at level 4, eight of CR 1 with flying forms at level 8). In Combat, Wild Shape asks which form to take and swaps in its size, Speed, AC, attacks, Darkvision and Strength, Dexterity and Constitution. You keep your own Hit Points, mental scores and proficiencies, gain Temporary Hit Points equal to your Druid level, and can't cast spells. Leave the form with a Bonus Action.",
+        "Asset Library: homebrew features can use the same parts: a Creature form choice (creature types, highest CR by level, when Fly Speeds are allowed) and an effect that turns the character into a chosen form."},
+    {"2026-11-20", "Class features (levels 1 and 2)",
+        "Character sheet: every 2024 class feature for levels 1 and 2 is a card under Features & Traits, with what it does in numbers for your character. Click a card for the full rules.",
+        "Character sheet: features with uses (Rage, Second Wind, Channel Divinity, Focus Points, Lay on Hands, Sorcery Points...) show pips you can click to spend or regain. New Short Rest and Long Rest buttons recover uses and spell slots.",
+        "Character sheet: pick Expertise, Fighting Styles, Metamagic, Eldritch Invocations and extra languages on their feature cards. Expertise (★) and Jack of All Trades change your skills, and Unarmored Defense, Unarmored Movement, Danger Sense, Martial Arts and Divine / Primal Order training are applied automatically.",
+        "Combat: a Class Features section on the Current Turn tab: Rage (resistances, extra damage, extended by attacking), Reckless Attack, Bardic Inspiration, Divine Spark, Turn Undead, Wild Shape, Second Wind, Action Surge, Flurry of Blows, Patient Defense, Step of the Wind, Uncanny Metabolism, Lay on Hands, Innate Sorcery, Font of Magic, Metamagic and more.",
+        "Combat: Sneak Attack is added to qualifying hits, Bardic Inspiration can turn a failed attack, save or check into a success, and Tactical Mind is offered on failed checks.",
+        "Asset Library: homebrew class and subclass features are built from parts (activation, uses and recharge, targets and saves, healing, damage, a lasting effect, turn-economy grants, extra damage on a hit, always-on bonuses, choices) instead of text, so any built-in feature can be rebuilt. \"Copy a built-in feature…\" starts from one.",
+        "Asset Library: Save Draft keeps an unfinished asset without checking it. Drafts are listed at the top of their category and aren't used anywhere until you finish them."},
     {"2026-11-20", "Death saves & more actions",
         "Combat: characters at 0 HP fall Unconscious and Prone and make death saving throws at the start of their turns. Damage at 0 HP adds failures (two on a Critical Hit), three successes make them Stable, and three failures kill them.",
         "Combat: massive damage kills outright when the damage left over at 0 HP equals the character's Hit Point maximum. Dying characters keep their turns, healing wakes them, and dead characters can be revived from their details.",

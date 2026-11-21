@@ -43,6 +43,47 @@ static {
     for (String c : CATEGORIES) DATA.put(c, new ArrayList<>());
 }
 
+// Unfinished assets saved with "Save Draft" in the editor, by category. Kept apart from DATA so no rule, picker,
+// character or map ever sees them until they're finished (Create / Save Changes validates and moves them over).
+// A draft of an existing asset shares its id: finishing it replaces the asset. Saved under "drafts" in the file.
+private static final Map<String, List<Map<String, Object>>> DRAFTS = new LinkedHashMap<>();
+static {
+    for (String c : CATEGORIES) DRAFTS.put(c, new ArrayList<>());
+}
+
+static List<Map<String, Object>> drafts(String cat) {
+    List<Map<String, Object>> l = DRAFTS.get(cat);
+    return l == null ? Collections.emptyList() : Collections.unmodifiableList(l);
+}
+
+static int draftCount() {
+    int n = 0;
+    for (List<Map<String, Object>> l : DRAFTS.values()) n += l.size();
+    return n;
+}
+
+// Adds or replaces a draft (by id) and saves; no validation, and the rules aren't re-applied
+static void putDraft(String cat, Map<String, Object> draft) {
+    List<Map<String, Object>> l = DRAFTS.get(cat);
+    if (l == null) return;
+    if (str(draft, "id").isEmpty()) draft.put("id", newId());
+    draft.put("draftSaved", new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
+    for (int i = 0; i < l.size(); i++) {
+        if (str(l.get(i), "id").equals(str(draft, "id"))) {
+            l.set(i, draft);
+            save();
+            return;
+        }
+    }
+    l.add(draft);
+    save();
+}
+
+static void deleteDraft(String cat, String id) {
+    List<Map<String, Object>> l = DRAFTS.get(cat);
+    if (l != null && l.removeIf(a -> str(a, "id").equals(id))) save();
+}
+
 // Run after every applyToRuntime() (e.g. App rebuilds its condition-link pattern)
 static final List<Runnable> CHANGE_LISTENERS = new ArrayList<>();
 
@@ -130,7 +171,8 @@ static String featDescription(String name) {
 static final String TEXT = "TEXT", AREA = "AREA", INT = "INT", BOOL = "BOOL", CHOICE = "CHOICE",
         MULTI = "MULTI", LIST = "LIST", ABILITIES = "ABILITIES", ENTRIES = "ENTRIES", TAGS = "TAGS",
         TOKEN = "TOKEN", // {shape, color, image}: a map token (see Tokens)
-        SPELL_LIST = "SPELL_LIST"; // list of spell names, picked from a searchable list (NPC spellcasting)
+        SPELL_LIST = "SPELL_LIST", // list of spell names, picked from a searchable list (NPC spellcasting)
+        FEATURES = "FEATURES"; // class / subclass features built from modular parts (ClassFeatures, edited by FeatureEditor)
 // Link kinds: what clicking a value in the detail overlay opens
 static final String LINK_SKILL = "skill", LINK_CONDITION = "condition", LINK_CLASS = "class",
         LINK_LANGUAGE = "language", LINK_STAT = "stat", LINK_FEAT = "feat", LINK_TAG = "tag", LINK_SPELL = "spell";
@@ -253,13 +295,18 @@ static {
             num("ac", "Armor Class", 0, 40, 12),
             text("hp", "Hit Points").hint("e.g. 45 (6d10 + 12)"),
             text("speed", "Speed").hint("e.g. 30 ft., climb 20 ft.").def("30 ft."),
+            num("initiative", "Initiative bonus", -10, 20, 0).help("0 = the DEX modifier. 2024 stat blocks list it (it can include the Proficiency Bonus)."),
             num("darkvision", "Darkvision (ft.)", 0, 300, 0).help("0 = none. In Combat, it lets the NPC see in Dim Light as if Bright and in Darkness as if Dim within this range."),
+            text("senses", "Senses").hint("e.g. blindsight 10 ft.; Passive Perception 12"),
+            text("languages", "Languages").hint("e.g. None, or Common"),
             new Field("abilities", "Ability scores", ABILITIES),
             text("saves", "Saving throws").hint("e.g. STR +5, CON +4"),
             text("skills", "Skills").hint("e.g. Perception +4, Stealth +6"),
             entries("traits", "Traits").traitTypes().section("Traits & actions")
                     .help("Set a trait's type to Damage Vulnerability, Resistance or Immunity and pick the damage type: Combat then doubles, halves or ignores that damage."),
             entries("actions", "Actions"),
+            entries("bonusActions", "Bonus Actions"),
+            entries("reactions", "Reactions"),
             choice("spellcastingAbility", "Spellcasting ability", "INT", "WIS", "CHA").section("Spellcasting")
                     .help("Used for healing / damage bonuses, and for the save DC and attack bonus when those are left at 0."),
             num("spellSaveDC", "Spell save DC", 0, 30, 0).help("From the stat block. 0 = work it out: 8 + Proficiency Bonus (from CR) + ability modifier."),
@@ -391,7 +438,9 @@ static {
                 o.addAll(classOptions());
                 return o;
             }).def(OWN_SPELL_LIST).help("Use another class's spell list, or its own (spells that list this class)."),
-            entries("features", "Class features (levels 1-20)").levels().section("Features"),
+            new Field("features", "Class features (levels 1-20)", FEATURES).section("Features")
+                    .help("Build each feature from parts: how it's activated, its uses and recharge, targets, healing / damage, a lasting effect, "
+                            + "turn-economy grants, extra damage on a hit, always-on bonuses and choices. Only the name and description are free text."),
             num("startingGold", "Starting gold (Package A)", 0, 10000, 10).section("Starting equipment"),
             num("packageBGold", "Package B gold", 0, 10000, 100),
             list("startingEquipment", "Starting equipment (Package A)").help("One item per line.")));
@@ -401,7 +450,8 @@ static {
             text("name", "Subclass name").hint("e.g. Path of the Tide"),
             area("description", "Description"),
             num("subclassLevel", "Chosen at class level", 1, 20, 3),
-            entries("features", "Subclass features").levels().section("Features")));
+            new Field("features", "Subclass features", FEATURES).section("Features")
+                    .help("Built like class features. A subclass feature can spend a class feature's uses (e.g. Channel Divinity) by sharing them.")));
 
     // Every category carries tags (stored in the asset's "tags" list)
     for (Map.Entry<String, List<Field>> en : SCHEMAS.entrySet()) {
@@ -515,7 +565,15 @@ static int count(String cat) {
 static Map<String, Object> find(String cat, String id) {
     if (id == null) return null;
     for (Map<String, Object> a : DATA.get(cat)) if (id.equals(str(a, "id"))) return a;
+    if (NPCS.equals(cat)) return BeastData.byId(id); // built-in beasts (read-only)
     return null;
+}
+
+// Every NPC that can be placed: homebrew first, then the built-in beasts allowed by the campaign's tag filters
+static List<Map<String, Object>> placeableNpcs() {
+    List<Map<String, Object>> out = new ArrayList<>(DATA.get(NPCS));
+    for (Map<String, Object> b : BeastData.all()) if (Tags.allowed(NPCS, str(b, "name"))) out.add(b);
+    return out;
 }
 
 static Map<String, Object> findByName(String cat, String name) {
@@ -535,7 +593,7 @@ static Map<String, Object> newAsset(String cat) {
         if (f.def != null) a.put(f.key, f.def);
         else if (TAGS.equals(f.type)) a.put(f.key, new ArrayList<Object>(Collections.singletonList(Tags.HOMEBREW)));
         else if (TOKEN.equals(f.type)) a.put(f.key, Tokens.defaults(Tokens.NPC_COLOR));
-        else if (MULTI.equals(f.type) || LIST.equals(f.type) || ENTRIES.equals(f.type) || SPELL_LIST.equals(f.type)) a.put(f.key, new ArrayList<>());
+        else if (MULTI.equals(f.type) || LIST.equals(f.type) || ENTRIES.equals(f.type) || SPELL_LIST.equals(f.type) || FEATURES.equals(f.type)) a.put(f.key, new ArrayList<>());
         else if (ABILITIES.equals(f.type)) {
             Map<String, Object> ab = new LinkedHashMap<>();
             for (String s : GameData.STAT_ORDER) ab.put(s, 10);
@@ -584,6 +642,10 @@ static String validate(String cat, Map<String, Object> a) {
         }
     }
     if (NPCS.equals(cat) && !str(a, "spellSlots").trim().matches("[0-9,/ ]*")) return "Spell slots should be numbers per level, like 4, 3, 2.";
+    if (CLASSES.equals(cat) || SUBCLASSES.equals(cat)) {
+        String fp = FeatureEditor.validate(entries(a, "features"));
+        if (fp != null) return fp;
+    }
     if (CLASSES.equals(cat) && ("Custom".equalsIgnoreCase(name))) return "\"Custom\" is reserved for the wizard's manual class.";
     if ((SPECIES.equals(cat) || BACKGROUNDS.equals(cat)) && "Custom".equalsIgnoreCase(name)) {
         return "\"Custom\" is reserved for the wizard's manual option.";
@@ -708,6 +770,7 @@ private static void commit() {
 // ===============================================================
 static void load() {
     for (String c : CATEGORIES) DATA.get(c).clear();
+    for (String c : CATEGORIES) DRAFTS.get(c).clear();
     Tags.read(null);
     try {
         java.nio.file.Path p = DataPaths.userFile(FILE);
@@ -717,6 +780,21 @@ static void load() {
         if (parsed instanceof Map) {
             readCategories((Map<?, ?>) parsed, (cat, asset) -> DATA.get(cat).add(asset));
             Tags.read(((Map<?, ?>) parsed).get("tagSettings"));
+            Object drafts = ((Map<?, ?>) parsed).get("drafts");
+            if (drafts instanceof Map) {
+                // drafts may still be unnamed, so they skip readCategories' checks
+                for (String c : CATEGORIES) {
+                    Object arr = ((Map<?, ?>) drafts).get(JSON_KEYS.get(c));
+                    if (!(arr instanceof List)) continue;
+                    for (Object o : (List<?>) arr) {
+                        if (!(o instanceof Map)) continue;
+                        Map<String, Object> asset = new LinkedHashMap<>();
+                        for (Map.Entry<?, ?> en : ((Map<?, ?>) o).entrySet()) asset.put(String.valueOf(en.getKey()), en.getValue());
+                        if (str(asset, "id").isEmpty()) asset.put("id", newId());
+                        DRAFTS.get(c).add(asset);
+                    }
+                }
+            }
         }
     } catch (Exception ex) {
         // custom_assets.json unreadable: start empty rather than crash (the file is left untouched until the next save)
@@ -736,6 +814,11 @@ static void save() {
 static Map<String, Object> saveData() {
     Map<String, Object> root = packOf(Arrays.asList(CATEGORIES));
     root.put("tagSettings", Tags.toJson()); // campaign content filters, custom tags, built-in tag edits
+    if (draftCount() > 0) {
+        Map<String, Object> d = new LinkedHashMap<>();
+        for (String c : CATEGORIES) if (!DRAFTS.get(c).isEmpty()) d.put(JSON_KEYS.get(c), new ArrayList<Object>(DRAFTS.get(c)));
+        root.put("drafts", d); // unfinished assets (Save Draft)
+    }
     return root;
 }
 
@@ -1261,6 +1344,7 @@ static List<String> builtinNames(String cat) {
         case BACKGROUNDS: addKeys(out, snapshotOf(GameData.BACKGROUND_INFO), "Custom"); break;
         case CONDITIONS: addKeys(out, snapshotOf(GameData.CONDITION_INFO), "Conscious", "Unconscious"); break;
         case ARMOR: addKeys(out, snapshotOf(GameData.ARMOR_AC)); break;
+        case NPCS: out.addAll(BeastData.names()); break; // built-in beasts (beasts.json)
         case WEAPONS: for (WeaponEntry w : builtinWeapons()) if (!out.contains(w.name)) out.add(w.name); break;
         case ITEMS:
             for (String n : App.ITEM_PRESETS.keySet()) {
@@ -1337,13 +1421,39 @@ static String builtinFilterValue(String cat, String name) {
         }
         case SPECIES: return GameData.computeSize(name);
         case CLASSES: return casterLabel(name);
+        case NPCS: { Map<String, Object> b = BeastData.byName(name); return b == null ? null : str(b, "creatureType"); }
         default: return null;
     }
+}
+
+// A stat block as plain text (built-in beasts: searching, and the Wild Shape form picker's details)
+static String npcStatText(Map<String, Object> n) {
+    if (n == null) return "";
+    StringBuilder sb = new StringBuilder();
+    sb.append(str(n, "size")).append(" ").append(str(n, "creatureType")).append(", ").append(str(n, "alignment")).append("\n");
+    sb.append("AC ").append(intVal(n, "ac", 10)).append(" · HP ").append(str(n, "hp")).append(" · Speed ").append(str(n, "speed"))
+            .append(" · CR ").append(str(n, "cr")).append("\n");
+    List<String> ab = new ArrayList<>();
+    for (Map.Entry<String, Integer> en : abilities(n).entrySet()) ab.add(en.getKey() + " " + en.getValue());
+    sb.append(String.join("  ", ab)).append("\n");
+    if (!str(n, "skills").isEmpty()) sb.append("Skills: ").append(str(n, "skills")).append("\n");
+    if (!str(n, "senses").isEmpty()) sb.append("Senses: ").append(str(n, "senses")).append("\n");
+    String[][] secs = {{"traits", "Traits"}, {"actions", "Actions"}, {"bonusActions", "Bonus Actions"}, {"reactions", "Reactions"}};
+    for (String[] s : secs) {
+        List<Map<String, Object>> es = entries(n, s[0]);
+        if (es.isEmpty()) continue;
+        sb.append("\n").append(s[1]).append(":\n");
+        for (Map<String, Object> e : es) {
+            sb.append("• ").append(str(e, "name")).append(str(e, "description").isEmpty() ? "" : ". " + str(e, "description")).append("\n");
+        }
+    }
+    return sb.toString().trim();
 }
 
 // One-line summary for a built-in asset's list row
 static String builtinSummary(String cat, String name) {
     List<String> p = new ArrayList<>();
+    if (NPCS.equals(cat)) { Map<String, Object> b = BeastData.byName(name); return b == null ? "" : summary(NPCS, b); }
     switch (cat) {
         case SPELLS: {
             Spell s = builtinSpell(name);
@@ -1414,6 +1524,7 @@ static String builtinSummary(String cat, String name) {
 
 // Full rules text for a built-in asset's detail overlay
 static String builtinDescription(String cat, String name) {
+    if (NPCS.equals(cat)) return npcStatText(BeastData.byName(name));
     switch (cat) {
         case SPELLS: {
             Spell s = builtinSpell(name);
@@ -1561,22 +1672,12 @@ static List<String[]> sheetFeatures(Map<?, ?> rec) {
         if (desc.isEmpty()) desc = featDescription(str(bg, "originFeat"));
         out.add(new String[]{str(bg, "originFeat"), "Origin feat · " + bgName + " background", desc});
     }
+    // class and subclass features themselves are cards built by SheetFeatures (uses, choices, mechanics)
     Map<String, String> subs = recSubclasses(rec);
     for (Map.Entry<String, Integer> en : CharacterStorage.recClassLevels(rec).entrySet()) {
-        Map<String, Object> ca = classAsset(en.getKey());
-        if (ca != null) {
-            for (Map<String, Object> f : featuresUpTo(ca, en.getValue())) {
-                out.add(new String[]{str(f, "name"), en.getKey() + " " + intVal(f, "level", 1), str(f, "description")});
-            }
-        }
         String subName = subs.get(en.getKey());
         Map<String, Object> sa = subName == null ? null : subclassAsset(en.getKey(), subName);
-        if (sa != null) {
-            out.add(new String[]{subName, en.getKey() + " subclass", str(sa, "description")});
-            for (Map<String, Object> f : featuresUpTo(sa, en.getValue())) {
-                out.add(new String[]{str(f, "name"), subName + " " + intVal(f, "level", 1), str(f, "description")});
-            }
-        }
+        if (sa != null) out.add(new String[]{subName, en.getKey() + " subclass", str(sa, "description")});
     }
     return out;
 }

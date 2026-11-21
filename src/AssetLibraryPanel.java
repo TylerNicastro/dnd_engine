@@ -602,6 +602,15 @@ private void rebuildList() {
     listCount.setText(global ? shown.size() + " match" + (shown.size() == 1 ? "" : "es") + " in all categories"
             : shown.size() == pool.size() ? pool.size() + " total" : shown.size() + " of " + pool.size());
 
+    // unfinished assets of this category (Save Draft), above the finished ones
+    if (!global && !allTab && CustomAssets.SCHEMAS.containsKey(category) && !CustomAssets.drafts(category).isEmpty()) {
+        listWrap.add(groupHeader("Drafts (" + CustomAssets.drafts(category).size() + ")"));
+        for (Map<String, Object> d : CustomAssets.drafts(category)) {
+            listWrap.add(draftRow(category, d));
+            listWrap.add(Box.createRigidArea(new Dimension(0, 8)));
+        }
+    }
+
     String lastGroup = null;
     int n = 0;
     for (Entry e : shown) {
@@ -633,6 +642,62 @@ private void rebuildList() {
     }
     listWrap.revalidate();
     listWrap.repaint();
+}
+
+// A built-in beast: the full NPC stat block (read-only), with Edit Tags and Copy to Homebrew
+private void showBeastDetail(Component anchor, Map<String, Object> beast) {
+    DetailActions acts = new DetailActions();
+    acts.official = true;
+    acts.copy = () -> copyBeast(beast);
+    acts.tags = () -> showTagEditor(anchor, CustomAssets.NPCS, CustomAssets.str(beast, "name"), null, this::refresh);
+    showDetail(anchor, CustomAssets.NPCS, beast, acts);
+}
+
+// An editable homebrew copy of a built-in beast, opened in the editor
+private void copyBeast(Map<String, Object> beast) {
+    Map<String, Object> copy = CustomAssets.deepCopy(beast);
+    copy.put("id", CustomAssets.newId());
+    copy.remove("builtin");
+    copy.put("name", CustomAssets.uniqueName(CustomAssets.NPCS, CustomAssets.str(beast, "name"), ""));
+    copy.put("tags", new ArrayList<Object>(Collections.singletonList(Tags.HOMEBREW)));
+    CustomAssets.put(CustomAssets.NPCS, copy);
+    statusLabel.setText("Copied \"" + CustomAssets.str(beast, "name") + "\" to your homebrew NPCs.");
+    openEditor(CustomAssets.NPCS, copy);
+}
+
+// A saved draft: continue editing it, or discard it
+private JComponent draftRow(String cat, Map<String, Object> d) {
+    JPanel row = new JPanel(new BorderLayout(10, 0));
+    row.setBackground(App.SHEET_CARD);
+    row.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createCompoundBorder(new LineBorder(App.SHEET_BORDER, 1, true), BorderFactory.createMatteBorder(0, 3, 0, 0, App.TEXT_MUTED)),
+            new EmptyBorder(8, 12, 8, 10)));
+    row.setAlignmentX(Component.LEFT_ALIGNMENT);
+    row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 64));
+    String name = CustomAssets.str(d, "name");
+    Map<String, Object> live = CustomAssets.find(cat, CustomAssets.str(d, "id"));
+    String sub = "DRAFT" + (CustomAssets.str(d, "draftSaved").isEmpty() ? "" : " · saved " + CustomAssets.str(d, "draftSaved"))
+            + (live != null ? " · unsaved changes to \"" + CustomAssets.str(live, "name") + "\"" : " · not created yet");
+    JLabel l = new JLabel("<html><b style='color:#e8e4dc'>" + App.escapeHtml(name.isEmpty() ? "Untitled " + CustomAssets.SINGULAR.get(cat) : name)
+            + "</b><br><span style='color:#aaa5a0; font-size:10px'>" + App.escapeHtml(sub) + "</span></html>");
+    l.setFont(new Font("SansSerif", Font.PLAIN, 14));
+    row.add(l, BorderLayout.CENTER);
+    JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
+    btns.setOpaque(false);
+    JButton discard = Tokens.smallButton("Discard", "Delete this draft (a finished asset it edits is kept as it was)");
+    discard.addActionListener(e -> App.showConfirmOverlay(discard, "Discard draft?",
+            "Delete the draft" + (name.isEmpty() ? "" : " \"" + name + "\"") + "? " + (live != null ? "The saved " + CustomAssets.noun(cat, false) + " isn't changed." : "This can't be undone."),
+            "Discard", () -> {
+                CustomAssets.deleteDraft(cat, CustomAssets.str(d, "id"));
+                rebuildList();
+            }));
+    JButton cont = Tokens.smallButton("Continue editing", "Open the draft in the editor");
+    cont.addActionListener(e -> openEditor(cat, d, true));
+    btns.add(discard);
+    btns.add(cont);
+    row.add(btns, BorderLayout.EAST);
+    App.clickable(l, () -> openEditor(cat, d, true));
+    return row;
 }
 
 // ---- sorting ----
@@ -794,6 +859,8 @@ private JComponent assetRow(Entry e, boolean showCategory) {
         actions.add(iconButton("ⓘ", "Map details", () -> showDetail(row, cat, a, actionsFor(cat, a))));
     }
     actions.add(iconButton("Tags", "Edit tags", () -> showTagEditor(row, cat, e.name, a, this::refresh)));
+    Map<String, Object> beast = a == null && CustomAssets.NPCS.equals(cat) ? BeastData.byName(e.name) : null;
+    if (beast != null) actions.add(iconButton("⧉", "Copy to Homebrew (an editable copy)", () -> copyBeast(beast)));
     if (a != null) {
         actions.add(iconButton("✎", "Edit", () -> openEditor(cat, a)));
         actions.add(iconButton("⧉", "Duplicate", () -> duplicate(cat, id)));
@@ -803,7 +870,8 @@ private JComponent assetRow(Entry e, boolean showCategory) {
 
     // Maps launch straight into the viewer; everything else opens its detail overlay
     App.clickableCard(row, () -> {
-        if (a == null) showBuiltinDetail(row, cat, e.name, this::refresh);
+        if (beast != null) showBeastDetail(row, beast);
+        else if (a == null) showBuiltinDetail(row, cat, e.name, this::refresh);
         else if (CustomAssets.MAPS.equals(cat)) openMap(id, false);
         else showDetail(row, cat, a, actionsFor(cat, a));
     });
@@ -828,7 +896,7 @@ static JLabel tagBadge(String tag) {
     return b;
 }
 
-private static JButton iconButton(String glyph, String tip, Runnable r) {
+static JButton iconButton(String glyph, String tip, Runnable r) {
     JButton b = new JButton(glyph);
     b.setToolTipText(tip);
     b.setFont(new Font("SansSerif", Font.PLAIN, 16));
@@ -1350,6 +1418,8 @@ static class WrapLayout extends FlowLayout {
 static class DetailActions {
     Runnable edit, duplicate, openMap, editMap;
     java.util.function.Consumer<Component> delete;
+    boolean official;     // a built-in asset shown with the full detail (beasts): Edit Tags / Copy to Homebrew instead
+    Runnable copy, tags;
 }
 
 static void showDetail(Component anchor, String cat, Map<String, Object> a, DetailActions actions) {
@@ -1357,7 +1427,8 @@ static void showDetail(Component anchor, String cat, Map<String, Object> a, Deta
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
 
-    JLabel kind = new JLabel(("Homebrew " + CustomAssets.SINGULAR.get(cat)).toUpperCase());
+    boolean official = actions != null && actions.official;
+    JLabel kind = new JLabel(((official ? "Official " : "Homebrew ") + CustomAssets.SINGULAR.get(cat) + (official ? " · SRD" : "")).toUpperCase());
     kind.setForeground(App.TEXT_MUTED);
     kind.setFont(new Font("SansSerif", Font.BOLD, 11));
     add(body, kind);
@@ -1484,6 +1555,14 @@ static void showDetail(Component anchor, String cat, Map<String, Object> a, Deta
                 sections.add(sec);
                 break;
             }
+            case CustomAssets.FEATURES: {
+                List<ClassFeatures.Feature> fs = ClassFeatures.fromAsset(a);
+                if (fs.isEmpty()) break;
+                JPanel sec = section(f.label);
+                for (ClassFeatures.Feature fe : fs) sec.add(featureCard(CustomAssets.str(a, "name"), fe));
+                sections.add(sec);
+                break;
+            }
             default:
         }
     }
@@ -1547,7 +1626,18 @@ static void showDetail(Component anchor, String cat, Map<String, Object> a, Deta
     wrap.setOpaque(false);
     wrap.add(scroll, BorderLayout.CENTER);
     Runnable[] close = new Runnable[1];
-    if (actions != null) {
+    if (official) {
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        buttons.setOpaque(false);
+        JButton tags = App.overlayButton("Edit Tags", false);
+        JButton copy = App.overlayButton("Copy to Homebrew", true);
+        copy.setToolTipText("Make an editable homebrew copy of this " + CustomAssets.noun(cat, false));
+        tags.addActionListener(e -> { close[0].run(); actions.tags.run(); });
+        copy.addActionListener(e -> { close[0].run(); actions.copy.run(); });
+        buttons.add(tags);
+        buttons.add(copy);
+        wrap.add(buttons, BorderLayout.SOUTH);
+    } else if (actions != null) {
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         buttons.setOpaque(false);
         JButton del = App.overlayButton("Delete", false);
@@ -1763,6 +1853,34 @@ private static JComponent abilitySection(Map<String, Object> a) {
     return sec;
 }
 
+// A modular class / subclass feature in the detail overlay: name, level, activation and what it does (click for everything)
+static JComponent featureCard(String owner, ClassFeatures.Feature fe) {
+    List<String> mech = ClassFeatures.mechanics(fe, null, fe.level, null, owner);
+    JPanel card = new JPanel(new BorderLayout());
+    card.setBackground(App.SHEET_ROW_ALT);
+    card.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createCompoundBorder(new EmptyBorder(0, 0, 4, 0), BorderFactory.createMatteBorder(0, 3, 0, 0, App.GOLD)),
+            new EmptyBorder(6, 10, 6, 10)));
+    card.setAlignmentX(Component.LEFT_ALIGNMENT);
+    String sub = "Level " + fe.level + " · " + ClassFeatures.activationShort(fe.activation);
+    JLabel l = new JLabel("<html><div style='width:390px'><b style='color:#d4af37'>" + App.escapeHtml(fe.name) + "</b>"
+            + " <span style='color:#aaa5a0; font-size:9px'>" + App.escapeHtml(sub.toUpperCase()) + "</span>"
+            + (fe.description.isEmpty() ? "" : "<br>" + App.escapeHtml(CustomAssets.snippet(fe.description, 140)))
+            + (mech.isEmpty() ? "" : "<br><span style='color:#b8d0ff; font-size:10px'>" + App.escapeHtml(CustomAssets.snippet(String.join(" · ", mech), 180)) + "</span>")
+            + "</div></html>");
+    l.setForeground(App.TEXT_LIGHT);
+    l.setFont(new Font("SansSerif", Font.PLAIN, 12));
+    card.add(l, BorderLayout.CENTER);
+    List<String[]> rows = new ArrayList<>();
+    for (String m : mech) {
+        int i = m.indexOf(": ");
+        rows.add(i > 0 && i < 30 ? App.row(m.substring(0, i), m.substring(i + 2)) : App.row("•", m));
+    }
+    App.clickable(card, () -> App.showInfoOverlay(card, fe.name, owner + " · level " + fe.level,
+            fe.description.isEmpty() ? "No description." : fe.description, rows));
+    return card;
+}
+
 private static JComponent entryCard(String cat, Map<String, Object> a, CustomAssets.Field f, Map<String, Object> e) {
     String title = CustomAssets.str(e, "name").isEmpty() ? "Untitled" : CustomAssets.str(e, "name");
     String desc = CustomAssets.str(e, "description");
@@ -1811,16 +1929,23 @@ private static Map<String, Object> castMap(Object o) {
 
 // Opens the create / edit form for `existing` (null = new asset in category `cat`)
 void openEditor(String cat, Map<String, Object> existing) {
+    openEditor(cat, existing, false);
+}
+
+// `fromDraft`: `existing` is a saved draft (CustomAssets.drafts). Finishing it validates, saves the asset and drops the draft.
+void openEditor(String cat, Map<String, Object> existing, boolean fromDraft) {
     category = cat; // e.g. editing a search result from another tab
-    boolean isNew = existing == null;
-    Map<String, Object> base = isNew ? CustomAssets.newAsset(cat) : CustomAssets.deepCopy(existing);
+    boolean isNew = existing == null || (fromDraft && CustomAssets.find(cat, CustomAssets.str(existing, "id")) == null);
+    Map<String, Object> base = existing == null ? CustomAssets.newAsset(cat) : CustomAssets.deepCopy(existing);
+    base.remove("draftSaved");
 
     editorHolder.removeAll();
     JPanel shell = new JPanel(new BorderLayout());
     shell.setBackground(App.SHEET_BG);
 
-    JLabel title = new JLabel((isNew ? "New " : "Edit ") + CustomAssets.SINGULAR.get(cat)
-            + (isNew ? "" : ": " + CustomAssets.str(existing, "name")));
+    String shownName = existing == null ? "" : CustomAssets.str(existing, "name");
+    JLabel title = new JLabel((fromDraft ? "Draft " : isNew ? "New " : "Edit ") + CustomAssets.SINGULAR.get(cat)
+            + (shownName.isEmpty() ? "" : ": " + shownName));
     title.setForeground(App.GOLD);
     title.setFont(new Font("Serif", Font.BOLD, 24));
     title.setBorder(new EmptyBorder(16, 24, 4, 24));
@@ -1886,15 +2011,29 @@ void openEditor(String cat, Map<String, Object> existing) {
         innerLayout.show(inner, "LIST");
         refresh();
     });
+    // Save Draft: keep the work as it is (no validation); it's listed under Drafts and used nowhere until finished
+    JButton draft = App.overlayButton("Save Draft", false);
+    draft.setToolTipText("Save your progress without finishing: drafts aren't checked, and no character, map or picker uses them until you finish");
+    draft.addActionListener(e -> {
+        Map<String, Object> out = CustomAssets.deepCopy(base);
+        for (Map.Entry<String, FieldUI> en : uis.entrySet()) out.put(en.getKey(), en.getValue().value());
+        out.put("name", CustomAssets.str(out, "name").trim());
+        CustomAssets.putDraft(cat, out);
+        String nm = CustomAssets.str(out, "name");
+        statusLabel.setText("Draft saved" + (nm.isEmpty() ? "" : ": \"" + nm + "\"") + ". Find it under Drafts at the top of " + cat + ".");
+        innerLayout.show(inner, "LIST");
+        refresh();
+    });
     save.addActionListener(e -> {
         Map<String, Object> out = CustomAssets.deepCopy(base);
         for (Map.Entry<String, FieldUI> en : uis.entrySet()) out.put(en.getKey(), en.getValue().value());
         out.put("name", CustomAssets.str(out, "name").trim());
         String problem = CustomAssets.validate(cat, out);
         if (problem != null) {
-            error.setText(problem);
+            error.setText("<html><div style='width:420px'>" + App.escapeHtml(problem) + " (Or use Save Draft to finish later.)</div></html>");
             return;
         }
+        CustomAssets.deleteDraft(cat, CustomAssets.str(out, "id")); // finished: the draft (if any) is done
         if (CustomAssets.MAPS.equals(cat)) {
             MapEditorPanel.MapModel m = MapEditorPanel.MapModel.fromJson(out.get("grid"));
             int w = CustomAssets.intVal(out, "width", m.width), h = CustomAssets.intVal(out, "height", m.height);
@@ -1916,6 +2055,7 @@ void openEditor(String cat, Map<String, Object> existing) {
     JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
     btns.setOpaque(false);
     btns.add(cancel);
+    btns.add(draft);
     btns.add(save);
     bottom.add(btns, BorderLayout.EAST);
     shell.add(bottom, BorderLayout.SOUTH);
@@ -1954,7 +2094,7 @@ private static JComponent fieldBlock(CustomAssets.Field f, JComponent input) {
     return block;
 }
 
-private static JTextField textField(String value, String hint) {
+static JTextField textField(String value, String hint) {
     JTextField tf = new JTextField(value, 32);
     App.styleTextField(tf);
     tf.setFont(new Font("SansSerif", Font.PLAIN, 14));
@@ -1963,7 +2103,7 @@ private static JTextField textField(String value, String hint) {
     return tf;
 }
 
-private static JTextArea textArea(String value, int rows) {
+static JTextArea textArea(String value, int rows) {
     JTextArea ta = new JTextArea(value, rows, 40);
     ta.setLineWrap(true);
     ta.setWrapStyleWord(true);
@@ -1975,7 +2115,7 @@ private static JTextArea textArea(String value, int rows) {
     return ta;
 }
 
-private static JScrollPane areaScroll(JTextArea ta, int width) {
+static JScrollPane areaScroll(JTextArea ta, int width) {
     JScrollPane sp = new JScrollPane(ta);
     App.applyDarkScrollBar(sp);
     sp.setBorder(new LineBorder(App.TEXT_MUTED, 1, true));
@@ -1986,7 +2126,7 @@ private static JScrollPane areaScroll(JTextArea ta, int width) {
     return sp;
 }
 
-private static JSpinner spinner(int value, int min, int max) {
+static JSpinner spinner(int value, int min, int max) {
     JSpinner sp = new JSpinner(new SpinnerNumberModel(Math.max(min, Math.min(max, value)), min, max, 1));
     sp.setFont(new Font("SansSerif", Font.PLAIN, 14));
     Dimension d = new Dimension(80, 30);
@@ -2124,6 +2264,10 @@ private FieldUI buildFieldUI(CustomAssets.Field f, Object current) {
         }
         case CustomAssets.ENTRIES:
             return entriesUI(f, CustomAssets.entries(holder, "v"));
+        case CustomAssets.FEATURES: {
+            FeatureEditor.UI fe = FeatureEditor.build(CustomAssets.entries(holder, "v"));
+            return ui(fe.component, fe.value);
+        }
         case CustomAssets.TAGS:
             return tagsUI(current);
         case CustomAssets.TOKEN: {

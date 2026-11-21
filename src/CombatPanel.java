@@ -19,7 +19,10 @@ import java.util.List;
 //                 dodging, reactionsPerRound, reactionsUsed, hands {main, off, twoHanded} (characters), torch (NPC carries one),
 //                 tempHp, effects [CombatSpells.Effect...], concentration (spell name), slots [levels 1-9 left, pact left],
 //                 freeCasts {"Favored Enemy": 2, ...}, slotTurn (round:uid of the turn it last expended a slot),
-//                 deathSaves [successes, failures], dead (characters), ready {kind, trigger, attack} (Ready action)}]
+//                 deathSaves [successes, failures], dead (characters), ready {kind, trigger, attack} (Ready action),
+//                 featureUses {"Barbarian:Rage": 1, ...} (class feature uses left, copied from the sheet like slots),
+//                 featureTurn {feature key: turn key last used}, sustained (Rage extended since its last turn),
+//                 extraStrikes (Unarmed Strikes granted this turn: Flurry of Blows, Martial Arts)}]
 //               (x, y) is the token's top-left square. Size, max HP, speed, AC, initiative bonus, attacks and the
 //               token's look are read from the character (by its "id", see CharacterStorage.loadWithIds) or the NPC
 //               asset every time, so edits made elsewhere show up. Tokens whose character / NPC was deleted are dropped.
@@ -135,6 +138,12 @@ static class Tok {
     boolean dead;
     // Ready action: response kind ("Attack", "Move", "Other"; "" = nothing readied), its trigger, the attack's name
     String readyKind = "", readyTrigger = "", readyAttack = "";
+    // class features (characters; see ClassFeatures and the "Class features" section)
+    Map<String, Integer> featureUses = new LinkedHashMap<>(); // uses left per pool ("Barbarian:Rage" -> 2), copied from the sheet
+    boolean featuresLoaded;
+    Map<String, String> featureTurn = new LinkedHashMap<>();  // feature key -> turn key it was last used on (once per turn)
+    boolean sustained;          // attacked / forced a save / extended since its last turn ended (keeps Rage going)
+    int extraStrikes;           // Unarmed Strikes it can still make this turn without the action (Flurry of Blows, Martial Arts)
     // animation only (not saved)
     double drawX = Double.NaN, drawY = Double.NaN; // drawn position while sliding (in squares)
     double shakeDx;             // sideways shake offset in pixels
@@ -149,7 +158,12 @@ static class Tok {
     }
 
     Map<String, Integer> damageMods() {
-        return DamageRules.effective(sourceMods, modOverrides);
+        Map<String, Integer> m = DamageRules.effective(sourceMods, modOverrides);
+        // Resistance from class feature effects (Rage: Bludgeoning, Piercing, Slashing)
+        for (CombatSpells.Effect e : effects) {
+            for (String r : e.resist) m.merge(DamageRules.normalizeType(r), DamageRules.RESIST, (x, y) -> x | y);
+        }
+        return m;
     }
 
     // Longest melee reach among its attacks (opportunity attacks); 5 ft. by default
@@ -564,6 +578,15 @@ private void loadState() {
                 t.readyTrigger = CustomAssets.str(r, "trigger");
                 t.readyAttack = CustomAssets.str(r, "attack");
             }
+            if (m.get("featureUses") instanceof Map) {
+                t.featureUses = intMap(m.get("featureUses"));
+                t.featuresLoaded = true;
+            }
+            if (m.get("featureTurn") instanceof Map) {
+                for (Map.Entry<?, ?> en : ((Map<?, ?>) m.get("featureTurn")).entrySet()) t.featureTurn.put(String.valueOf(en.getKey()), String.valueOf(en.getValue()));
+            }
+            t.sustained = CustomAssets.bool(m, "sustained");
+            t.extraStrikes = Math.max(0, CustomAssets.intVal(m, "extraStrikes", 0));
             tokens.add(t);
         }
     }
@@ -649,6 +672,8 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
         t.maxHp = hp != null && hp > 0 ? hp : 1;
         Integer sp = CharacterStorage.recInt(rec, "speed");
         t.speed = sp != null ? Math.max(0, sp) : 30;
+        if (t.hands == null) t.hands = WeaponRules.handsJson(WeaponRules.hands(rec));
+        t.speed += ClassFeatures.speedBonus(combatRec(t)); // Unarmed Movement (no armor, no Shield in hand)
         int dexMod = GameData.abilityModifier(CharacterStorage.recStatsMap(rec).getOrDefault("DEX", 10));
         t.initBonus = dexMod;
         // what it holds in this encounter: starts as the sheet's grip, then changes with Use Item (never written back)
@@ -667,7 +692,8 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
         t.sizeName = CustomAssets.str(a, "size").isEmpty() ? "Medium" : CustomAssets.str(a, "size");
         t.maxHp = Math.max(1, leadingInt(CustomAssets.str(a, "hp"), 1));
         t.speed = Math.max(0, leadingInt(CustomAssets.str(a, "speed"), 30));
-        t.initBonus = GameData.abilityModifier(CustomAssets.abilities(a).get("DEX"));
+        int initField = CustomAssets.intVal(a, "initiative", 0); // 2024 stat blocks list it (0 = the DEX modifier)
+        t.initBonus = initField != 0 ? initField : GameData.abilityModifier(CustomAssets.abilities(a).get("DEX"));
         t.ac = CustomAssets.intVal(a, "ac", 10);
         t.style = Tokens.read(a.get("token"), Tokens.NPC_COLOR);
         String role = CustomAssets.str(a, "role");
@@ -686,6 +712,7 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
     adjustSpellAttacks(t); // Shillelagh
     // damage modifiers: an NPC's typed traits, or a character's species resistances (e.g. a Dwarf resists Poison)
     t.sourceMods = NPC.equals(t.kind) ? DamageRules.fromTraits(t.source) : SpeciesTraits.damageMods(t.source);
+    applyForm(t); // Wild Shape: the creature form's size, Speed, AC, attacks and damage traits
     // ammunition this token's attacks need but isn't tracking yet (combat-only copy; the sheet is never changed)
     for (WeaponRules.Attack a : t.attacks) if (!a.ammo.isEmpty() && !t.ammo.containsKey(a.ammo)) t.ammo.put(a.ammo, startingAmmo(t, a.ammo));
     if (!t.itemsLoaded) {
@@ -697,7 +724,8 @@ private boolean applySource(Tok t, Map<String, Map<?, ?>> pcs) {
         }
     }
     if (!t.slotsLoaded) loadSlots(t); // first time: spell slots left on the sheet (combat-only copy)
-    t.size = Math.min(sizeSquares(t.sizeName), Math.max(1, Math.min(model.width, model.height)));
+    if (!t.featuresLoaded) loadFeatures(t); // first time: class feature uses left on the sheet (combat-only copy)
+    t.size =Math.min(sizeSquares(t.sizeName), Math.max(1, Math.min(model.width, model.height)));
     if (t.hp < 0 || t.hp > t.maxHp) t.hp = t.maxHp;
     t.baseAc = t.ac;
     t.baseSpeed = t.speed;
@@ -785,6 +813,10 @@ private void persistNow() {
             r.put("attack", t.readyAttack);
             m.put("ready", r);
         }
+        if (t.featuresLoaded) m.put("featureUses", new LinkedHashMap<String, Object>(t.featureUses));
+        if (!t.featureTurn.isEmpty()) m.put("featureTurn", new LinkedHashMap<String, Object>(t.featureTurn));
+        if (t.sustained) m.put("sustained", true);
+        if (t.extraStrikes > 0) m.put("extraStrikes", t.extraStrikes);
         tl.add(m);
     }
     asset.put("tokens", tl);
@@ -904,30 +936,71 @@ private void showPlacePicker() {
     }
 
     list.add(Box.createRigidArea(new Dimension(0, 12)));
-    list.add(sectionCaption("NPCS"));
-    int shown = 0;
-    for (Map<String, Object> a : CustomAssets.all(CustomAssets.NPCS)) {
-        String id = CustomAssets.str(a, "id");
-        boolean onMap = false;
-        for (Tok t : tokens) if (NPC.equals(t.kind) && t.refId.equals(id)) onMap = true;
-        if (!onMap && !Tags.allowedAsset(CustomAssets.NPCS, a)) continue; // campaign content filters
-        Tok tpl = new Tok();
-        tpl.kind = NPC;
-        tpl.refId = id;
-        if (!applySource(tpl, pcs)) continue;
-        JSpinner qty = new JSpinner(new SpinnerNumberModel(1, 1, 20, 1));
-        qty.setToolTipText("How many to place (they're numbered: " + tpl.sourceName + " 1, " + tpl.sourceName + " 2, ...)");
-        qty.setPreferredSize(new Dimension(54, 28));
-        styleSpinner(qty);
-        JButton act = App.overlayButton("Place", true);
-        act.addActionListener(e -> {
-            close[0].run();
-            startPlacing(tpl, (Integer) qty.getValue());
-        });
-        list.add(pickerRow(tpl, tpl.subtitle + " · " + tpl.sizeName + " · HP " + tpl.maxHp, qty, act));
-        shown++;
-    }
-    if (shown == 0) list.add(muted("No NPCs to place. Create them with Characters → Add New Character → NPC, or in Assets → NPCs."));
+    // NPCs: homebrew, then the built-in beasts; a search box filters both (there are a lot of beasts)
+    JTextField search = new JTextField();
+    App.styleTextField(search);
+    search.setToolTipText("Filter NPCs by name, creature type or CR");
+    search.setMaximumSize(new Dimension(540, 32));
+    search.setAlignmentX(Component.LEFT_ALIGNMENT);
+    JPanel npcRows = new JPanel();
+    npcRows.setLayout(new BoxLayout(npcRows, BoxLayout.Y_AXIS));
+    npcRows.setOpaque(false);
+    npcRows.setAlignmentX(Component.LEFT_ALIGNMENT);
+    JPanel searchRow = new JPanel(new BorderLayout(8, 0));
+    searchRow.setOpaque(false);
+    searchRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+    searchRow.setMaximumSize(new Dimension(540, 32));
+    searchRow.add(sectionCaption("NPCS"), BorderLayout.WEST);
+    searchRow.add(search, BorderLayout.CENTER);
+    list.add(searchRow);
+    list.add(Box.createRigidArea(new Dimension(0, 6)));
+    list.add(npcRows);
+    Runnable fill = () -> {
+        npcRows.removeAll();
+        String q = search.getText().trim().toLowerCase();
+        int shown = 0;
+        boolean beastHeader = false;
+        for (Map<String, Object> a : CustomAssets.placeableNpcs()) {
+            String id = CustomAssets.str(a, "id");
+            boolean builtin = BeastData.isBuiltin(a);
+            boolean onMap = false;
+            for (Tok t : tokens) if (NPC.equals(t.kind) && t.refId.equals(id)) onMap = true;
+            if (!builtin && !onMap && !Tags.allowedAsset(CustomAssets.NPCS, a)) continue; // campaign content filters
+            String hay = (CustomAssets.str(a, "name") + " " + CustomAssets.str(a, "creatureType") + " cr " + CustomAssets.str(a, "cr")).toLowerCase();
+            if (!q.isEmpty() && !hay.contains(q)) continue;
+            Tok tpl = new Tok();
+            tpl.kind = NPC;
+            tpl.refId = id;
+            if (!applySource(tpl, pcs)) continue;
+            if (builtin && !beastHeader) {
+                beastHeader = true;
+                JLabel h = muted("Built-in beasts (SRD)");
+                h.setBorder(new EmptyBorder(8, 0, 4, 0));
+                npcRows.add(h);
+            }
+            JSpinner qty = new JSpinner(new SpinnerNumberModel(1, 1, 20, 1));
+            qty.setToolTipText("How many to place (they're numbered: " + tpl.sourceName + " 1, " + tpl.sourceName + " 2, ...)");
+            qty.setPreferredSize(new Dimension(54, 28));
+            styleSpinner(qty);
+            JButton act = App.overlayButton("Place", true);
+            act.addActionListener(e -> {
+                close[0].run();
+                startPlacing(tpl, (Integer) qty.getValue());
+            });
+            npcRows.add(pickerRow(tpl, tpl.subtitle + " · " + tpl.sizeName + " · HP " + tpl.maxHp, qty, act));
+            shown++;
+        }
+        if (shown == 0) npcRows.add(muted(q.isEmpty() ? "No NPCs to place. Create them with Characters → Add New Character → NPC, or in Assets → NPCs."
+                : "No NPC matches \"" + search.getText().trim() + "\"."));
+        npcRows.revalidate();
+        npcRows.repaint();
+    };
+    fill.run();
+    search.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+        public void insertUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
+        public void removeUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
+        public void changedUpdate(javax.swing.event.DocumentEvent e) { fill.run(); }
+    });
 
     JScrollPane sp = new JScrollPane(list);
     App.applyDarkScrollBar(sp);
@@ -1229,6 +1302,10 @@ private void beginCombat() {
         t.dodging = false;
         t.reactionsUsed = 0;
         loadSlots(t); // spell slots and free casts copied from the sheet again
+        loadFeatures(t); // class feature uses too
+        t.featureTurn.clear();
+        t.sustained = false;
+        t.extraStrikes = 0;
         t.slotTurn = "";
         clearReady(t);
     }
@@ -1640,29 +1717,34 @@ private void offerOpportunityAttack(Tok mover, Tok e, Runnable resume) {
 }
 
 // ---------------- Dash / Disengage / Dodge ----------------
-// Rogues (level 2+) can Dash or Disengage as a Bonus Action (Cunning Action)
-private static boolean cunningAction(Tok t) {
-    if (!PC.equals(t.kind) || t.source == null) return false;
-    Integer lv = CharacterStorage.recClassLevels(t.source).get("Rogue");
-    return lv != null && lv >= 2;
+// Class features that let a character take an action as a Bonus Action (ClassFeatures "Always on" bonusActions):
+// Cunning Action (Dash, Disengage, Hide), Patient Defense (Disengage), Step of the Wind (Dash). Returns the feature, or null.
+private static String bonusActionFeature(Tok t, String action) {
+    if (!PC.equals(t.kind) || t.source == null || action == null) return null;
+    return ClassFeatures.bonusActions(t.source).get(action);
 }
 
-// Uses the action, or (Cunning Action) the Bonus Action. Returns what was used, or null if neither is free.
+// Uses the action, or (a feature like Cunning Action) the Bonus Action. Returns what was used, or null if neither is free.
 private String spendForAction(Tok t, boolean bonusAllowed) {
+    return spendForAction(t, bonusAllowed ? "Hide" : null);
+}
+
+private String spendForAction(Tok t, String action) {
     if (!actionUsed) {
         actionUsed = true;
         attackAction = false;
         return "action";
     }
-    if (bonusAllowed && cunningAction(t) && !bonusAttackUsed) {
+    String via = bonusActionFeature(t, action);
+    if (via != null && !bonusAttackUsed) {
         bonusAttackUsed = true;
-        return "Bonus Action (Cunning Action)";
+        return "Bonus Action (" + via + ")";
     }
     return null;
 }
 
 private void doDash(Tok t) {
-    String used = spendForAction(t, true);
+    String used = spendForAction(t, "Dash");
     if (used == null) return;
     moveLeft += t.speed;
     setStatus(t.label + " Dashes (" + used + "): +" + t.speed + " ft., " + moveLeft + " ft. of movement left.");
@@ -1672,7 +1754,7 @@ private void doDash(Tok t) {
 }
 
 private void doDisengage(Tok t) {
-    String used = spendForAction(t, true);
+    String used = spendForAction(t, "Disengage");
     if (used == null) return;
     disengaged = true;
     setStatus(t.label + " Disengages (" + used + "): moving this turn won't provoke opportunity attacks.");
@@ -1702,6 +1784,7 @@ private void startTurnActions() {
     spellTargeting = null;
     if (active != null) {
         active.reactionsUsed = 0; // Reactions come back at the start of your turn
+        active.extraStrikes = 0;     // Flurry of Blows / Martial Arts strikes don't carry over
         active.dodging = false;      // Dodge lasts until the start of your next turn
         if (!active.readyKind.isEmpty()) {
             note(active.label + "'s readied action (" + active.readyTrigger + ") lapses.");
@@ -1725,6 +1808,16 @@ private boolean canMainAttack() {
 // The Light-property extra attack needs an attack made this turn (with the Attack action) first
 private boolean canBonusAttack(Tok t) {
     return hasOffHandAttack(t) && !bonusAttackUsed && attackAction && attacksLeft < Math.max(1, t.attacksPerAction);
+}
+
+static boolean isUnarmed(WeaponRules.Attack a) {
+    return a.weapon == null && "Unarmed Strike".equals(a.name);
+}
+
+// Can `t` make this attack now: Attack action attacks, the Light extra attack, or a granted Unarmed Strike (Flurry of Blows)
+private boolean canUseAttack(Tok t, WeaponRules.Attack a) {
+    if (a.offHand) return canBonusAttack(t);
+    return canMainAttack() || (t.extraStrikes > 0 && isUnarmed(a));
 }
 
 private static int gapCells(int a, int as, int b, int bs) {
@@ -1794,7 +1887,11 @@ private int[][] lightLevels() {
 
 static int darkvisionOf(Tok t) {
     if (t.source == null || OBJ.equals(t.kind)) return 0;
-    return PC.equals(t.kind) ? SpeciesTraits.darkvision(t.source) : CustomAssets.intVal(t.source, "darkvision", 0);
+    if (PC.equals(t.kind)) { // a Wild Shape form sees at least as far as the character
+        Map<String, Object> form = formOf(t);
+        return Math.max(SpeciesTraits.darkvision(t.source), form == null ? 0 : CustomAssets.intVal(form, "darkvision", 0));
+    }
+    return CustomAssets.intVal(t.source, "darkvision", 0);
 }
 
 // Best light level `viewer` perceives anywhere in `target`'s footprint (Darkvision applied), ignoring walls
@@ -2027,6 +2124,14 @@ TargetCheck checkTarget(Tok att, Tok target, WeaponRules.Attack atk) {
         tc.notes.add(target.label + " is Dodging: attacks against it have Disadvantage.");
     }
     spellAttackEffects(att, target, tc);
+    // Reckless Attack: Advantage on attack rolls using Strength
+    for (CombatSpells.Effect e : att.effects) {
+        if (e.feature && e.recklessAtk && "STR".equals(atk.ability)) {
+            tc.advantage = true;
+            tc.notes.add(e.spell + ": Advantage on this Strength attack.");
+            break;
+        }
+    }
     int mask = target.damageMods().getOrDefault(DamageRules.normalizeType(atk.damageType), 0);
     if (mask != 0) tc.notes.add(target.label + " is " + DamageRules.levelName(mask).toLowerCase() + " to " + atk.damageType.toLowerCase() + " damage.");
     if (target.down()) {
@@ -2090,7 +2195,7 @@ private void showAttackPicker(Component anchor, Tok t) {
     list.setOpaque(false);
     Runnable[] close = new Runnable[1];
     for (WeaponRules.Attack a : t.attacks) {
-        boolean usable = a.offHand ? canBonusAttack(t) : canMainAttack();
+        boolean usable = canUseAttack(t, a);
         int ammo = a.ammo.isEmpty() ? -1 : ammoCount(t, a.ammo);
         boolean ammoOk = ammo != 0 || a.melee; // thrown / melee weapons with ammo text still work in melee
         String why = !usable ? (a.offHand ? (bonusAttackUsed ? "Bonus Action already used this turn." : "Attack with a Light weapon first.") : actionUsed && !attackAction ? "Your action is already used this turn." : "No attacks left this turn.")
@@ -2101,7 +2206,7 @@ private void showAttackPicker(Component anchor, Tok t) {
                 + (a.mastery.isEmpty() ? "" : "  <span style='color:#aaa5a0'>· Mastery: " + a.mastery + "</span>")
                 + "<br><span style='color:#aaa5a0'>" + App.escapeHtml(a.damageText() + " · " + a.reachText()
                 + (ammo >= 0 ? " · " + ammo + " " + a.ammo.toLowerCase() + (ammo == 1 ? "" : "s") : "")
-                + (a.offHand ? " · Bonus Action" : "")) + "</span>"
+                + (a.offHand ? " · Bonus Action" : "") + (isUnarmed(a) && t.extraStrikes > 0 && !canMainAttack() ? " · granted strike (" + t.extraStrikes + " left)" : "")) + "</span>"
                 + (why.isEmpty() ? "" : "<br><span style='color:#dc3c3c'>" + App.escapeHtml(why) + "</span>") + "</html>");
         b.setAlignmentX(Component.LEFT_ALIGNMENT);
         b.setMaximumSize(new Dimension(520, 70));
@@ -2183,9 +2288,13 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
     final boolean isObj = OBJ.equals(target.kind);
     // the attack is made: spend it (Undo gives it back). A spell attack's slot and action were spent when it was cast.
     final boolean usedBonus = cast == null && !reaction && atk.offHand;
-    final boolean startedAttackAction = cast == null && !reaction && !usedBonus && !attackAction;
+    // a granted Unarmed Strike (Flurry of Blows, Martial Arts) once the Attack action's attacks are spent
+    final boolean usedStrike = cast == null && !reaction && !usedBonus && isUnarmed(atk) && !canMainAttack() && att.extraStrikes > 0;
+    final boolean startedAttackAction = cast == null && !reaction && !usedBonus && !usedStrike && !attackAction;
+    if (!OBJ.equals(target.kind) && (att.team < 0 || target.team != att.team)) att.sustained = true; // attacking an enemy extends Rage
     if (cast == null) {
         if (usedBonus) bonusAttackUsed = true;
+        else if (usedStrike) att.extraStrikes--;
         else if (!reaction) {
             attacksLeft = Math.max(0, attacksLeft - 1);
             if (startedAttackAction) {
@@ -2232,6 +2341,21 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         }
     }
     if (atk.weapon != null && CombatSpells.has(att.effects, "Divine Favor")) parts.add(new DmgPart("Divine Favor", "Radiant", 1, 4, 0));
+    // Rage: + damage on attacks using Strength (weapon or Unarmed Strike)
+    if (cast == null && "STR".equals(atk.ability)) {
+        Set<String> seenFx = new HashSet<>();
+        for (CombatSpells.Effect e : att.effects) {
+            if (e.feature && e.meleeDmg != 0 && seenFx.add(e.spell)) parts.add(new DmgPart(e.spell, atk.damageType, 0, 0, e.meleeDmg));
+        }
+    }
+    // once-per-turn extra damage from class features (Sneak Attack); it's added in the roll overlay while it qualifies
+    final ClassFeatures.Active onHit = !isObj && weaponAttack && PC.equals(att.kind) ? onHitFeature(att) : null;
+    final DmgPart onHitPart = onHit == null ? null : new DmgPart(onHit.f.name, atk.damageType,
+            onHit.f.hitDice.count(att.source, onHit.clsLevel), onHit.f.hitDice.sides(att.source, onHit.clsLevel), onHit.f.hitDice.flat(att.source, onHit.clsLevel));
+    final boolean[] onHitWanted = {true};
+    // Bardic Inspiration (or another die effect): added after a miss, used up
+    final int[] inspBonus = {0};
+    final CombatSpells.Effect[] inspUsed = {null};
     if (cast != null && "True Strike".equals(cast.def.name) && cast.scale > 0) parts.add(new DmgPart("True Strike", "Radiant", cast.scale, 6, 0));
     List<Runnable> riders = new ArrayList<>(); // smite effects applied when the hit lands
     Runnable[] smiteRefund = {null};
@@ -2409,7 +2533,7 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
 
     java.util.function.IntSupplier effAC = () -> target.ac + coverBonus;
     java.util.function.IntSupplier rollTotal = () -> {
-        int s = natural[0] + atk.toHit;
+        int s = natural[0] + atk.toHit + inspBonus[0];
         for (int i = 0; i < rollDice.size(); i++) s += (Integer) rollDice.get(i)[0] > 0 ? dieRolls[i] : -dieRolls[i];
         return s;
     };
@@ -2487,6 +2611,7 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
             if (cast.refund != null) cast.refund.run();
         } else if (reaction) att.reactionsUsed = Math.max(0, att.reactionsUsed - 1);
         else if (usedBonus) bonusAttackUsed = false;
+        else if (usedStrike) att.extraStrikes++;
         else {
             attacksLeft++;
             if (startedAttackAction) {
@@ -2496,6 +2621,7 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         }
         if (usedAmmo) changeAmmo(att, atk.ammo, 1);
         if (smiteRefund[0] != null) smiteRefund[0].run();
+        if (inspUsed[0] != null) addEffect(att, inspUsed[0]); // the inspiration die comes back
         close[0].run();
         setStatus(cast != null ? atk.name + " undone." : "Attack undone.");
         persistSoon();
@@ -2527,6 +2653,10 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         if (!applied[0] && hitNow) {
             if (!rolledDmg[0]) rollDmg.doClick();
             apply.doClick();
+            if (onHitPart != null && parts.contains(onHitPart)) { // Sneak Attack: once per turn (homebrew versions may cost uses)
+                att.featureTurn.put(onHit.key(), turnKey());
+                spendFeatureUses(att, featuresOf(att), onHit, onHit.f.cost);
+            }
         } else if (!applied[0] && weaponAttack && cast == null && !sanctFail[0] && "Graze".equals(atk.mastery) && atk.abilityMod > 0) {
             graze.doClick();
         } else if (!applied[0]) {
@@ -2588,6 +2718,51 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
                 spellRow.add(rl);
             }
         }
+        // Sneak Attack (or a homebrew once-per-turn hit bonus): included while it qualifies, can be switched off
+        if (onHitPart != null && !applied[0]) {
+            String why = onHitBlocker(att, target, atk, tc, onHit, mode[0]);
+            boolean include = why.isEmpty() && onHitWanted[0] && hit;
+            if (include && !parts.contains(onHitPart)) {
+                parts.add(onHitPart);
+                if (rolledDmg[0]) onHitPart.roll(rng, isCrit.getAsBoolean());
+            } else if (!include && parts.contains(onHitPart)) {
+                parts.remove(onHitPart);
+            }
+            JCheckBox sneak = new JCheckBox("<html><b>" + App.escapeHtml(onHit.f.name) + "</b> +" + onHitPart.count + "d" + onHitPart.sides
+                    + (onHitPart.bonus != 0 ? WeaponRules.signed(onHitPart.bonus) : "") + " " + App.escapeHtml(atk.damageType.toLowerCase())
+                    + (why.isEmpty() ? (hit ? "" : " <span style='color:#aaa5a0'>(on a hit)</span>") : " <span style='color:#dc8c5c'>(" + App.escapeHtml(why) + ")</span>") + "</html>",
+                    why.isEmpty() && onHitWanted[0]);
+            sneak.setOpaque(false);
+            sneak.setForeground(App.TEXT_LIGHT);
+            sneak.setFont(new Font("SansSerif", Font.PLAIN, 12));
+            sneak.setEnabled(why.isEmpty());
+            sneak.setAlignmentX(Component.LEFT_ALIGNMENT);
+            sneak.setToolTipText(onHit.f.description);
+            sneak.addActionListener(ev -> {
+                onHitWanted[0] = sneak.isSelected();
+                render[0].run();
+            });
+            spellRow.add(sneak);
+        }
+        // a die from Bardic Inspiration can turn a miss into a hit
+        CombatSpells.Effect insp = null;
+        for (CombatSpells.Effect e : att.effects) if (e.feature && e.inspDie > 0) { insp = e; break; }
+        if (insp != null && !hit && !applied[0] && natural[0] != 1 && !sanctFail[0]) {
+            final CombatSpells.Effect fx = insp;
+            JButton ib = economyButton("🎵 Add " + fx.spell + " (+" + Math.max(1, fx.inspCount) + "d" + fx.inspDie + ")", FREE_COLOR,
+                    "The attack missed: roll the die and add it to the attack roll (the die is used up)");
+            ib.setAlignmentX(Component.LEFT_ALIGNMENT);
+            ib.addActionListener(ev -> {
+                int roll = 0;
+                for (int i = 0; i < Math.max(1, fx.inspCount); i++) roll += rng.nextInt(fx.inspDie) + 1;
+                inspBonus[0] += roll;
+                inspUsed[0] = fx;
+                removeEffect(att, fx);
+                setStatus(att.label + " adds " + fx.spell + ": +" + roll + " to the attack roll.");
+                render[0].run();
+            });
+            spellRow.add(ib);
+        }
         spellRow.setVisible(spellRow.getComponentCount() > 0);
         spellRow.revalidate();
     };
@@ -2617,6 +2792,7 @@ private void showAttackRoll(Component anchor, Tok att, Tok target, WeaponRules.A
         String verdict = sanctFail[0] ? "LOST (Sanctuary)" : crit ? "CRITICAL HIT!" : fumble ? "MISS (natural 1)" : hit ? "HIT" : "MISS";
         rollLbl.setText("<html>d20 " + dice + (replaced[0] ? " <span style='color:#aaa5a0'>(your roll)</span>" : "")
                 + " " + WeaponRules.signed(atk.toHit) + rollDiceText(rollDice, dieRolls)
+                + (inspBonus[0] > 0 ? " + " + inspBonus[0] + " (" + (inspUsed[0] != null ? inspUsed[0].spell : "inspiration") + ")" : "")
                 + " = <b>" + total + "</b> vs AC " + ac + "  →  "
                 + "<span style='color:" + (hit ? "#7cd38a" : "#dc3c3c") + "'>" + verdict + "</span></html>");
         rollLbl.setForeground(App.TEXT_LIGHT);
@@ -2907,6 +3083,8 @@ private String castBlocker(Tok t, CombatSpells.Known k, CombatSpells.Def def) {
     if (t.down()) return t.label + " is at 0 HP.";
     String inc = CombatConditions.incapacitatedBy(t.conditions);
     if (!inc.isEmpty()) return t.label + " is " + inc + ": no spellcasting.";
+    for (CombatSpells.Effect e : t.effects) if (e.feature && e.noSpells) return e.spell + ": " + t.label + " can't cast spells.";
+    if (formOf(t) != null) return "In Wild Shape (" + CustomAssets.str(formOf(t), "name") + "): " + t.label + " can't cast spells.";
     String time = k.spell.castingTime;
     boolean myTurn = inCombat && t == active;
     if ("Action".equals(time)) {
@@ -3038,11 +3216,24 @@ private SpellCast newCast(Tok t, CombatSpells.Known k, CombatSpells.Def def, Slo
     c.mod = CombatSpells.abilityMod(t.source, pc, k.ability);
     int pb = pc ? CombatSpells.profBonus(t.source) : CombatSpells.crProficiency(CustomAssets.str(t.source, "cr"));
     c.dc = k.dc >= 0 ? k.dc : 8 + pb + c.mod;
+    c.dc += featureDcBonus(t, k); // Innate Sorcery: +1 to Sorcerer spells
     c.atkBonus = k.atk != Integer.MIN_VALUE ? k.atk : pb + c.mod;
     c.ownTurn = inCombat && t == active;
     c.leapsLeft = c.slot;
     c.blastsLeft = c.def.targetsAt(c.scale);
     return c;
+}
+
+// Spell save DC bonus from class feature effects on the caster (only for spells of that feature's class; e.choice = class)
+private static int featureDcBonus(Tok t, CombatSpells.Known k) {
+    int best = 0;
+    for (CombatSpells.Effect e : t.effects) if (e.feature && e.dcBonus != 0 && featureCovers(e, k)) best = Math.max(best, e.dcBonus);
+    return best;
+}
+
+// Does a class feature effect (e.choice = its class) apply to this spell? Spells of other classes don't count.
+private static boolean featureCovers(CombatSpells.Effect e, CombatSpells.Known k) {
+    return e.choice.isEmpty() || k == null || k.source == null || k.source.toLowerCase().contains(e.choice.toLowerCase());
 }
 
 private int spellDcFor(Tok caster, String spell) {
@@ -3084,7 +3275,20 @@ private void addEffect(Tok t, CombatSpells.Effect e) {
     t.effects.add(e);
     applySpellStats(t);
     if ("Shillelagh".equals(e.spell)) rebuildAttacks(t);
+    if (!e.form.isEmpty()) reshape(t); // Wild Shape: the form's stats
     if (!t.concentration.isEmpty() && CombatConditions.incapacitated(t.conditions)) endConcentration(t, "Incapacitated");
+    endIfIncapacitated(t);
+}
+
+// Class feature effects that end when their creature is Incapacitated (Rage)
+private void endIfIncapacitated(Tok t) {
+    if (!CombatConditions.incapacitated(t.conditions) && !t.down()) return;
+    for (CombatSpells.Effect e : new ArrayList<>(t.effects)) {
+        if (e.feature && e.endOnIncap) {
+            removeEffect(t, e);
+            note(e.spell + " on " + t.label + " ends: it's " + (t.down() ? "at 0 HP" : "Incapacitated") + ".");
+        }
+    }
 }
 
 private void removeEffect(Tok t, CombatSpells.Effect e) {
@@ -3098,6 +3302,7 @@ private void removeEffect(Tok t, CombatSpells.Effect e) {
     }
     applySpellStats(t);
     if ("Shillelagh".equals(e.spell)) rebuildAttacks(t);
+    if (!e.form.isEmpty()) reshape(t); // leaving Wild Shape: back to the character's own stats
     // the last effect of a concentration spell gone: its caster stops concentrating
     if (e.conc) {
         Tok caster = byUid(e.caster);
@@ -3413,6 +3618,14 @@ private int dealDamage(Tok target, int amount, Tok source, boolean meleeHit) {
         removeEffect(target, sleep);
         note(target.label + " wakes up (Sleep ends when it takes damage).");
     }
+    // class feature effects that end on any damage (Turn Undead)
+    for (CombatSpells.Effect e : new ArrayList<>(target.effects)) {
+        if (e.feature && e.endOnDamage) {
+            removeEffect(target, e);
+            note(e.spell + " on " + target.label + " ends: it took damage.");
+        }
+    }
+    if (source != null && source != target && (source.team < 0 || source.team != target.team)) source.sustained = true; // damaging an enemy keeps Rage going
     if (source != null) {
         for (CombatSpells.Effect e : new ArrayList<>(target.effects)) {
             if (!"Charm Person".equals(e.spell)) continue;
@@ -3496,6 +3709,21 @@ private SaveRoll rollSave(Tok who, String ability, int dc, int cover, boolean ad
         }
     }
     if ("DEX".equals(ability) && who.dodging) { r.adv = true; r.why.add("Dodging: Advantage"); }
+    // class features: Rage (STR saves), lasting effects with save Advantage, Danger Sense (always on, unless Incapacitated)
+    for (CombatSpells.Effect e : who.effects) {
+        if (!e.feature) continue;
+        if ((e.advStr && "STR".equals(ability)) || e.advSaves.contains(ability)) {
+            r.adv = true;
+            r.why.add(e.spell + ": Advantage");
+        }
+    }
+    if (PC.equals(who.kind) && who.source != null && !CombatConditions.incapacitated(who.conditions)) {
+        String from = ClassFeatures.advantageSaves(who.source).get(ability);
+        if (from != null) {
+            r.adv = true;
+            r.why.add(from + ": Advantage");
+        }
+    }
     if ("DEX".equals(ability) && hasCond(who, "Restrained")) { r.dis = true; r.why.add("Restrained: Disadvantage"); }
     if ("DEX".equals(ability) && cover > 0) { r.cover = 2; r.why.add("half cover: +2"); }
     Set<String> seen = new HashSet<>();
@@ -3529,7 +3757,74 @@ private void rerollSave(SaveRoll r) {
 
 private int saveBonusOf(Tok t, String ability) {
     if (OBJ.equals(t.kind)) return 0;
+    Map<String, Object> form = formOf(t);
+    if (form != null && PHYSICAL.contains(ability)) {
+        // Wild Shape: the form's score with the character's proficiency, or the form's own bonus if that's higher
+        return Math.max(CombatSpells.saveBonus(formRec(t, form), true, ability), CombatSpells.saveBonus(form, false, ability));
+    }
     return CombatSpells.saveBonus(t.source, PC.equals(t.kind), ability);
+}
+
+private static final Set<String> PHYSICAL = new HashSet<>(Arrays.asList("STR", "DEX", "CON"));
+
+// Ability check bonus for a skill, Wild Shape aware (physical skills use the form's score, keeping proficiency / Expertise)
+private int skillBonusOf(Tok t, String skill) {
+    boolean pc = PC.equals(t.kind);
+    Map<String, Object> form = formOf(t);
+    if (form != null && PHYSICAL.contains(CombatActions.abilityOf(skill))) {
+        return Math.max(CombatActions.skillBonus(formRec(t, form), true, skill), CombatActions.skillBonus(form, false, skill));
+    }
+    return CombatActions.skillBonus(t.source, pc, skill);
+}
+
+// ===============================================================
+// Wild Shape (a class feature effect with `form` set: ClassFeatures "shape" part + C_FORM choice)
+//   The character keeps its own Hit Points, INT / WIS / CHA, proficiencies and features; the form gives size, Speed,
+//   AC, attacks, damage traits, Darkvision and STR / DEX / CON. applySource calls applyForm last, so ending the effect
+//   (or the form being replaced) re-reads the character as usual.
+// ===============================================================
+private static Map<String, Object> formOf(Tok t) {
+    if (t == null || !PC.equals(t.kind)) return null;
+    for (CombatSpells.Effect e : t.effects) if (e.feature && !e.form.isEmpty()) return CustomAssets.find(CustomAssets.NPCS, e.form);
+    return null;
+}
+
+private static CombatSpells.Effect formEffect(Tok t) {
+    for (CombatSpells.Effect e : t.effects) if (e.feature && !e.form.isEmpty()) return e;
+    return null;
+}
+
+// The character record with the form's STR / DEX / CON (for saves and checks made in Wild Shape)
+private static Map<?, ?> formRec(Tok t, Map<String, Object> form) {
+    Map<String, Object> copy = App.recCopy(t.source);
+    Map<String, Object> stats = new LinkedHashMap<>(CharacterStorage.recStatsMap(t.source));
+    Map<String, Integer> fa = CustomAssets.abilities(form);
+    for (String s : PHYSICAL) stats.put(s, fa.get(s));
+    copy.put("stats", stats);
+    return copy;
+}
+
+private void applyForm(Tok t) {
+    Map<String, Object> form = formOf(t);
+    if (form == null) return;
+    String size = CustomAssets.str(form, "size");
+    t.sizeName = size.isEmpty() ? "Medium" : size;
+    t.speed = Math.max(0, leadingInt(CustomAssets.str(form, "speed"), 30));
+    t.ac = CustomAssets.intVal(form, "ac", 10);
+    t.attacks = WeaponRules.npcAttacks(form);
+    t.attacksPerAction = WeaponRules.npcAttacksPerAction(form);
+    t.sourceMods = DamageRules.fromTraits(form);
+    t.subtitle = t.subtitle + " · Wild Shape: " + CustomAssets.str(form, "name");
+}
+
+// Re-reads a token's character after its form changes (keeps HP, effects and every other combat state)
+private void reshape(Tok t) {
+    if (t.source == null || !PC.equals(t.kind)) return;
+    Map<String, Map<?, ?>> m = new HashMap<>();
+    m.put(t.refId, t.source);
+    applySource(t, m);
+    if (t == active) attacksLeft = Math.min(attacksLeft, Math.max(1, t.attacksPerAction));
+    lightKey = ""; // a form can change size and Darkvision
 }
 
 private String saveText(SaveRoll r) {
@@ -3584,18 +3879,44 @@ private JPanel saveRow(SaveRoll r, boolean includeBox, Runnable onChange) {
     if (!r.noSave) {
         JPanel btns = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 6));
         btns.setOpaque(false);
+        // Bardic Inspiration (a class feature die on the saver): add it to a failed save
+        CombatSpells.Effect insp = inspirationOn(r.who);
+        JButton ib = insp == null ? null : Tokens.smallButton("🎵 +" + Math.max(1, insp.inspCount) + "d" + insp.inspDie,
+                insp.spell + ": add the die to this failed save (it's used up)");
+        Runnable vis = () -> {
+            if (ib != null) ib.setVisible(!r.success && r.include && r.who.effects.contains(insp));
+        };
+        if (ib != null) {
+            ib.addActionListener(e -> {
+                int roll = 0;
+                for (int i = 0; i < Math.max(1, insp.inspCount); i++) roll += rng.nextInt(insp.inspDie) + 1;
+                r.total += roll;
+                r.why.add(insp.spell + " +" + roll);
+                r.success = !r.autoFail && (r.autoSucceed || r.total >= r.dc);
+                removeEffect(r.who, insp);
+                vis.run();
+                paint.run();
+                onChange.run();
+            });
+        }
         JButton rr = Tokens.smallButton("🎲", "Reroll this save");
         rr.addActionListener(e -> {
             rerollSave(r);
+            vis.run();
             paint.run();
             onChange.run();
         });
         JButton flip = Tokens.smallButton("Flip", "Swap success / failure (e.g. the player rolled at the table, or a feature changed it)");
         flip.addActionListener(e -> {
             r.success = !r.success;
+            vis.run();
             paint.run();
             onChange.run();
         });
+        if (ib != null) {
+            vis.run();
+            btns.add(ib);
+        }
         btns.add(rr);
         btns.add(flip);
         row.add(btns, BorderLayout.EAST);
@@ -3703,6 +4024,7 @@ private void onTurnStart(Tok t) {
         if (e.ownStarts > 0 && --e.ownStarts == 0) removeEffect(t, e);
     }
     if (!t.concentration.isEmpty() && CombatConditions.incapacitated(t.conditions)) endConcentration(t, "Incapacitated");
+    endIfIncapacitated(t); // Rage ends if the creature is Incapacitated
     // Witch Bolt ends if its target is out of range or behind Total Cover
     if ("Witch Bolt".equals(t.concentration)) {
         Tok wt = witchBoltTarget(t);
@@ -3753,6 +4075,15 @@ private void onTurnStart(Tok t) {
 
 private void onTurnEnd(Tok t) {
     readySmite = null;
+    // Rage-like effects end unless extended since the creature's last turn (attacked an enemy, forced a save, or extended)
+    for (CombatSpells.Effect e : new ArrayList<>(t.effects)) {
+        if (e.feature && e.sustain && !t.sustained && e.caster.equals(t.uid)) {
+            removeEffect(t, e);
+            note(e.spell + " on " + t.label + " ends: it didn't attack an enemy, force a save or extend it since its last turn.");
+        }
+    }
+    t.sustained = false;
+    endIfIncapacitated(t);
     for (Tok o : tokens) {
         for (CombatSpells.Effect e : new ArrayList<>(o.effects)) {
             if (e.caster.equals(t.uid) && e.casterEnds > 0 && --e.casterEnds == 0) {
@@ -4570,6 +4901,13 @@ private void spellAttack(SpellCast c, Tok target) {
     TargetCheck tc = checkTarget(c.caster, target, a);
     tc.ok = true;
     tc.cast = c;
+    for (CombatSpells.Effect e : c.caster.effects) {
+        if (e.feature && e.advSpellAtk && featureCovers(e, c.known)) { // Innate Sorcery
+            tc.advantage = true;
+            tc.notes.add(e.spell + ": Advantage on this spell attack roll.");
+            break;
+        }
+    }
     if (c.leapFrom != null) tc.notes.add(0, "Leaping from " + c.leapFrom.label + " (" + distanceFt(c.leapFrom, target) + " ft.).");
     showAttackRoll(board, c.caster, target, a, tc, false);
 }
@@ -4725,6 +5063,7 @@ private void resolveSave(SpellCast c, List<Tok> targets, double ox, double oy, S
         if ("Ensnaring Strike".equals(c.def.name) && o.size >= 2) { adv = true; why.add("Large or larger: Advantage"); }
         SaveRoll r = rollSave(o, s.ability, c.dc, cover, adv, false);
         r.why.addAll(0, why);
+        if (!s.ability.isEmpty() && (c.caster.team < 0 || o.team != c.caster.team)) c.caster.sustained = true; // forcing an enemy's save extends Rage
         if ("Sleep".equals(c.def.name) && CombatSpells.sleepless(o.source, PC.equals(o.kind))) {
             r.autoSucceed = true;
             r.success = true;
@@ -5495,12 +5834,14 @@ private JPanel effectChips(Tok t) {
 private void showEffectInfo(Component anchor, Tok t, CombatSpells.Effect e) {
     Tok caster = byUid(e.caster);
     boolean actionFx = CombatActions.isActionEffect(e.spell); // Grappled, Hidden, Help: not spells
-    Spell sp = actionFx ? null : SpellData.lookup(e.spell);
-    CombatSpells.Def d = actionFx ? null : sp != null ? CombatSpells.defOrUtility(sp) : CombatSpells.def(e.spell);
+    ClassFeatures.Active feat = e.feature ? featureOf(e) : null; // Rage, Bardic Inspiration, Turn Undead...
+    Spell sp = actionFx || e.feature ? null : SpellData.lookup(e.spell);
+    CombatSpells.Def d = actionFx || e.feature ? null : sp != null ? CombatSpells.defOrUtility(sp) : CombatSpells.def(e.spell);
     JPanel body = new JPanel();
     body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
     body.setOpaque(false);
     JLabel l = new JLabel("<html><div style='width:420px'>" + App.escapeHtml(actionFx ? CombatActions.effectHow(e.spell)
+            : e.feature ? (feat != null ? feat.f.description : "A class feature's effect.")
             : d != null ? d.how : sp != null ? sp.description : "") + "</div></html>");
     l.setForeground(App.TEXT_LIGHT);
     l.setFont(new Font("SansSerif", Font.PLAIN, 13));
@@ -5511,7 +5852,21 @@ private void showEffectInfo(Component anchor, Tok t, CombatSpells.Effect e) {
     String cn = caster == null ? "the caster" : caster.label;
     if (actionFx) facts.add((CombatActions.HIDDEN.equals(e.spell) ? "Hid" : CombatActions.GRAPPLED.equals(e.spell) ? "Grappled by " + cn : "From " + cn)
             + " in round " + e.castRound + ".");
+    else if (e.feature) facts.add("From " + (caster == null ? "someone no longer on the map" : caster.label + "'s " + e.choice + " feature") + " in round " + e.castRound + ".");
     else facts.add("Cast by " + (caster == null ? "someone no longer on the map" : caster.label) + (e.slot > 1 ? " with a level " + e.slot + " slot" : "") + " in round " + e.castRound + ".");
+    if (!e.resist.isEmpty()) facts.add("Resistance to " + String.join(", ", e.resist) + " damage.");
+    if (e.meleeDmg != 0) facts.add("+" + e.meleeDmg + " damage on attacks using Strength.");
+    if (e.advStr) facts.add("Advantage on Strength checks and saving throws.");
+    if (!e.advSaves.isEmpty()) facts.add("Advantage on " + String.join(", ", e.advSaves) + " saving throws.");
+    if (e.recklessAtk) facts.add("Advantage on attack rolls using Strength.");
+    if (e.advAgainst && e.feature) facts.add("Attack rolls against it have Advantage.");
+    if (e.noSpells) facts.add("It can't cast spells or concentrate.");
+    if (e.dcBonus != 0) facts.add("+" + e.dcBonus + " to its " + e.choice + " spell save DC.");
+    if (e.advSpellAtk) facts.add("Advantage on " + e.choice + " spell attack rolls.");
+    if (e.inspDie > 0) facts.add("It can add " + Math.max(1, e.inspCount) + "d" + e.inspDie + " to one failed attack roll, saving throw or ability check (offered on the roll; used up).");
+    if (e.sustain) facts.add("Ends at the end of " + t.label + "'s turn unless it attacked an enemy, forced a save or used a Bonus Action to extend it since its last turn.");
+    if (e.endOnDamage) facts.add("Ends if it takes damage.");
+    if (e.endOnIncap) facts.add("Ends if it's Incapacitated.");
     if (e.markDice > 0) facts.add(cn + "'s attack-roll hits against " + t.label + " deal +" + e.markDice + "d" + e.markSides + " " + e.markType + " damage.");
     if (e.ac != 0) facts.add(signedInt(e.ac) + " AC.");
     if (e.speed != 0) facts.add(signedInt(e.speed) + " ft. Speed.");
@@ -6773,7 +7128,7 @@ private void escapeGrapple(Tok t, CombatSpells.Effect e) {
         attackAction = false;
     }
     boolean pc = PC.equals(t.kind);
-    String best = CombatActions.skillBonus(t.source, pc, "Acrobatics") > CombatActions.skillBonus(t.source, pc, "Athletics") ? "Acrobatics" : "Athletics";
+    String best = skillBonusOf(t, "Acrobatics") > skillBonusOf(t, "Athletics") ? "Acrobatics" : "Athletics";
     Tok g = byUid(e.caster);
     showCheck("Escape Grapple: " + t.label, t.label + " tries to break free of " + (g == null ? "the grapple" : g.label + "'s grapple") + ".",
             t, new String[]{"Athletics", "Acrobatics"}, best, e.dc, (skill, total) -> {
@@ -6799,7 +7154,17 @@ private void showCheck(String title, String intro, Tok who, String[] skills, Str
     if (hasCond(who, "Poisoned")) { dis = true; why.add("Poisoned: Disadvantage on ability checks"); }
     if (hasCond(who, "Frightened")) { dis = true; why.add("Frightened: Disadvantage while the source of its fear is in sight"); }
     if (hasCond(who, "Exhaustion")) why.add("Exhaustion: subtract 2 × its Exhaustion level");
+    for (CombatSpells.Effect e : who.effects) {
+        if (e.feature && e.advStr && "STR".equals(CombatActions.abilityOf(skill0))) { // Rage: Advantage on Strength checks
+            adv = true;
+            why.add(e.spell + ": Advantage on Strength checks");
+            break;
+        }
+    }
     int[] mode = {adv && !dis ? 1 : dis && !adv ? 2 : 0};
+    int[] boost = {0}; // dice added after a failure (Bardic Inspiration, Tactical Mind)
+    List<String> boostWhy = new ArrayList<>();
+    Set<String> usedOnCheck = new HashSet<>(); // features already added to this check
     String[] skill = {skill0};
     int[][] d20 = {new int[0]};
     int[] natural = {0}, own = {Integer.MIN_VALUE};
@@ -6818,24 +7183,71 @@ private void showCheck(String title, String intro, Tok who, String[] skills, Str
     JLabel res = new JLabel();
     res.setFont(new Font("SansSerif", Font.BOLD, 15));
     res.setAlignmentX(Component.LEFT_ALIGNMENT);
-    java.util.function.IntSupplier total = () -> own[0] != Integer.MIN_VALUE ? own[0] : natural[0] + CombatActions.skillBonus(who.source, pc, skill[0]);
+    java.util.function.IntSupplier total = () -> (own[0] != Integer.MIN_VALUE ? own[0] : natural[0] + skillBonusOf(who, skill[0])) + boost[0];
+    JPanel boostRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+    boostRow.setOpaque(false);
+    boostRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+    Runnable[] renderRef = new Runnable[1];
     Runnable render = () -> {
-        int bonus = CombatActions.skillBonus(who.source, pc, skill[0]);
+        int bonus = skillBonusOf(who, skill[0]);
         StringBuilder dice = new StringBuilder();
         for (int v : d20[0]) dice.append(dice.length() == 0 ? "" : " ").append(v == natural[0] ? "[" + v + "]" : "(" + v + ")");
         int tot = total.getAsInt();
         boolean ok = dc < 0 || tot >= dc;
-        res.setText(own[0] != Integer.MIN_VALUE ? skill[0] + ": " + tot + " (your roll)" + (dc < 0 ? "" : " vs DC " + dc + "  →  " + (ok ? "Success" : "Failure"))
-                : skill[0] + ": d20 " + dice + " " + signedInt(bonus) + " = " + tot + (dc < 0 ? "" : " vs DC " + dc + "  →  " + (ok ? "Success" : "Failure")));
+        String extra = boostWhy.isEmpty() ? "" : " + " + String.join(" + ", boostWhy);
+        res.setText(own[0] != Integer.MIN_VALUE ? skill[0] + ": " + tot + " (your roll" + extra + ")" + (dc < 0 ? "" : " vs DC " + dc + "  →  " + (ok ? "Success" : "Failure"))
+                : skill[0] + ": d20 " + dice + " " + signedInt(bonus) + extra + " = " + tot + (dc < 0 ? "" : " vs DC " + dc + "  →  " + (ok ? "Success" : "Failure")));
         res.setForeground(dc < 0 ? App.TEXT_LIGHT : ok ? FREE_COLOR : App.ACCENT_HOVER);
+        // a failed check: dice from class features can still turn it around
+        boostRow.removeAll();
+        if (dc >= 0 && !ok) {
+            CombatSpells.Effect insp = inspirationOn(who);
+            if (insp != null) {
+                JButton ib = economyButton("🎵 Add " + insp.spell + " (+" + Math.max(1, insp.inspCount) + "d" + insp.inspDie + ")", FREE_COLOR,
+                        "Roll the die and add it to this failed check (it's used up)");
+                ib.addActionListener(e -> {
+                    int roll = 0;
+                    for (int i = 0; i < Math.max(1, insp.inspCount); i++) roll += rng.nextInt(insp.inspDie) + 1;
+                    boost[0] += roll;
+                    boostWhy.add(roll + " (" + insp.spell + ")");
+                    removeEffect(who, insp);
+                    renderRef[0].run();
+                });
+                boostRow.add(ib);
+            }
+            List<ClassFeatures.Active> all = featuresOf(who);
+            for (ClassFeatures.Active a : all) {
+                if (!ClassFeatures.FAILED_CHECK.equals(a.f.activation) || a.f.inspiration == null) continue;
+                if (usedOnCheck.contains(a.key())) continue; // once per check
+                int left = featureUsesLeft(who, all, a);
+                if (left >= 0 && left < Math.max(1, a.f.cost)) continue;
+                JButton tb = economyButton(a.f.name + " (+" + a.f.inspiration.text(who.source, a.clsLevel) + ")", App.GOLD,
+                        a.f.name + ": roll and add to the failed check. If it still fails, the use isn't spent.");
+                tb.addActionListener(e -> {
+                    int roll = a.f.inspiration.roll(rng, who.source, a.clsLevel);
+                    boost[0] += roll;
+                    boostWhy.add(roll + " (" + a.f.name + ")");
+                    usedOnCheck.add(a.key());
+                    boolean nowOk = total.getAsInt() >= dc;
+                    if (nowOk) spendFeatureUses(who, all, a, a.f.cost); // only spent if it turns the check into a success
+                    note(who.label + " uses " + a.f.name + ": +" + roll + (nowOk ? " (success; a use is spent)." : " (still fails; the use isn't spent)."));
+                    renderRef[0].run();
+                });
+                boostRow.add(tb);
+            }
+        }
+        boostRow.setVisible(boostRow.getComponentCount() > 0);
+        boostRow.revalidate();
+        boostRow.repaint();
     };
+    renderRef[0] = render;
     if (skills.length > 1) {
         JPanel sr = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         sr.setOpaque(false);
         sr.setAlignmentX(Component.LEFT_ALIGNMENT);
         String[] labels = new String[skills.length];
         for (int i = 0; i < skills.length; i++) {
-            labels[i] = skills[i] + " (" + CombatActions.abilityOf(skills[i]) + ") " + signedInt(CombatActions.skillBonus(who.source, pc, skills[i]));
+            labels[i] = skills[i] + " (" + CombatActions.abilityOf(skills[i]) + ") " + signedInt(skillBonusOf(who, skills[i]));
         }
         JComboBox<String> pick = new JComboBox<>(labels);
         App.styleCombo(pick);
@@ -6896,6 +7308,7 @@ private void showCheck(String title, String intro, Tok who, String[] skills, Str
     ownRow.add(sp);
     ownRow.add(use);
     body.add(ownRow);
+    body.add(boostRow);
     render.run();
     body.add(Box.createRigidArea(new Dimension(0, 10)));
     JButton ok = App.overlayButton("Done", true);
@@ -6930,8 +7343,13 @@ private List<Tok> seenBy(Tok t) {
 
 // Hide: an action (a Rogue's Cunning Action can use the Bonus Action), Dexterity (Stealth) against DC 15
 private void doHide(Tok t) {
-    String used = spendForAction(t, true);
+    String used = spendForAction(t, "Hide");
     if (used == null) return;
+    hideCheck(t, used);
+}
+
+// The Hide check itself (already paid for: an action, a Bonus Action, or a class feature)
+private void hideCheck(Tok t, String used) {
     List<Tok> seers = seenBy(t);
     String intro = t.label + " tries to hide (" + used + "). It needs to be Heavily Obscured or behind Three-Quarters or Total Cover, "
             + "out of every enemy's line of sight." + (seers.isEmpty() ? " No enemy can see it right now."
@@ -8020,6 +8438,797 @@ private void showMapInfo() {
 }
 
 // ===============================================================
+// Class features (rules and parts in ClassFeatures; built-in 2024 levels 1-2 and homebrew alike)
+//   Uses are a combat-only copy of the sheet's (Tok.featureUses, by pool key), loaded when placed and at Start Combat.
+//   The Current Turn tab lists usable features as buttons coloured by what they cost. Using one: pick targets, pay
+//   (action / Bonus Action / Reaction and uses), then resolve its parts in order: turn-economy grants, resources,
+//   healing (allies), damage with a save (enemies), the lasting effect (a CombatSpells.Effect with `feature` set,
+//   e.choice = the class), Temporary Hit Points. Always-on parts (Unarmored Defense / Movement, Danger Sense, Cunning
+//   Action, Martial Arts) are read where they matter; Sneak Attack is offered in the attack roll; Bardic Inspiration
+//   and Tactical Mind on failed rolls.
+// ===============================================================
+private void loadFeatures(Tok t) {
+    t.featuresLoaded = true;
+    t.featureUses = PC.equals(t.kind) && t.source != null ? ClassFeatures.poolsLeft(t.source) : new LinkedHashMap<>();
+}
+
+private static List<ClassFeatures.Active> featuresOf(Tok t) {
+    if (!PC.equals(t.kind) || t.source == null) return Collections.emptyList();
+    return ClassFeatures.active(t.source);
+}
+
+// Uses left in the pool `a` spends (-1 = it has no uses: unlimited)
+private int featureUsesLeft(Tok t, List<ClassFeatures.Active> all, ClassFeatures.Active a) {
+    ClassFeatures.Active o = ClassFeatures.poolOwner(all, a);
+    if (o == null) return a.f.shareWith.isEmpty() ? -1 : 0;
+    Integer v = t.featureUses.get(o.key());
+    if (v == null) { // a pool the token didn't have yet (e.g. the character leveled up mid-fight)
+        v = ClassFeatures.maxUses(o, t.source);
+        t.featureUses.put(o.key(), v);
+    }
+    return v;
+}
+
+private void spendFeatureUses(Tok t, List<ClassFeatures.Active> all, ClassFeatures.Active a, int n) {
+    ClassFeatures.Active o = ClassFeatures.poolOwner(all, a);
+    if (o == null || n <= 0) return;
+    t.featureUses.put(o.key(), Math.max(0, featureUsesLeft(t, all, a) - n));
+}
+
+private ClassFeatures.Active onHitFeature(Tok t) {
+    for (ClassFeatures.Active a : featuresOf(t)) if (ClassFeatures.ON_HIT.equals(a.f.activation) && a.f.hitDice != null) return a;
+    return null;
+}
+
+// Why a once-per-turn hit bonus (Sneak Attack) doesn't apply to this attack ("" = it does). `mode`: 1 Advantage, 2 Disadvantage.
+private String onHitBlocker(Tok att, Tok target, WeaponRules.Attack atk, TargetCheck tc, ClassFeatures.Active a, int mode) {
+    if (turnKey().equals(att.featureTurn.get(a.key()))) return "already used this turn";
+    List<ClassFeatures.Active> all = featuresOf(att);
+    int left = featureUsesLeft(att, all, a);
+    if (left == 0 || (left > 0 && left < a.f.cost)) return "no uses left";
+    if (a.f.hitFinesseOrRanged && !(atk.weapon != null && (atk.weapon.finesse() || !atk.weapon.melee || tc.ranged))) return "needs a Finesse or Ranged weapon";
+    if (a.f.hitMeleeOnly && tc.ranged) return "melee attacks only";
+    if (a.f.hitNeedsAdvantage && mode != 1) {
+        if (mode == 2) return "not with Disadvantage";
+        if (!allyNextTo(att, target)) return "needs Advantage or an ally within 5 ft. of " + target.label;
+    }
+    return "";
+}
+
+// An ally of `att` (not Incapacitated) within 5 ft. of `target`
+private boolean allyNextTo(Tok att, Tok target) {
+    for (Tok o : tokens) {
+        if (o == att || o == target || OBJ.equals(o.kind) || o.down() || att.team < 0 || o.team != att.team) continue;
+        if (CombatConditions.incapacitated(o.conditions)) continue;
+        if (distanceFt(o, target) <= 5) return true;
+    }
+    return false;
+}
+
+private static Color featureColor(String activation) {
+    switch (activation) {
+        case ClassFeatures.ACTION: case ClassFeatures.MAGIC: return ACTION_COLOR;
+        case ClassFeatures.BONUS: return BONUS_COLOR;
+        case ClassFeatures.REACTION: return REACTION_COLOR;
+        default: return App.GOLD; // no action
+    }
+}
+
+private static String featureLabel(ClassFeatures.Feature f) {
+    int i = f.name.indexOf(": ");
+    return i > 0 ? f.name.substring(i + 2) : f.name; // "Font of Magic: Create Spell Slot" -> "Create Spell Slot"
+}
+
+// An effect this feature put on `t` itself (Rage, Innate Sorcery...), or null
+private CombatSpells.Effect ownFeatureEffect(Tok t, String name) {
+    for (CombatSpells.Effect e : t.effects) if (e.feature && e.spell.equals(name) && e.caster.equals(t.uid)) return e;
+    return null;
+}
+
+// Why `t` can't use feature `a` right now ("" = it can)
+private String featureBlocker(Tok t, List<ClassFeatures.Active> all, ClassFeatures.Active a, boolean incap) {
+    ClassFeatures.Feature f = a.f;
+    if (!inCombat || t != active) return "Only on " + t.label + "'s turn.";
+    if (incap) return "Can't act: " + (t.down() ? "at 0 HP" : CombatConditions.incapacitatedBy(t.conditions)) + ".";
+    switch (f.activation) {
+        case ClassFeatures.ACTION: case ClassFeatures.MAGIC:
+            if (actionUsed) return "Action already used this turn.";
+            break;
+        case ClassFeatures.BONUS:
+            if (bonusAttackUsed) return "Bonus Action already used this turn.";
+            break;
+        case ClassFeatures.REACTION:
+            if (!t.hasReaction()) return "No Reaction left.";
+            break;
+        case ClassFeatures.INITIATIVE:
+            if (round != 1) return "Only when you roll Initiative (round 1).";
+            break;
+        default:
+    }
+    ClassFeatures.Active owner = ClassFeatures.poolOwner(all, a);
+    if (!f.shareWith.isEmpty() && owner == null) return "Needs " + f.shareWith + ".";
+    if (owner != null && featureUsesLeft(t, all, a) < (f.spendAny ? 1 : f.cost)) {
+        return "No uses left (" + owner.f.name + " recharges on a " + owner.f.recharge + ").";
+    }
+    if (f.needsAttack && !attackAction) return "Take the Attack action first.";
+    if (f.beforeAttack && (attackAction || attacksLeft < Math.max(1, t.attacksPerAction))) return "Only before your first attack roll this turn.";
+    if (f.extraAction && !actionUsed) return "Use your action first, then take another.";
+    if ((f.extraAction || f.beforeAttack || ClassFeatures.INITIATIVE.equals(f.activation)) && turnKey().equals(t.featureTurn.get(a.key()))) return "Already used this turn.";
+    if (f.hasEffect() && !f.shape && ClassFeatures.T_SELF.equals(f.target) && ownFeatureEffect(t, f.name) != null) return f.name + " is already active.";
+    if (f.shape && knownForms(t, a).isEmpty()) return "Choose " + f.name + " forms on the character sheet first.";
+    if (ClassFeatures.C_METAMAGIC.equals(f.choiceKind) && ClassFeatures.choices(t.source, a).isEmpty()) return "Choose Metamagic options on the character sheet first.";
+    if (ClassFeatures.RS_CREATE.equals(f.restore)) {
+        int pool = poolLeftByName(t, all, a, f.restorePool);
+        if (pool < ClassFeatures.SLOT_COST[1]) return "Needs at least " + ClassFeatures.SLOT_COST[1] + " " + f.restorePool + " uses.";
+    }
+    if (ClassFeatures.RS_CONVERT.equals(f.restore)) {
+        boolean any = false;
+        for (int i = 0; i < 9; i++) if (t.slots[i] > 0) any = true;
+        if (!any) return "No spell slots to convert.";
+    }
+    return "";
+}
+
+private int poolLeftByName(Tok t, List<ClassFeatures.Active> all, ClassFeatures.Active a, String name) {
+    ClassFeatures.Active o = ClassFeatures.find(all, a.cls, name);
+    if (o == null || o.f.uses == null) return 0;
+    Integer v = t.featureUses.get(o.key());
+    return v == null ? ClassFeatures.maxUses(o, t.source) : v;
+}
+
+// The Current Turn tab's CLASS FEATURES block: one button per usable feature, Extend for Rage-like effects, uses left
+private void addFeatureSection(Tok t, boolean incap) {
+    List<ClassFeatures.Active> all = featuresOf(t);
+    List<ClassFeatures.Active> usable = new ArrayList<>();
+    for (ClassFeatures.Active a : all) if (a.f.usable() && !ClassFeatures.REST.equals(a.f.activation)) usable.add(a);
+    List<CombatSpells.Effect> sustained = new ArrayList<>();
+    for (CombatSpells.Effect e : t.effects) if (e.feature && e.sustain && e.caster.equals(t.uid)) sustained.add(e);
+    if (usable.isEmpty() && sustained.isEmpty()) return;
+    addSide(sectionCaption("CLASS FEATURES"));
+    JPanel grid = new JPanel(new GridLayout(0, 2, 6, 6));
+    grid.setOpaque(false);
+    for (ClassFeatures.Active a : usable) {
+        String why = featureBlocker(t, all, a, incap);
+        int left = featureUsesLeft(t, all, a);
+        String label = featureLabel(a.f) + (left >= 0 ? " (" + left + ")" : "");
+        String what = String.join(" · ", ClassFeatures.mechanics(a.f, t.source, a.clsLevel, all, a.cls));
+        JButton b = economyButton(label, featureColor(a.f.activation),
+                "<html><div style='width:320px'><b>" + App.escapeHtml(a.f.name) + "</b> (" + App.escapeHtml(a.source) + ")<br>"
+                        + App.escapeHtml(why.isEmpty() ? what : why) + "</div></html>");
+        b.setEnabled(why.isEmpty());
+        b.addActionListener(e -> {
+            pendingForm = ""; // a fresh use: Wild Shape asks for its form again
+            useFeature(b, t, all, a);
+        });
+        grid.add(b);
+    }
+    for (CombatSpells.Effect e : sustained) {
+        JButton ext = economyButton("Extend " + e.spell, BONUS_COLOR, t.sustained ? e.spell + " is already extended this round (it attacked, forced a save or was extended)."
+                : "Bonus Action: keep " + e.spell + " going until the end of your next turn without attacking");
+        ext.setEnabled(!incap && !bonusAttackUsed && !t.sustained && t == active);
+        ext.addActionListener(ev -> {
+            bonusAttackUsed = true;
+            t.sustained = true;
+            setStatus(t.label + " extends " + e.spell + " (Bonus Action).");
+            persistSoon();
+            refreshAll();
+        });
+        grid.add(ext);
+    }
+    // Wild Shape: leave the form early as a Bonus Action
+    CombatSpells.Effect shapeFx = formEffect(t);
+    if (shapeFx != null) {
+        Map<String, Object> form = formOf(t);
+        JButton leave = economyButton("Leave " + (form == null ? "form" : CustomAssets.str(form, "name")), BONUS_COLOR,
+                "Bonus Action: end " + shapeFx.spell + " and return to " + t.label + "'s own form");
+        leave.setEnabled(!bonusAttackUsed && t == active);
+        leave.addActionListener(ev -> {
+            bonusAttackUsed = true;
+            removeEffect(t, shapeFx);
+            setStatus(t.label + " leaves " + shapeFx.spell + " (Bonus Action).");
+            persistSoon();
+            refreshAll();
+        });
+        grid.add(leave);
+    }
+    grid.setMaximumSize(new Dimension(400, ((grid.getComponentCount() + 1) / 2) * 42));
+    addSide(grid);
+    // uses left per pool (combat copy): click to adjust
+    List<String> pools = new ArrayList<>();
+    for (ClassFeatures.Active a : all) {
+        if (!a.f.hasUses()) continue;
+        pools.add(a.f.name + " " + featureUsesLeft(t, all, a) + "/" + ClassFeatures.maxUses(a, t.source));
+    }
+    if (!pools.isEmpty()) {
+        gap(4);
+        JLabel pl = new JLabel("<html><div style='width:280px'>" + App.escapeHtml(String.join("   •   ", pools)) + "</div></html>");
+        pl.setForeground(App.TEXT_MUTED);
+        pl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        pl.setToolTipText("Feature uses left in this encounter (copied from the sheet). Click to adjust.");
+        App.clickable(pl, () -> showFeatureUsesEditor(pl, t));
+        addSide(pl);
+    }
+    gap(10);
+}
+
+// Adjust a token's feature uses for this encounter (the sheet isn't changed)
+private void showFeatureUsesEditor(Component anchor, Tok t) {
+    List<ClassFeatures.Active> all = featuresOf(t);
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    body.add(muted("Uses left in this encounter. They were copied from " + t.label + "'s sheet; changes here stay in combat."));
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    Map<String, JSpinner> spins = new LinkedHashMap<>();
+    for (ClassFeatures.Active a : all) {
+        if (!a.f.hasUses()) continue;
+        int max = ClassFeatures.maxUses(a, t.source);
+        JSpinner sp = new JSpinner(new SpinnerNumberModel(Math.min(max, featureUsesLeft(t, all, a)), 0, Math.max(0, max), 1));
+        sp.setPreferredSize(new Dimension(64, 28));
+        styleSpinner(sp);
+        JPanel r = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+        r.setOpaque(false);
+        r.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel l = new JLabel(a.f.name + " (max " + max + ", " + a.f.recharge + ")");
+        l.setForeground(App.TEXT_LIGHT);
+        r.add(l);
+        r.add(sp);
+        body.add(r);
+        spins.put(a.key(), sp);
+    }
+    Runnable[] close = new Runnable[1];
+    JButton ok = App.overlayButton("Save", true);
+    ok.addActionListener(e -> {
+        for (Map.Entry<String, JSpinner> en : spins.entrySet()) {
+            commit(en.getValue());
+            t.featureUses.put(en.getKey(), (Integer) en.getValue().getValue());
+        }
+        close[0].run();
+        persistSoon();
+        refreshAll();
+    });
+    JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+    foot.setOpaque(false);
+    foot.setAlignmentX(Component.LEFT_ALIGNMENT);
+    foot.add(ok);
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    body.add(foot);
+    close[0] = App.showSheetOverlay(board, "Feature uses: " + t.label, body, ok);
+}
+
+// Creatures a feature can target from `t` (range, team, creature type)
+private List<Tok> featureCandidates(Tok t, ClassFeatures.Active a) {
+    ClassFeatures.Feature f = a.f;
+    List<Tok> out = new ArrayList<>();
+    if (ClassFeatures.T_SELF.equals(f.target)) {
+        out.add(t);
+        return out;
+    }
+    boolean healing = f.heal != null;
+    for (Tok o : tokens) {
+        if (OBJ.equals(o.kind) || o.dead) continue;
+        boolean self = o == t;
+        boolean ally = self || (t.team >= 0 && o.team == t.team);
+        switch (f.target) {
+            case ClassFeatures.T_ALLY: case ClassFeatures.T_ALLIES: if (!ally) continue; break;
+            case ClassFeatures.T_OTHER_ALLY: if (!ally || self) continue; break;
+            case ClassFeatures.T_ENEMY: case ClassFeatures.T_ENEMIES: if (ally) continue; break;
+            default: if (self) continue; // One creature
+        }
+        if (o.down() && !healing) continue;
+        if (!self && distanceFt(t, o) > Math.max(5, f.range)) continue;
+        if (!f.onlyTypes.isEmpty() && !CombatSpells.isAny(CombatSpells.creatureType(o.source, PC.equals(o.kind)), f.onlyTypes.toArray(new String[0]))) continue;
+        out.add(o);
+    }
+    return out;
+}
+
+// Using a feature: options it needs first (Metamagic option, points to spend, slot to create / convert, damage type),
+// then targets, then resolveFeature
+private void useFeature(Component anchor, Tok t, List<ClassFeatures.Active> all, ClassFeatures.Active a) {
+    if (animating) return;
+    ClassFeatures.Feature f = a.f;
+    if (ClassFeatures.C_METAMAGIC.equals(f.choiceKind)) {
+        chooseMetamagic(t, all, a);
+        return;
+    }
+    if (ClassFeatures.RS_CREATE.equals(f.restore) || ClassFeatures.RS_CONVERT.equals(f.restore)) {
+        showFontOfMagic(t, all, a, ClassFeatures.RS_CREATE.equals(f.restore));
+        return;
+    }
+    if (f.shape && pendingForm.isEmpty()) {
+        chooseForm(t, a, id -> {
+            pendingForm = id; // read by applyFeatureEffect; cleared after resolveFeature and on the next button press
+            useFeature(anchor, t, all, a);
+        });
+        return;
+    }
+    java.util.function.Consumer<String> withType = type -> pickFeatureTargets(t, a, targets -> {
+        if (f.spendAny) chooseSpendAmount(t, all, a, targets, type);
+        else resolveFeature(t, all, a, targets, type, -1, false);
+    });
+    if (f.damage != null && !f.damageType2.isEmpty()) {
+        // the damage type is chosen when it's used (Divine Spark: Radiant or Necrotic)
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        row.setOpaque(false);
+        Runnable[] close = new Runnable[1];
+        for (String ty : new String[]{f.damageType, f.damageType2}) {
+            JButton b = App.overlayButton(ty, true);
+            b.addActionListener(e -> {
+                close[0].run();
+                withType.accept(ty);
+            });
+            row.add(b);
+        }
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        body.setOpaque(false);
+        body.add(muted("Damage type for " + f.name + " (healing ignores it):"), BorderLayout.NORTH);
+        body.add(row, BorderLayout.CENTER);
+        close[0] = App.showSheetOverlay(board, f.name, body, null);
+        return;
+    }
+    withType.accept(f.damageType);
+}
+
+// One target: a list to click; several (in range): all preselected with checkboxes; Self: straight on
+private void pickFeatureTargets(Tok t, ClassFeatures.Active a, java.util.function.Consumer<List<Tok>> then) {
+    ClassFeatures.Feature f = a.f;
+    List<Tok> cands = featureCandidates(t, a);
+    if (ClassFeatures.T_SELF.equals(f.target)) {
+        then.accept(cands);
+        return;
+    }
+    boolean group = ClassFeatures.T_ALLIES.equals(f.target) || ClassFeatures.T_ENEMIES.equals(f.target);
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    String where = f.target.toLowerCase() + (f.range > 0 ? " within " + Math.max(5, f.range) + " ft." : "")
+            + (f.onlyTypes.isEmpty() ? "" : " (" + String.join(", ", f.onlyTypes) + " only)");
+    body.add(muted(cands.isEmpty() ? "No creature in range: " + where + "." : (group ? "Affects " : "Choose ") + where + "."));
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    Runnable[] close = new Runnable[1];
+    Map<Tok, JCheckBox> boxes = new LinkedHashMap<>();
+    for (Tok o : cands) {
+        JPanel r = new JPanel(new BorderLayout(8, 0));
+        r.setOpaque(true);
+        r.setBackground(App.SHEET_ROW_ALT);
+        r.setBorder(new EmptyBorder(4, 6, 4, 6));
+        r.setAlignmentX(Component.LEFT_ALIGNMENT);
+        r.setMaximumSize(new Dimension(520, 44));
+        r.add(new Tokens.Preview(o.style, o.label, 28, teamColor(o.team)), BorderLayout.WEST);
+        JLabel l = new JLabel("<html><b>" + App.escapeHtml(o.label) + "</b>  <span style='color:#aaa5a0'>" + (o == t ? "you" : distanceFt(t, o) + " ft.")
+                + " · " + o.hp + "/" + o.maxHp + " HP</span></html>");
+        l.setForeground(App.TEXT_LIGHT);
+        r.add(l, BorderLayout.CENTER);
+        if (group) {
+            JCheckBox cb = new JCheckBox("", true);
+            cb.setOpaque(false);
+            boxes.put(o, cb);
+            r.add(cb, BorderLayout.EAST);
+        } else {
+            App.clickable(r, () -> {
+                close[0].run();
+                then.accept(new ArrayList<>(Collections.singletonList(o)));
+            });
+        }
+        body.add(r);
+        body.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    if (group) {
+        JButton go = App.overlayButton("Use " + f.name, true);
+        go.setEnabled(!cands.isEmpty());
+        go.addActionListener(e -> {
+            List<Tok> sel = new ArrayList<>();
+            for (Map.Entry<Tok, JCheckBox> en : boxes.entrySet()) if (en.getValue().isSelected()) sel.add(en.getKey());
+            close[0].run();
+            then.accept(sel);
+        });
+        JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        foot.setOpaque(false);
+        foot.setAlignmentX(Component.LEFT_ALIGNMENT);
+        foot.add(go);
+        body.add(Box.createRigidArea(new Dimension(0, 6)));
+        body.add(foot);
+    }
+    close[0] = App.showSheetOverlay(board, f.name + ": " + (group ? "targets" : "choose a target"), body, null);
+}
+
+// Lay on Hands: how many points to spend (1 point = 1 Hit Point), and whether to also remove a condition
+private void chooseSpendAmount(Tok t, List<ClassFeatures.Active> all, ClassFeatures.Active a, List<Tok> targets, String type) {
+    ClassFeatures.Feature f = a.f;
+    int left = featureUsesLeft(t, all, a);
+    Tok target = targets.isEmpty() ? t : targets.get(0);
+    int missing = Math.max(0, target.maxHp - target.hp);
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    body.add(muted(f.name + ": " + left + " points left. " + target.label + " is missing " + missing + " Hit Points."));
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    JSpinner amount = new JSpinner(new SpinnerNumberModel(Math.min(left, Math.max(missing, f.heal != null ? 1 : 0)), 0, left, 1));
+    amount.setPreferredSize(new Dimension(70, 28));
+    styleSpinner(amount);
+    JPanel r = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+    r.setOpaque(false);
+    r.setAlignmentX(Component.LEFT_ALIGNMENT);
+    r.add(muted2(f.heal != null ? "Points to heal:" : "Points to spend:"));
+    r.add(amount);
+    body.add(r);
+    JCheckBox cure = null;
+    List<String> curable = new ArrayList<>();
+    for (String c : f.removeConds) if (hasCond(target, c)) curable.add(c);
+    if (!curable.isEmpty()) {
+        cure = new JCheckBox("Also remove " + String.join(", ", curable) + " (" + f.removeCost + " more points)", false);
+        cure.setOpaque(false);
+        cure.setForeground(App.TEXT_LIGHT);
+        cure.setAlignmentX(Component.LEFT_ALIGNMENT);
+        body.add(cure);
+    }
+    JLabel err = new JLabel(" ");
+    err.setForeground(App.ACCENT_HOVER);
+    err.setAlignmentX(Component.LEFT_ALIGNMENT);
+    body.add(err);
+    Runnable[] close = new Runnable[1];
+    JButton go = App.overlayButton("Use " + f.name, true);
+    final JCheckBox cureF = cure;
+    go.addActionListener(e -> {
+        commit(amount);
+        int pts = (Integer) amount.getValue();
+        boolean doCure = cureF != null && cureF.isSelected();
+        if (pts + (doCure ? f.removeCost : 0) > left) {
+            err.setText("Not enough points: " + left + " left.");
+            return;
+        }
+        if (pts <= 0 && !doCure) {
+            err.setText("Spend at least 1 point.");
+            return;
+        }
+        close[0].run();
+        resolveFeature(t, all, a, targets, type, pts, doCure);
+    });
+    JPanel foot = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+    foot.setOpaque(false);
+    foot.setAlignmentX(Component.LEFT_ALIGNMENT);
+    foot.add(go);
+    body.add(foot);
+    close[0] = App.showSheetOverlay(board, f.name + ": " + target.label, body, go);
+}
+
+// Pays the feature's cost and resolves its parts. `spend` >= 0: points chosen (spendAny); `cure`: remove its conditions too.
+private void resolveFeature(Tok t, List<ClassFeatures.Active> all, ClassFeatures.Active a, List<Tok> targets, String type, int spend, boolean cure) {
+    ClassFeatures.Feature f = a.f;
+    Map<?, ?> rec = t.source;
+    int lv = a.clsLevel;
+    List<String> log = new ArrayList<>();
+    // ---- pay ----
+    switch (f.activation) {
+        case ClassFeatures.ACTION: case ClassFeatures.MAGIC:
+            actionUsed = true;
+            attackAction = false;
+            break;
+        case ClassFeatures.BONUS:
+            bonusAttackUsed = true;
+            break;
+        case ClassFeatures.REACTION:
+            t.reactionsUsed++;
+            break;
+        default:
+    }
+    int cost = spend >= 0 ? spend + (cure ? f.removeCost : 0) : f.cost;
+    spendFeatureUses(t, all, a, cost);
+    t.featureTurn.put(a.key(), turnKey());
+    if (f.hasEffect() && f.sustain) t.sustained = true; // starting Rage counts as extending it this turn
+    // ---- turn economy ----
+    if (f.extraAction) {
+        actionUsed = false;
+        attackAction = false;
+        attacksLeft = Math.max(1, t.attacksPerAction);
+        log.add("takes one more action");
+    }
+    for (String act : f.actions) {
+        switch (act) {
+            case "Dash": moveLeft += t.speed; log.add("Dashes (+" + t.speed + " ft.)"); if (moveMode) computeReach(); break;
+            case "Disengage": disengaged = true; log.add("Disengages"); break;
+            case "Dodge": t.dodging = true; log.add("Dodges"); break;
+            case "Hide": prompts.add(() -> hideCheck(t, f.name)); break;
+            default:
+        }
+    }
+    if (f.strikes > 0) {
+        t.extraStrikes += f.strikes;
+        log.add("can make " + f.strikes + " Unarmed Strike" + (f.strikes == 1 ? "" : "s") + " (Attack button)");
+    }
+    // ---- resources ----
+    if (ClassFeatures.RS_POOL.equals(f.restore)) {
+        ClassFeatures.Active pool = ClassFeatures.find(all, a.cls, f.restorePool);
+        if (pool != null) {
+            t.featureUses.put(pool.key(), ClassFeatures.maxUses(pool, rec));
+            log.add("regains all " + pool.f.name + " uses");
+        }
+    } else if (ClassFeatures.RS_PACT.equals(f.restore)) {
+        int max = maxSlotsOf(t)[9];
+        int before = t.slots[9];
+        t.slots[9] = Math.min(max, t.slots[9] + (max + 1) / 2);
+        log.add("regains " + (t.slots[9] - before) + " Pact Magic slot" + (t.slots[9] - before == 1 ? "" : "s"));
+    }
+    if (f.noSpells && f.hasEffect() && !t.concentration.isEmpty()) endConcentration(t, f.name + ": can't concentrate");
+    // ---- per target: healing (allies), damage / save (enemies), lasting effect ----
+    int dc = ClassFeatures.saveDc(rec, f, a.cls);
+    List<Tok> harmed = new ArrayList<>();
+    for (Tok o : targets) {
+        boolean ally = o == t || (t.team >= 0 && o.team == t.team);
+        boolean harm = f.damage != null || (!f.save.isEmpty());
+        if (f.heal != null && (ally || !harm)) {
+            int amount = f.spendAny ? Math.max(0, spend) : f.heal.roll(rng, rec, lv);
+            int got = amount > 0 ? healTok(o, amount) : 0;
+            if (amount > 0) log.add((o == t ? "regains " : "heals " + o.label + " for ") + got + " HP" + (f.spendAny ? "" : " (" + f.heal.text(rec, lv) + ")"));
+            if (cure) {
+                for (String c : f.removeConds) {
+                    if (!hasCond(o, c)) continue;
+                    o.conditions.removeIf(x -> x.equalsIgnoreCase(c));
+                    log.add("ends " + c + " on " + (o == t ? "itself" : o.label));
+                }
+            }
+            if (f.hasEffect() && f.save.isEmpty()) applyFeatureEffect(t, o, a, dc);
+            continue;
+        }
+        if (harm && !ally) {
+            harmed.add(o);
+            continue;
+        }
+        if (f.hasEffect()) applyFeatureEffect(t, o, a, dc);
+        if (f.tempHp != null) {
+            int th = f.tempHp.roll(rng, rec, lv);
+            if (th > o.tempHp) o.tempHp = th;
+            log.add((o == t ? "gains " : o.label + " gains ") + th + " Temporary Hit Points");
+        }
+        if (f.hasEffect() && f.tempHp == null) log.add((o == t ? "is" : o.label + " is") + " under " + f.name);
+    }
+    String head = t.label + " uses " + f.name + (cost > 0 && ClassFeatures.poolOwner(all, a) != null ? " (" + featureUsesLeft(t, all, a) + " left)" : "");
+    if (!harmed.isEmpty()) {
+        int dmg = f.damage != null ? f.damage.roll(rng, rec, lv) : 0;
+        String dt = type == null ? "" : type;
+        List<SaveRoll> saves = new ArrayList<>();
+        for (Tok o : harmed) saves.add(rollSave(o, f.save, dc, 0, false, false));
+        if (!f.save.isEmpty()) t.sustained = true;
+        String intro = head + (log.isEmpty() ? "" : ": " + String.join(", ", log)) + ". "
+                + (f.damage != null ? "Damage " + f.damage.text(rec, lv) + " = " + dmg + " " + dt.toLowerCase()
+                + (f.save.isEmpty() ? "." : ", " + f.save + " save DC " + dc + (f.half ? " for half." : " negates.")) : f.save + " save DC " + dc + ".")
+                + (f.hasEffect() && !f.conds.isEmpty() ? " On a failure: " + String.join(" and ", f.conds) + " (" + f.duration.toLowerCase() + ")." : "");
+        showSaveList(f.name, intro, saves, rows -> {
+            List<String> res = new ArrayList<>();
+            for (SaveRoll r : rows) {
+                Tok o = r.who;
+                if (f.damage != null) {
+                    int raw = r.success ? (f.half ? dmg / 2 : 0) : dmg;
+                    int taken = DamageRules.apply(raw, dt, o.damageMods());
+                    if (taken > 0) dealDamage(o, taken, t, false);
+                    res.add(o.label + " takes " + taken);
+                }
+                if (!r.success && f.hasEffect()) {
+                    applyFeatureEffect(t, o, a, dc);
+                    if (!f.conds.isEmpty()) res.add(o.label + " is " + String.join(" and ", f.conds));
+                }
+            }
+            setStatus(f.name + ": " + (res.isEmpty() ? "no effect." : String.join(", ", res) + "."));
+        });
+    } else {
+        setStatus(head + (log.isEmpty() ? "." : ": " + String.join(", ", log) + "."));
+    }
+    pendingForm = "";
+    persistSoon();
+    refreshAll();
+    if (!prompts.isEmpty()) SwingUtilities.invokeLater(this::flushPrompts);
+}
+
+// Puts a feature's lasting effect on `o` (replacing the same effect from the same creature)
+private void applyFeatureEffect(Tok t, Tok o, ClassFeatures.Active a, int dc) {
+    ClassFeatures.Feature f = a.f;
+    for (CombatSpells.Effect old : new ArrayList<>(o.effects)) if (old.feature && old.spell.equals(f.name) && old.caster.equals(t.uid)) removeEffect(o, old);
+    CombatSpells.Effect e = new CombatSpells.Effect();
+    e.spell = f.name;
+    e.caster = t.uid;
+    e.feature = true;
+    e.choice = a.cls;
+    e.castRound = round;
+    e.dc = dc;
+    boolean own = inCombat && t == active;
+    if (f.sustain) {
+        e.casterStarts = 100; // up to 10 minutes, ended earlier by onTurnEnd when it isn't extended
+    } else {
+        switch (f.duration) {
+            case ClassFeatures.D_TURN: e.casterEnds = 1; break;
+            case ClassFeatures.D_START: e.casterStarts = 1; break;
+            case ClassFeatures.D_END_NEXT: e.casterEnds = own ? 2 : 1; break;
+            case ClassFeatures.D_MINUTE: e.casterStarts = 10; break;
+            case ClassFeatures.D_10MIN: e.casterStarts = 100; break;
+            default: break; // 1 hour: kept after the fight
+        }
+    }
+    e.conds = new ArrayList<>(f.conds);
+    e.ac = f.ac;
+    e.speed = f.speed;
+    e.advAgainst = f.advAgainst;
+    e.sustain = f.sustain;
+    e.endOnDamage = f.endOnDamage;
+    e.endOnIncap = f.endOnIncap;
+    e.noSpells = f.noSpells;
+    e.advStr = f.advStr;
+    e.recklessAtk = f.recklessAtk;
+    e.advSpellAtk = f.advSpellAtk;
+    e.dcBonus = f.dcBonus;
+    e.resist = new ArrayList<>(f.resist);
+    e.advSaves = new ArrayList<>(f.advSaves);
+    if (f.shape) {
+        e.form = pendingForm; // Wild Shape: the creature form chosen when it was used
+        // using Wild Shape again replaces the old form (even one from another feature)
+        CombatSpells.Effect old = formEffect(o);
+        if (old != null) removeEffect(o, old);
+    }
+    if (f.meleeDamage != null) e.meleeDmg = f.meleeDamage.eval(t.source, a.clsLevel);
+    if (f.inspiration != null) {
+        e.inspDie = f.inspiration.sides(t.source, a.clsLevel);
+        e.inspCount = Math.max(1, f.inspiration.count(t.source, a.clsLevel));
+    }
+    addEffect(o, e);
+}
+
+// Wild Shape: the creature form picked when the feature is used (an NPC id; "" outside that flow)
+private String pendingForm = "";
+
+// The forms a shape feature lets `t` take: its picks on the sheet that still fit the limits at its level
+private List<Map<String, Object>> knownForms(Tok t, ClassFeatures.Active a) {
+    List<Map<String, Object>> out = new ArrayList<>();
+    if (t.source == null) return out;
+    ClassFeatures.Active chooser = a;
+    if (!ClassFeatures.C_FORM.equals(a.f.choiceKind)) { // forms chosen on another feature of the class
+        for (ClassFeatures.Active o : featuresOf(t)) if (o.cls.equals(a.cls) && ClassFeatures.C_FORM.equals(o.f.choiceKind)) chooser = o;
+    }
+    if (!ClassFeatures.C_FORM.equals(chooser.f.choiceKind)) return out;
+    for (String n : ClassFeatures.choices(t.source, chooser)) {
+        Map<String, Object> npc = ClassFeatures.formNpc(n);
+        if (npc != null && ClassFeatures.formAllowed(chooser.f, npc, chooser.clsLevel)) out.add(npc);
+    }
+    return out;
+}
+
+// Pick one of the known forms (each row shows its numbers; ⓘ opens the full stat block)
+private void chooseForm(Tok t, ClassFeatures.Active a, java.util.function.Consumer<String> then) {
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    body.add(muted(t.label + " keeps its Hit Points, mental scores and proficiencies; the form gives size, Speed, AC, attacks and STR / DEX / CON."));
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    Runnable[] close = new Runnable[1];
+    for (Map<String, Object> n : knownForms(t, a)) {
+        JPanel r = new JPanel(new BorderLayout(6, 0));
+        r.setOpaque(false);
+        r.setAlignmentX(Component.LEFT_ALIGNMENT);
+        r.setMaximumSize(new Dimension(560, 58));
+        JButton b = App.overlayButton("", false);
+        b.setHorizontalAlignment(SwingConstants.LEFT);
+        List<String> atk = new ArrayList<>();
+        for (WeaponRules.Attack at : WeaponRules.npcAttacks(n)) atk.add(at.name + " " + WeaponRules.signed(at.toHit) + " (" + at.damageText() + ")");
+        b.setText("<html><b>" + App.escapeHtml(CustomAssets.str(n, "name")) + "</b>  <span style='color:#aaa5a0'>" + App.escapeHtml(
+                CustomAssets.str(n, "size") + " · CR " + CustomAssets.str(n, "cr") + " · AC " + CustomAssets.intVal(n, "ac", 10) + " · " + CustomAssets.str(n, "speed"))
+                + "</span><br><span style='color:#d4af37'>" + App.escapeHtml(String.join(", ", atk)) + "</span></html>");
+        b.addActionListener(e -> {
+            close[0].run();
+            then.accept(CustomAssets.str(n, "id"));
+        });
+        r.add(b, BorderLayout.CENTER);
+        JButton info = Tokens.smallButton("i", "Full stat block");
+        info.addActionListener(e -> App.showInfoOverlay(info, CustomAssets.str(n, "name"), "Creature form", CustomAssets.npcStatText(n), null));
+        r.add(info, BorderLayout.EAST);
+        body.add(r);
+        body.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    JScrollPane sp = new JScrollPane(body);
+    App.applyDarkScrollBar(sp);
+    sp.setBorder(null);
+    sp.setOpaque(false);
+    sp.getViewport().setOpaque(false);
+    sp.setPreferredSize(new Dimension(600, Math.min(440, body.getPreferredSize().height + 10)));
+    close[0] = App.showSheetOverlay(board, a.f.name + ": choose a form", sp, null);
+}
+
+// Metamagic: pick one of the options chosen on the sheet; its Sorcery Point cost is spent (apply its effect to the spell)
+private void chooseMetamagic(Tok t, List<ClassFeatures.Active> all, ClassFeatures.Active a) {
+    int left = featureUsesLeft(t, all, a);
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    body.add(muted("Spend Sorcery Points (" + left + " left) on one of your Metamagic options, then cast the spell it changes. "
+            + "Its effect on the spell is applied by hand."));
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    Runnable[] close = new Runnable[1];
+    for (String opt : ClassFeatures.choices(t.source, a)) {
+        int cost = ClassFeatures.METAMAGIC.getOrDefault(opt, Math.max(1, a.f.cost));
+        JButton b = App.overlayButton("", false);
+        b.setHorizontalAlignment(SwingConstants.LEFT);
+        b.setText("<html><b>" + App.escapeHtml(opt) + "</b>  <span style='color:#d4af37'>" + cost + " point" + (cost == 1 ? "" : "s") + "</span><br><span style='color:#aaa5a0'>"
+                + App.escapeHtml(CustomAssets.snippet(ClassFeatures.optionInfo(ClassFeatures.C_METAMAGIC, opt), 120)) + "</span></html>");
+        b.setAlignmentX(Component.LEFT_ALIGNMENT);
+        b.setMaximumSize(new Dimension(520, 64));
+        b.setEnabled(left >= cost);
+        b.addActionListener(e -> {
+            close[0].run();
+            spendFeatureUses(t, all, a, cost);
+            t.featureTurn.put(a.key(), turnKey());
+            setStatus(t.label + " uses " + opt + " (" + cost + " Sorcery Point" + (cost == 1 ? "" : "s") + ", " + featureUsesLeft(t, all, a) + " left). "
+                    + ClassFeatures.optionInfo(ClassFeatures.C_METAMAGIC, opt));
+            persistSoon();
+            refreshAll();
+        });
+        body.add(b);
+        body.add(Box.createRigidArea(new Dimension(0, 4)));
+    }
+    close[0] = App.showSheetOverlay(board, a.f.name, body, null);
+}
+
+// Font of Magic: create a spell slot from uses (Bonus Action), or turn a slot into uses (no action)
+private void showFontOfMagic(Tok t, List<ClassFeatures.Active> all, ClassFeatures.Active a, boolean create) {
+    ClassFeatures.Active pool = ClassFeatures.find(all, a.cls, a.f.restorePool);
+    if (pool == null) return;
+    int left = poolLeftByName(t, all, a, a.f.restorePool);
+    int max = ClassFeatures.maxUses(pool, t.source);
+    JPanel body = new JPanel();
+    body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+    body.setOpaque(false);
+    body.add(muted(create ? "Spend " + pool.f.name + " uses (" + left + " left) to create a spell slot. It lasts until a Long Rest (in Combat, until the fight ends)."
+            : "Expend a spell slot to gain " + pool.f.name + " uses equal to its level (" + left + " of " + max + ")."));
+    body.add(Box.createRigidArea(new Dimension(0, 8)));
+    Runnable[] close = new Runnable[1];
+    JPanel grid = new JPanel(new GridLayout(0, 3, 6, 6));
+    grid.setOpaque(false);
+    grid.setAlignmentX(Component.LEFT_ALIGNMENT);
+    for (int lv = 1; lv <= (create ? 5 : 9); lv++) {
+        final int level = lv;
+        int cost = create ? ClassFeatures.SLOT_COST[lv] : 0;
+        int minLevel = create ? new int[]{0, 2, 3, 5, 7, 9}[lv] : 0;
+        boolean ok = create ? left >= cost && a.clsLevel >= minLevel : t.slots[lv - 1] > 0;
+        String text = create ? "Level " + lv + " slot (" + cost + ")" : "Level " + lv + " (" + t.slots[lv - 1] + ")";
+        JButton b = economyButton(text, create ? BONUS_COLOR : App.GOLD,
+                create ? (a.clsLevel < minLevel ? "Needs " + a.cls + " level " + minLevel : cost + " uses") : "+" + lv + " uses");
+        b.setEnabled(ok);
+        b.addActionListener(e -> {
+            close[0].run();
+            if (create) {
+                bonusAttackUsed = bonusAttackUsed || ClassFeatures.BONUS.equals(a.f.activation);
+                t.featureUses.put(pool.key(), Math.max(0, left - cost));
+                t.slots[level - 1]++;
+                setStatus(t.label + " creates a level " + level + " spell slot (" + cost + " " + pool.f.name + " uses; " + (left - cost) + " left).");
+            } else {
+                t.slots[level - 1]--;
+                int gained = Math.min(level, Math.max(0, max - left));
+                t.featureUses.put(pool.key(), left + gained);
+                setStatus(t.label + " expends a level " + level + " slot for " + gained + " " + pool.f.name + " uses (" + (left + gained) + " of " + max + ").");
+            }
+            t.featureTurn.put(a.key(), turnKey());
+            persistSoon();
+            refreshAll();
+        });
+        grid.add(b);
+    }
+    body.add(grid);
+    close[0] = App.showSheetOverlay(board, a.f.name, body, null);
+}
+
+// The class feature that put effect `e` on a creature (looked up on its source character), or null
+private ClassFeatures.Active featureOf(CombatSpells.Effect e) {
+    Tok c = byUid(e.caster);
+    if (c == null) return null;
+    for (ClassFeatures.Active a : featuresOf(c)) if (a.f.name.equals(e.spell)) return a;
+    return null;
+}
+
+// Dice from class features a creature can add to a failed roll: inspiration-style effects on it, and (checks only)
+// its "When you fail an ability check" features with uses left (Tactical Mind)
+private CombatSpells.Effect inspirationOn(Tok t) {
+    for (CombatSpells.Effect e : t.effects) if (e.feature && e.inspDie > 0) return e;
+    return null;
+}
+
+// ===============================================================
 // Side panel
 // ===============================================================
 private void setTab(String t) {
@@ -8140,7 +9349,7 @@ private void buildTurnTab() {
 
     if (PC.equals(t.kind) && t.source != null) {
         addSide(sectionCaption("HANDS"));
-        JLabel hl = new JLabel("<html><div style='width:280px'>" + App.escapeHtml(handsText(t)) + "</div></html>");
+        JLabel hl = new JLabel("<html><div style='width:280px'>" + App.escapeHtml(formOf(t) != null ? "In Wild Shape as a " + CustomAssets.str(formOf(t), "name") + ": it attacks with the form's natural weapons." : handsText(t)) + "</div></html>");
         hl.setForeground(App.TEXT_LIGHT);
         hl.setFont(new Font("SansSerif", Font.PLAIN, 13));
         hl.setToolTipText("What " + t.label + " is holding. Click to draw, swap or stow a weapon or shield.");
@@ -8191,7 +9400,7 @@ private void buildTurnTab() {
         if (!moveMode) setStatus(defaultStatus());
         refreshSide();
     });
-    boolean canBonus = canBonusAttack(t);
+    boolean canBonus = canBonusAttack(t) || t.extraStrikes > 0; // the Light extra attack, or granted Unarmed Strikes
     JButton attack = economyButton(targeting != null ? "Cancel Attack" : "Attack", ACTION_COLOR,
             incap ? "Can't act: " + incapWhy : !canMainAttack() && !canBonus ? (actionUsed && !attackAction ? "Action already used this turn" : "No attacks left this turn")
                     : "Action: pick a weapon, then click a target in range");
@@ -8253,19 +9462,22 @@ private void buildTurnTab() {
         gap(6);
     }
 
-    // the other actions (a Rogue's Cunning Action can Dash, Disengage or Hide as a Bonus Action)
-    boolean cunning = cunningAction(t) && !bonusAttackUsed;
+    // the other actions (features like Cunning Action / Step of the Wind / Patient Defense allow some as a Bonus Action)
+    String dashVia = bonusAttackUsed ? null : bonusActionFeature(t, "Dash");
+    String disVia = bonusAttackUsed ? null : bonusActionFeature(t, "Disengage");
+    String hideVia = bonusAttackUsed ? null : bonusActionFeature(t, "Hide");
     JPanel other = new JPanel(new GridLayout(0, 2, 6, 6));
     other.setOpaque(false);
     other.setMaximumSize(new Dimension(400, 6 * 42));
-    boolean dashByBonus = actionUsed && cunning;
-    JButton dash = economyButton("Dash", dashByBonus ? BONUS_COLOR : ACTION_COLOR, (dashByBonus ? "Bonus Action (Cunning Action)" : "Action")
+    boolean dashByBonus = actionUsed && dashVia != null;
+    JButton dash = economyButton("Dash", dashByBonus ? BONUS_COLOR : ACTION_COLOR, (dashByBonus ? "Bonus Action (" + dashVia + ")" : "Action")
             + ": gain extra movement equal to your Speed (" + t.speed + " ft.) this turn");
-    dash.setEnabled(!incap && still.isEmpty() && (!actionUsed || cunning));
+    dash.setEnabled(!incap && still.isEmpty() && (!actionUsed || dashVia != null));
     dash.addActionListener(e -> doDash(t));
-    JButton dis = economyButton(disengaged ? "Disengaged" : "Disengage", dashByBonus ? BONUS_COLOR : ACTION_COLOR,
-            (dashByBonus ? "Bonus Action (Cunning Action)" : "Action") + ": your movement doesn't provoke opportunity attacks for the rest of the turn");
-    dis.setEnabled(!incap && !disengaged && (!actionUsed || cunning));
+    boolean disByBonus = actionUsed && disVia != null;
+    JButton dis = economyButton(disengaged ? "Disengaged" : "Disengage", disByBonus ? BONUS_COLOR : ACTION_COLOR,
+            (disByBonus ? "Bonus Action (" + disVia + ")" : "Action") + ": your movement doesn't provoke opportunity attacks for the rest of the turn");
+    dis.setEnabled(!incap && !disengaged && (!actionUsed || disVia != null));
     dis.addActionListener(e -> doDisengage(t));
     JButton dodge = economyButton(t.dodging ? "Dodging" : "Dodge", ACTION_COLOR,
             "Action: until your next turn, attacks against you have Disadvantage and you have Advantage on DEX saves");
@@ -8291,10 +9503,10 @@ private void buildTurnTab() {
             "Utilize action: use a nonmagical item, or draw / stow weapons and shields. Magic items are under Magic.");
     useItem.setEnabled(!incap);
     useItem.addActionListener(e -> showUseItem(useItem, t));
-    boolean hideByBonus = actionUsed && cunning;
+    boolean hideByBonus = actionUsed && hideVia != null;
     JButton hide = economyButton(CombatSpells.has(t.effects, CombatActions.HIDDEN) ? "Hide again" : "Hide", hideByBonus ? BONUS_COLOR : ACTION_COLOR,
-            (hideByBonus ? "Bonus Action (Cunning Action): " : "Action: ") + CombatActions.info("Hide"));
-    hide.setEnabled(!incap && (!actionUsed || cunning));
+            (hideByBonus ? "Bonus Action (" + hideVia + "): " : "Action: ") + CombatActions.info("Hide"));
+    hide.setEnabled(!incap && (!actionUsed || hideVia != null));
     hide.addActionListener(e -> doHide(t));
     String actWhy = incap ? "Can't act: " + incapWhy : actionUsed ? "Action already used this turn" : "";
     JButton help = economyButton("Help", ACTION_COLOR, actWhy.isEmpty() ? "Action: " + CombatActions.info("Help") : actWhy);
@@ -8320,7 +9532,8 @@ private void buildTurnTab() {
     other.add(influence);
     other.add(ready);
     addSide(other);
-    gap(6);
+    gap(10);
+    addFeatureSection(t, incap); // Rage, Second Wind, Flurry of Blows... (ClassFeatures)
     addSide(economyLegend(t));
     gap(6);
     JLabel budget = new JLabel((actionUsed && !attackAction ? "Attack: action already used this turn" : "Attacks left: " + attacksLeft + " of " + t.attacksPerAction)

@@ -12,6 +12,7 @@ web/dnd_engine.jar
 web/dnd_engine-desktop.zip
 web/weapons.json
 web/spells.json
+web/beasts.json
 web/art/
 
 bin/

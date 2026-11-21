@@ -1236,7 +1236,7 @@ public class App {
 
         int dexMod = GameData.abilityModifier(stats.getOrDefault("DEX", 10));
         int wisMod = GameData.abilityModifier(stats.getOrDefault("WIS", 10));
-        int passivePerception = 10 + wisMod + (skillProfs.contains("Perception") ? profBonus : 0);
+        int passivePerception = 10 + ClassFeatures.skillBonus(rec, "Perception"); // includes Expertise / Jack of All Trades
         Integer hp = CharacterStorage.recInt(rec, "hp");
         Integer speed = CharacterStorage.recInt(rec, "speed");
         Integer gold = CharacterStorage.recInt(rec, "gold");
@@ -1397,6 +1397,7 @@ public class App {
                 "Resist effects that would banish you or overwhelm your sense of self."};
         JPanel saveRows = new JPanel(new GridLayout(0, 1, 0, 0));
         saveRows.setOpaque(false);
+        Map<String, String> advSaves = ClassFeatures.advantageSaves(rec); // Danger Sense
         for (int i = 0; i < GameData.STAT_ORDER.length; i++) {
             String stat = GameData.STAT_ORDER[i];
             String fullName = STAT_FULL_NAMES[i];
@@ -1404,7 +1405,8 @@ public class App {
             boolean prof = saveProfs.contains(stat);
             int abilityMod = GameData.abilityModifier(stats.getOrDefault(stat, 10));
             int mod = abilityMod + (prof ? profBonus : 0);
-            saveRows.add(clickable(sheetProfRow(prof, signed(mod), fullName, null, false), () -> {
+            String advFrom = advSaves.get(stat);
+            saveRows.add(clickable(sheetProfRow(prof, signed(mod), fullName + (advFrom != null ? " (Adv.)" : ""), null, false), () -> {
                 String source = null;
                 if (saves != null && Arrays.asList(saves).contains(stat)) source = characterClass + " class";
                 for (Map<String, Object> f : feats) {
@@ -1417,24 +1419,32 @@ public class App {
                 rows.add(row("Proficiency", prof ? signed(profBonus) : "—"));
                 rows.add(row("Total", signed(mod)));
                 rows.add(row("Proficient from", source != null ? source : "Not proficient"));
+                if (advFrom != null) rows.add(row("Advantage", advFrom + " (unless Incapacitated)"));
                 showInfoOverlay(saveRows, fullName + " Saving Throw", stat + " save",
                         "Roll d20 + this bonus when an effect calls for a " + fullName + " save. " + use, rows);
             }));
         }
 
         Map<String, String> skillSources = CharacterStorage.recSkillSources(rec);
+        Map<String, String> expertiseSources = ClassFeatures.pickSources(rec, ClassFeatures.C_EXPERTISE);
+        boolean jack = ClassFeatures.jackOfAllTrades(rec);
         JPanel skillRows = new JPanel(new GridLayout(0, 1, 0, 0));
         skillRows.setOpaque(false);
         int skillIdx = 0;
         for (String skill : GameData.ALL_SKILLS) {
             boolean prof = skillProfs.contains(skill);
+            boolean expert = prof && expertiseSources.containsKey(skill);
             String ability = GameData.SKILL_ABILITY.get(skill);
             int abilityMod = GameData.abilityModifier(stats.getOrDefault(ability, 10));
-            int mod = abilityMod + (prof ? profBonus : 0);
-            skillRows.add(clickable(sheetProfRow(prof, signed(mod), skill, ability, skillIdx++ % 2 == 1), () -> {
+            int mod = ClassFeatures.skillBonus(rec, skill); // proficiency, Expertise, Jack of All Trades, Divine / Primal Order
+            int orderBonus = ClassFeatures.orderSkillBonus(rec, skill);
+            skillRows.add(clickable(sheetProfRow(prof, signed(mod), skill + (expert ? " ★" : ""), ability, skillIdx++ % 2 == 1), () -> {
                 List<String[]> rows = new ArrayList<>();
                 rows.add(row(ability + " modifier", signed(abilityMod)));
-                rows.add(row("Proficiency", prof ? signed(profBonus) : "—"));
+                rows.add(row("Proficiency", expert ? signed(2 * profBonus) + " (Expertise: doubled)" : prof ? signed(profBonus)
+                        : jack ? signed(profBonus / 2) + " (Jack of All Trades: half)" : "—"));
+                if (expert) rows.add(row("Expertise from", expertiseSources.get(skill)));
+                if (orderBonus != 0) rows.add(row(ClassFeatures.orderSkillSource(rec, skill), signed(orderBonus) + " (WIS modifier, min +1)"));
                 rows.add(row("Total", signed(mod)));
                 rows.add(row("Proficient from", prof ? skillSources.getOrDefault(skill, "—") : "Not proficient"));
                 showInfoOverlay(skillRows, skill, ability + " skill",
@@ -1475,7 +1485,9 @@ public class App {
                 col1, "Passive Perception", "10 + Perception bonus",
                 "Your awareness when you aren't actively searching. The DM compares it against hidden creatures' Stealth and against concealed objects.",
                 Arrays.asList(row("Base", "10"), row("WIS modifier", signed(wisMod)),
-                        row("Proficiency", perceptionProf ? signed(profBonus) + " (" + skillSources.getOrDefault("Perception", "") + ")" : "—"),
+                        row("Proficiency", perceptionProf ? signed(passivePerception - 10 - wisMod) + " (" + skillSources.getOrDefault("Perception", "")
+                                + (expertiseSources.containsKey("Perception") ? ", Expertise" : "") + ")"
+                                : jack ? signed(profBonus / 2) + " (Jack of All Trades)" : "—"),
                         row("Total", String.valueOf(passivePerception))))), c1);
         c1.gridy = 2;
         c1.weighty = 1.0;
@@ -1526,6 +1538,11 @@ public class App {
             if (shield > 0) rows.add(row(shieldName + " (held)", "+" + shield));
             else if (unheldShield) rows.add(row("Shield (not held)", "+0: put it in a hand under Hands & Attacks"));
             if (SpeciesTraits.acBonus(rec) > 0) rows.add(row("Integrated Protection (Warforged)", "+" + SpeciesTraits.acBonus(rec)));
+            String unarmoredFrom = ClassFeatures.unarmoredAcSource(rec);
+            if (!unarmoredFrom.isEmpty() && ClassFeatures.unarmoredAc(rec) > bestBody) {
+                rows.add(row("Unarmored Defense", unarmoredFrom + " = " + ClassFeatures.unarmoredAc(rec) + " (replaces " + bestBody + ")"));
+            }
+            if (WeaponRules.hasStyle(rec, "Defense") && ClassFeatures.wearsArmor(rec)) rows.add(row("Defense fighting style (wearing armor)", "+1"));
             rows.add(row("Armor Class", String.valueOf(ac)));
             showInfoOverlay(combatRow, "Armor Class", "Defense",
                     "How hard you are to hit. An attack hits if its roll equals or beats your AC. Comes from your best armor in Equipment (or 10 + DEX unarmored), plus a shield.", rows);
@@ -1534,11 +1551,16 @@ public class App {
                 combatRow, "Initiative", "Combat order",
                 "At the start of combat, everyone rolls d20 + Initiative. Higher results act first.",
                 Arrays.asList(row("DEX modifier", signed(dexMod)), row("Initiative", signed(dexMod))))));
-        combatRow.add(clickable(statTile(speed != null ? speed + " ft." : "—", "SPEED"), () -> showInfoOverlay(
+        int speedBonus = ClassFeatures.speedBonus(rec); // Unarmored Movement
+        combatRow.add(clickable(statTile(speed != null ? (speed + speedBonus) + " ft." : "—", "SPEED"), () -> showInfoOverlay(
                 combatRow, "Speed", "Movement",
                 "How far you can move on your turn. Difficult terrain costs double, and you can split your movement before and after your action.",
-                Arrays.asList(row("From species", (species.isEmpty() ? "—" : species + lineageSuffix)),
-                        row("Walking speed", speed != null ? speed + " ft." : "—")))));
+                speedBonus > 0
+                        ? Arrays.asList(row("From species", (species.isEmpty() ? "—" : species + lineageSuffix) + (speed != null ? " (" + speed + " ft.)" : "")),
+                                row(ClassFeatures.speedBonusSource(rec), "+" + speedBonus + " ft. (no armor or Shield)"),
+                                row("Walking speed", speed != null ? (speed + speedBonus) + " ft." : "—"))
+                        : Arrays.asList(row("From species", (species.isEmpty() ? "—" : species + lineageSuffix)),
+                                row("Walking speed", speed != null ? speed + " ft." : "—")))));
 
         JPanel hdDsRow = new JPanel(new GridLayout(1, 2, 8, 0));
         hdDsRow.setOpaque(false);
@@ -1582,7 +1604,7 @@ public class App {
                 equipmentCard(rec, equipment, onSave));
 
         // ================= COLUMN 3 =================
-        JPanel col3 = sheetCard("Features & Traits", featuresContent(rec, characterClass, species, lineageSuffix, feats));
+        JPanel col3 = sheetCard("Features & Traits", featuresContent(rec, characterClass, species, lineageSuffix, feats, onSave));
 
         // ================= BODY =================
         JPanel body = new JPanel(new GridBagLayout());
@@ -2798,6 +2820,16 @@ public class App {
         }
 
         Map<String, String> lineInfo = new LinkedHashMap<>();
+        // training granted by class features (Divine Order: Protector, Primal Order: Warden, homebrew)
+        Set<String> featArmor = ClassFeatures.armorTraining(rec), featWeapons = ClassFeatures.weaponTraining(rec);
+        if (!featArmor.isEmpty()) {
+            lines.add(new String[]{"Armor (features)", String.join(", ", featArmor)});
+            lineInfo.put("Armor (features)", "Armor training from your class features: wear it without penalties to your actions or spellcasting.");
+        }
+        if (!featWeapons.isEmpty()) {
+            lines.add(new String[]{"Weapons (features)", String.join(", ", featWeapons)});
+            lineInfo.put("Weapons (features)", "Weapon proficiency from your class features: add your Proficiency Bonus to attack rolls with these weapons (applied to your attacks).");
+        }
         for (String[] hb : CustomAssets.sheetProficiencies(rec)) { // homebrew class / background / species
             lines.add(new String[]{hb[0], hb[1]});
             lineInfo.put(hb[0], hb[2]);
@@ -2852,8 +2884,10 @@ public class App {
     }
 
     private static JComponent featuresContent(Map<?, ?> rec, String characterClass, String species,
-                                              String lineageSuffix, List<Map<String, Object>> feats) {
+                                              String lineageSuffix, List<Map<String, Object>> feats,
+                                              java.util.function.Consumer<Map<String, Object>> onSave) {
         List<JComponent> cards = new ArrayList<>();
+        cards.add(SheetFeatures.restBar(rec, onSave)); // Short / Long Rest: feature uses and spell slots
 
         if (!species.isEmpty()) {
             List<String> sub = new ArrayList<>();
@@ -2869,18 +2903,23 @@ public class App {
             }
         }
 
-        // Homebrew: species traits, background origin feat, class + subclass features (Asset Library)
+        // Homebrew: species traits, background origin feat, subclass (Asset Library)
         for (String[] f : CustomAssets.sheetFeatures(rec)) cards.add(featureCard(f[0], f[1], f[2]));
 
-        List<DecisionItem> decisions = GameData.CLASS_DECISIONS.get(characterClass);
-        if (decisions != null) {
-            Map<String, List<String>> choices = CharacterStorage.recChoicesMap(rec);
-            for (DecisionItem item : decisions) {
-                if (!"CHOICE".equals(item.type)) continue;
-                List<String> chosen = choices.get(item.label);
-                if (chosen == null || chosen.isEmpty()) continue;
-                cards.add(featureCard(String.join(", ", chosen),
-                        cleanDecisionLabel(item.label) + " · " + characterClass + " 1", ""));
+        // Class and subclass features (built-in 2024 or homebrew): uses, choices, what they do. The level-1 wizard
+        // choices (Divine Order, Fighting Style, Eldritch Invocation...) show on their feature's card.
+        cards.addAll(SheetFeatures.cards(rec, onSave));
+        if (ClassFeatures.active(rec).isEmpty()) {
+            List<DecisionItem> decisions = GameData.CLASS_DECISIONS.get(characterClass);
+            if (decisions != null) {
+                Map<String, List<String>> choices = CharacterStorage.recChoicesMap(rec);
+                for (DecisionItem item : decisions) {
+                    if (!"CHOICE".equals(item.type)) continue;
+                    List<String> chosen = choices.get(item.label);
+                    if (chosen == null || chosen.isEmpty()) continue;
+                    cards.add(featureCard(String.join(", ", chosen),
+                            cleanDecisionLabel(item.label) + " · " + characterClass + " 1", ""));
+                }
             }
         }
 
